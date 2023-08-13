@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  ".",
+  "ferrum_compiler",
+  "ferrum_macros",
+  "ferrum_netlist"
+]
+
+[package]
+name = "ferrum"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# [package.metadata.rust-analyzer]
+# rustc_private = true
+
+[dependencies]
+ferrum_macros = { path = "ferrum_macros/" }
+strum = { version = "0.25.0", features = ["derive"] }

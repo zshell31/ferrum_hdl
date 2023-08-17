@@ -2,8 +2,9 @@ use std::{env, fs, path::Path as StdPath};
 
 use ferrum::prim_ty::PrimTy;
 use ferrum_netlist::{
-    index::NodeIndex,
-    net_list::NetList,
+    backend::Verilog,
+    module::{Module, ModuleList},
+    net_list::NodeId,
     node::{BitAndNode, BitNotNode, BitOrNode, ConstNode, InputNode, Mux2Node, NotNode},
     symbol::Symbol,
 };
@@ -118,7 +119,7 @@ pub struct Generator<'tcx> {
     top_module: ItemId,
     blackbox: FxHashMap<TyOrDefId<'tcx>, Option<Blackbox>>,
     prim_ty: FxHashMap<TyOrDefId<'tcx>, Option<PrimTy>>,
-    pub net_list: NetList,
+    modules: ModuleList,
     pub idents: Idents,
 }
 
@@ -129,7 +130,7 @@ impl<'tcx> Generator<'tcx> {
             top_module,
             blackbox: FxHashMap::default(),
             prim_ty: FxHashMap::default(),
-            net_list: NetList::new(Symbol::new("top_module")),
+            modules: ModuleList::new(),
             idents: Idents::new(),
         }
     }
@@ -153,8 +154,7 @@ impl<'tcx> Generator<'tcx> {
     fn generate_inner<P: AsRef<StdPath>>(&mut self, path: P) -> Result<(), Error> {
         let item = self.tcx.hir().item(self.top_module);
         self.visit_item(item);
-
-        let verilog = self.net_list.verilog();
+        let verilog = Verilog::new().generate(&self.modules);
         Ok(fs::write(path, verilog)?)
     }
 
@@ -267,7 +267,7 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn node_idx_for_ident(&self, ident: Ident) -> Result<NodeIndex, Error> {
+    pub fn node_idx_for_ident(&self, ident: Ident) -> Result<NodeId, Error> {
         self.idents
             .node_index(ident)
             .ok_or_else(|| {
@@ -282,21 +282,27 @@ impl<'tcx> Generator<'tcx> {
         body_id: BodyId,
         _: Span,
     ) -> Result<(), Error> {
+        let module_sym = Symbol::new("top_module");
+        let module_id = self.modules.add_module(module_sym);
+        let mut module = Module::new(module_id, module_sym);
+
         self.idents.push_scope();
 
         let body = self.tcx.hir().body(body_id);
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
-        self.evaluate_inputs(inputs, false)?;
+        self.evaluate_inputs(inputs, &mut module, false)?;
 
-        let node_idx = self.evaluate_expr(body.value)?;
+        let node_idx = self.evaluate_expr(body.value, &mut module)?;
 
         // evaluate output
         let sym = self.idents.out();
-        let node_out = self.net_list.node_output_mut(node_idx);
+        let node_out = module.net_list.node_output_mut(node_idx);
         node_out.sym = sym;
-        self.net_list.add_output_node(node_idx);
+        module.net_list.add_output_node(node_idx);
 
         self.idents.pop_scope();
+
+        self.modules.replace(module_id, module);
 
         Ok(())
     }
@@ -304,6 +310,7 @@ impl<'tcx> Generator<'tcx> {
     fn evaluate_inputs<'a>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
+        module: &mut Module,
         is_dummy: bool,
     ) -> Result<(), Error>
     where
@@ -325,9 +332,9 @@ impl<'tcx> Generator<'tcx> {
 
                 let input = InputNode::new(prim_ty, sym);
                 let input = if is_dummy {
-                    self.net_list.add_dummy_node(input)
+                    module.net_list.add_dummy_node(input)
                 } else {
-                    self.net_list.add_node(input)
+                    module.net_list.add_node(input)
                 };
 
                 self.idents.add_local_ident(ident, input);
@@ -341,7 +348,11 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
-    pub fn evaluate_expr(&mut self, expr: &Expr<'tcx>) -> Result<NodeIndex, Error> {
+    pub fn evaluate_expr(
+        &mut self,
+        expr: &Expr<'tcx>,
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
         let ty = self.node_type(expr.hir_id);
 
         match expr.kind {
@@ -350,9 +361,9 @@ impl<'tcx> Generator<'tcx> {
 
                 match bin_op.node {
                     BinOpKind::BitAnd => {
-                        let lhs = self.evaluate_expr(lhs)?;
-                        let rhs = self.evaluate_expr(rhs)?;
-                        Ok(self.net_list.add_node(BitAndNode::new(
+                        let lhs = self.evaluate_expr(lhs, module)?;
+                        let rhs = self.evaluate_expr(rhs, module)?;
+                        Ok(module.net_list.add_node(BitAndNode::new(
                             prim_ty,
                             lhs,
                             rhs,
@@ -360,9 +371,9 @@ impl<'tcx> Generator<'tcx> {
                         )))
                     }
                     BinOpKind::BitOr => {
-                        let lhs = self.evaluate_expr(lhs)?;
-                        let rhs = self.evaluate_expr(rhs)?;
-                        Ok(self.net_list.add_node(BitOrNode::new(
+                        let lhs = self.evaluate_expr(lhs, module)?;
+                        let rhs = self.evaluate_expr(rhs, module)?;
+                        Ok(module.net_list.add_node(BitOrNode::new(
                             prim_ty,
                             lhs,
                             rhs,
@@ -388,8 +399,8 @@ impl<'tcx> Generator<'tcx> {
                                 SpanError::new(SpanErrorKind::ExpectedExpr, local.span)
                             })?;
 
-                            let node_idx = self.evaluate_expr(init)?;
-                            let node_out = self.net_list.node_output_mut(node_idx);
+                            let node_idx = self.evaluate_expr(init, module)?;
+                            let node_out = module.net_list.node_output_mut(node_idx);
                             node_out.sym = sym;
                             self.idents.add_local_ident(ident, node_idx);
                         }
@@ -414,7 +425,7 @@ impl<'tcx> Generator<'tcx> {
                     }
                 };
 
-                let node_idx = self.evaluate_expr(expr)?;
+                let node_idx = self.evaluate_expr(expr, module)?;
 
                 self.idents.pop_scope();
 
@@ -426,7 +437,7 @@ impl<'tcx> Generator<'tcx> {
                         QPath::Resolved(_, Path { span, res, .. }) => {
                             let def_id = res.def_id();
                             let blackbox = self.find_blackbox(def_id, *span)?;
-                            blackbox.evaluate_expr(self, expr)
+                            blackbox.evaluate_expr(self, expr, module)
                         }
                         QPath::TypeRelative(ty, _) => {
                             let res = self
@@ -435,7 +446,7 @@ impl<'tcx> Generator<'tcx> {
                                 .qpath_res(&path, rec.hir_id);
                             let def_id = res.def_id();
                             let blackbox = self.find_blackbox(def_id, ty.span)?;
-                            blackbox.evaluate_expr(self, expr)
+                            blackbox.evaluate_expr(self, expr, module)
                         }
                         _ => {
                             Err(SpanError::new(SpanErrorKind::NotSynthCall, rec.span)
@@ -450,11 +461,11 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::Closure(closure) => {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
-                self.evaluate_inputs(inputs, true)?;
+                self.evaluate_inputs(inputs, module, true)?;
 
-                self.evaluate_expr(body.value)
+                self.evaluate_expr(body.value, module)
             }
-            ExprKind::DropTemps(inner) => self.evaluate_expr(inner),
+            ExprKind::DropTemps(inner) => self.evaluate_expr(inner, module),
             ExprKind::If(cond, if_block, else_block) => {
                 let prim_ty = self.find_prim_ty(ty, expr.span)?;
 
@@ -462,11 +473,11 @@ impl<'tcx> Generator<'tcx> {
                     SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
                 })?;
 
-                let cond = self.evaluate_expr(cond)?;
-                let if_block = self.evaluate_expr(if_block)?;
-                let else_block = self.evaluate_expr(else_block)?;
+                let cond = self.evaluate_expr(cond, module)?;
+                let if_block = self.evaluate_expr(if_block, module)?;
+                let else_block = self.evaluate_expr(else_block, module)?;
 
-                Ok(self.net_list.add_node(Mux2Node::new(
+                Ok(module.net_list.add_node(Mux2Node::new(
                     prim_ty,
                     cond,
                     if_block,
@@ -478,7 +489,7 @@ impl<'tcx> Generator<'tcx> {
                 let prim_ty = self.find_prim_ty(ty, lit.span)?;
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;
 
-                Ok(self.net_list.add_node(ConstNode::new(
+                Ok(module.net_list.add_node(ConstNode::new(
                     prim_ty,
                     value,
                     self.idents.tmp(),
@@ -487,7 +498,7 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::MethodCall(_, _, _, span) => {
                 let def_id = self.type_dependent_def_id(expr.hir_id, span)?;
                 let blackbox = self.find_blackbox(def_id, span)?;
-                blackbox.evaluate_expr(self, expr)
+                blackbox.evaluate_expr(self, expr, module)
             }
             ExprKind::Path(QPath::Resolved(
                 _,
@@ -498,14 +509,16 @@ impl<'tcx> Generator<'tcx> {
                 },
             )) if segments.len() == 1 => self.node_idx_for_ident(segments[0].ident),
             ExprKind::Unary(UnOp::Not, inner) => {
-                let comb = self.evaluate_expr(inner)?;
+                let comb = self.evaluate_expr(inner, module)?;
                 let prim_ty = self.find_prim_ty(ty, expr.span)?;
                 let sym = self.idents.tmp();
 
                 Ok(if prim_ty.is_bool() {
-                    self.net_list.add_node(NotNode::new(prim_ty, comb, sym))
+                    module.net_list.add_node(NotNode::new(prim_ty, comb, sym))
                 } else {
-                    self.net_list.add_node(BitNotNode::new(prim_ty, comb, sym))
+                    module
+                        .net_list
+                        .add_node(BitNotNode::new(prim_ty, comb, sym))
                 })
             }
             _ => {

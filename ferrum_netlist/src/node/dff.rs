@@ -2,27 +2,22 @@ use either::Either;
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{
-    index::{Index, NodeIndex},
-    net_kind::NetKind,
-    output::NodeOutput,
-    symbol::Symbol,
-};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct DFFNode {
-    pub clk: NodeIndex,
-    pub rst_value: NodeIndex,
-    pub data: Option<NodeIndex>,
+    pub clk: NodeId,
+    pub rst_value: NodeId,
+    pub data: Option<NodeId>,
     pub out: NodeOutput,
 }
 
 impl DFFNode {
     pub fn new(
         ty: PrimTy,
-        clk: NodeIndex,
-        rst_value: NodeIndex,
-        data: Option<NodeIndex>,
+        clk: NodeId,
+        rst_value: NodeId,
+        data: Option<NodeId>,
         sym: Symbol,
     ) -> Self {
         Self {
@@ -44,7 +39,7 @@ impl From<DFFNode> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for DFFNode {
+impl IsNode for DFFNode {
     type Outputs = (DummyTy,);
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
@@ -60,7 +55,7 @@ impl<I: Index> IsNode<I> for DFFNode {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         match self.data {
             Some(data) => Either::Left([self.clk, self.rst_value, data].into_iter()),
             None => Either::Right([self.clk, self.rst_value].into_iter()),

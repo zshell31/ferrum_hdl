@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{index::Index, net_kind::NetKind, output::NodeOutput, symbol::Symbol};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct InputNode(pub PrimTy, pub NodeOutput);
@@ -24,7 +24,7 @@ impl From<InputNode> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for InputNode {
+impl IsNode for InputNode {
     type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
@@ -41,7 +41,7 @@ impl<I: Index> IsNode<I> for InputNode {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = crate::index::NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         [].into_iter()
     }
 }

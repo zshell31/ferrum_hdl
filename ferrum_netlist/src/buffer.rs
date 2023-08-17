@@ -3,7 +3,7 @@ use std::fmt::{Arguments, Write};
 #[derive(Default)]
 pub struct Buffer {
     pub buffer: String,
-    pub ident: u8,
+    pub tab: u8,
 }
 
 const TAB: &str = "    ";
@@ -15,7 +15,7 @@ impl Buffer {
 
     pub fn new_with_ident(ident: u8) -> Self {
         Self {
-            ident,
+            tab: ident,
             ..Default::default()
         }
     }
@@ -32,18 +32,18 @@ impl Buffer {
         self.buffer.write_fmt(args).unwrap();
     }
 
-    pub fn push_ident(&mut self) {
-        self.ident += 1;
+    pub fn push_tab(&mut self) {
+        self.tab += 1;
     }
 
-    pub fn pop_ident(&mut self) {
-        if self.ident > 0 {
-            self.ident -= 1;
+    pub fn pop_tab(&mut self) {
+        if self.tab > 0 {
+            self.tab -= 1;
         }
     }
 
-    pub fn write_ident(&mut self) {
-        for _ in 0 .. self.ident {
+    pub fn write_tab(&mut self) {
+        for _ in 0 .. self.tab {
             self.write_str(TAB);
         }
     }
@@ -58,10 +58,16 @@ impl Buffer {
 
     pub fn write_template(&mut self, template: Arguments<'_>) {
         for line in template.to_string().trim().lines() {
-            self.write_ident();
+            self.write_tab();
             self.write_str(line);
             self.write_eol();
         }
         self.write_eol();
+    }
+
+    pub fn pop(&mut self, symbols: usize) {
+        for _ in 0 .. symbols {
+            self.buffer.pop();
+        }
     }
 }

@@ -1,12 +1,7 @@
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{
-    index::{Index, NodeIndex},
-    net_kind::NetKind,
-    output::NodeOutput,
-    symbol::Symbol,
-};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ConstNode {
@@ -33,7 +28,7 @@ impl From<ConstNode> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for ConstNode {
+impl IsNode for ConstNode {
     type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
@@ -50,7 +45,7 @@ impl<I: Index> IsNode<I> for ConstNode {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         [].into_iter()
     }
 }

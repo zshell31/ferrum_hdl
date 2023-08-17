@@ -1,8 +1,8 @@
 use ferrum::prim_ty::{IsPrimTy, PrimTy};
 
 use crate::{
-    index::{Index, NodeIndex},
     net_kind::NetKind,
+    net_list::{NetList, NodeId},
     symbol::Symbol,
 };
 
@@ -13,30 +13,30 @@ pub struct NodeOutput {
     pub kind: NetKind,
 }
 
-pub trait Outputs<I: Index> {
+pub trait Outputs {
     type Symbols: Copy;
 
-    fn make_node_idx(index: &mut I) -> Vec<NodeIndex>;
+    fn make_node_ids(net_list: &mut NetList) -> Vec<NodeId>;
 }
 
 pub trait IsOneOutput {}
 
 impl<T1> IsOneOutput for (T1,) {}
 
-impl<I: Index, T1: IsPrimTy> Outputs<I> for (T1,) {
+impl<T1: IsPrimTy> Outputs for (T1,) {
     type Symbols = (Symbol,);
 
-    fn make_node_idx(index: &mut I) -> Vec<NodeIndex> {
-        let (node_id,) = (index.index(0),);
+    fn make_node_ids(net_list: &mut NetList) -> Vec<NodeId> {
+        let (node_id,) = (net_list.index(0),);
         vec![node_id]
     }
 }
 
-impl<I: Index, T1, T2> Outputs<I> for (T1, T2) {
+impl<T1, T2> Outputs for (T1, T2) {
     type Symbols = (Symbol, Symbol);
 
-    fn make_node_idx(index: &mut I) -> Vec<NodeIndex> {
-        let (node_id1, node_id2) = (index.index(0), index.index(1));
+    fn make_node_ids(net_list: &mut NetList) -> Vec<NodeId> {
+        let (node_id1, node_id2) = (net_list.index(0), net_list.index(1));
         vec![node_id1, node_id2]
     }
 }

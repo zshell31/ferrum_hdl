@@ -5,7 +5,7 @@ pub use self::{
     dff::DFFNode, input::InputNode, mux2::Mux2Node, not::NotNode, pass::PassNode,
 };
 use crate::{
-    index::{Index, NodeIndex},
+    net_list::NodeId,
     output::{NodeOutput, Outputs},
 };
 
@@ -19,14 +19,14 @@ mod mux2;
 mod not;
 mod pass;
 
-pub trait IsNode<I: Index>: Into<Node> {
-    type Outputs: Outputs<I>;
+pub trait IsNode: Into<Node> {
+    type Outputs: Outputs;
 
     fn node_output(&self, out: u8) -> &NodeOutput;
 
     fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput;
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex>;
+    fn inputs(&self) -> impl Iterator<Item = NodeId>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -52,49 +52,49 @@ impl Node {
         matches!(self, Self::DummyInput(_))
     }
 
-    pub fn node_output<I: Index>(&self, out: u8) -> &NodeOutput {
+    pub fn node_output(&self, out: u8) -> &NodeOutput {
         match self {
-            Self::DummyInput(node) => IsNode::<I>::node_output(node, out),
-            Self::Input(node) => IsNode::<I>::node_output(node, out),
-            Self::Mux2(node) => IsNode::<I>::node_output(node, out),
-            Self::Pass(node) => IsNode::<I>::node_output(node, out),
-            Self::Const(node) => IsNode::<I>::node_output(node, out),
-            Self::BitNot(node) => IsNode::<I>::node_output(node, out),
-            Self::BitAnd(node) => IsNode::<I>::node_output(node, out),
-            Self::BitOr(node) => IsNode::<I>::node_output(node, out),
-            Self::Not(node) => IsNode::<I>::node_output(node, out),
-            Self::DFF(node) => IsNode::<I>::node_output(node, out),
+            Self::DummyInput(node) => node.node_output(out),
+            Self::Input(node) => node.node_output(out),
+            Self::Mux2(node) => node.node_output(out),
+            Self::Pass(node) => node.node_output(out),
+            Self::Const(node) => node.node_output(out),
+            Self::BitNot(node) => node.node_output(out),
+            Self::BitAnd(node) => node.node_output(out),
+            Self::BitOr(node) => node.node_output(out),
+            Self::Not(node) => node.node_output(out),
+            Self::DFF(node) => node.node_output(out),
         }
     }
 
-    pub fn node_output_mut<I: Index>(&mut self, out: u8) -> &mut NodeOutput {
+    pub fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
         match self {
-            Self::DummyInput(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::Input(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::Mux2(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::Pass(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::Const(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::BitNot(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::BitAnd(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::BitOr(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::Not(node) => IsNode::<I>::node_output_mut(node, out),
-            Self::DFF(node) => IsNode::<I>::node_output_mut(node, out),
+            Self::DummyInput(node) => node.node_output_mut(out),
+            Self::Input(node) => node.node_output_mut(out),
+            Self::Mux2(node) => node.node_output_mut(out),
+            Self::Pass(node) => node.node_output_mut(out),
+            Self::Const(node) => node.node_output_mut(out),
+            Self::BitNot(node) => node.node_output_mut(out),
+            Self::BitAnd(node) => node.node_output_mut(out),
+            Self::BitOr(node) => node.node_output_mut(out),
+            Self::Not(node) => node.node_output_mut(out),
+            Self::DFF(node) => node.node_output_mut(out),
         }
     }
 
     #[auto_enum(Iterator)]
-    pub fn inputs<I: Index>(&self) -> impl Iterator<Item = NodeIndex> {
+    pub fn inputs(&self) -> impl Iterator<Item = NodeId> {
         match self {
-            Self::DummyInput(node) => IsNode::<I>::inputs(node),
-            Self::Input(node) => IsNode::<I>::inputs(node),
-            Self::Mux2(node) => IsNode::<I>::inputs(node),
-            Self::Pass(node) => IsNode::<I>::inputs(node),
-            Self::Const(node) => IsNode::<I>::inputs(node),
-            Self::BitNot(node) => IsNode::<I>::inputs(node),
-            Self::BitAnd(node) => IsNode::<I>::inputs(node),
-            Self::BitOr(node) => IsNode::<I>::inputs(node),
-            Self::Not(node) => IsNode::<I>::inputs(node),
-            Self::DFF(node) => IsNode::<I>::inputs(node),
+            Self::DummyInput(node) => node.inputs(),
+            Self::Input(node) => node.inputs(),
+            Self::Mux2(node) => node.inputs(),
+            Self::Pass(node) => node.inputs(),
+            Self::Const(node) => node.inputs(),
+            Self::BitNot(node) => node.inputs(),
+            Self::BitAnd(node) => node.inputs(),
+            Self::BitOr(node) => node.inputs(),
+            Self::Not(node) => node.inputs(),
+            Self::DFF(node) => node.inputs(),
         }
     }
 }

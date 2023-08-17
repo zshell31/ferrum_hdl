@@ -3,21 +3,16 @@ use std::ops::Not;
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{
-    index::{Index, NodeIndex},
-    net_kind::NetKind,
-    output::NodeOutput,
-    symbol::Symbol,
-};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BitNotNode {
-    pub input: NodeIndex,
+    pub input: NodeId,
     pub out: NodeOutput,
 }
 
 impl BitNotNode {
-    pub fn new(ty: PrimTy, input: NodeIndex, sym: Symbol) -> Self {
+    pub fn new(ty: PrimTy, input: NodeId, sym: Symbol) -> Self {
         Self {
             input,
             out: NodeOutput {
@@ -35,7 +30,7 @@ impl From<BitNotNode> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for BitNotNode {
+impl IsNode for BitNotNode {
     type Outputs = (<DummyTy as Not>::Output,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
@@ -52,7 +47,7 @@ impl<I: Index> IsNode<I> for BitNotNode {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         [self.input].into_iter()
     }
 }

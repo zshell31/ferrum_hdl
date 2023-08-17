@@ -3,7 +3,8 @@ use ferrum::{
     prim_ty::{PrimTy, PrimValue},
 };
 use ferrum_netlist::{
-    index::NodeIndex,
+    module::Module,
+    net_list::NodeId,
     node::{DFFNode, Node, PassNode},
 };
 use rustc_ast::LitKind;
@@ -84,10 +85,11 @@ impl Blackbox {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
-    ) -> Result<NodeIndex, Error> {
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
         match self {
-            Self::RegisterFn => RegisterFn::evaluate_expr(generator, expr),
-            Self::Conversion => Conversion::evaluate_expr(generator, expr),
+            Self::RegisterFn => RegisterFn::evaluate_expr(generator, expr, module),
+            Self::Conversion => Conversion::evaluate_expr(generator, expr, module),
         }
     }
 }
@@ -106,7 +108,8 @@ impl RegisterFn {
     fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
-    ) -> Result<NodeIndex, Error> {
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
         let (rec, args) = utils::expected_call(expr)?;
 
         let ty = generator.node_type(rec.hir_id);
@@ -115,10 +118,10 @@ impl RegisterFn {
             .ok_or_else(|| Self::make_err(rec.span))?;
         let prim_ty = generator.find_prim_ty(gen, rec.span)?;
 
-        let clk = generator.evaluate_expr(&args[0])?;
-        let rst_value = generator.evaluate_expr(&args[1])?;
+        let clk = generator.evaluate_expr(&args[0], module)?;
+        let rst_value = generator.evaluate_expr(&args[1], module)?;
 
-        let dff = generator.net_list.add_node(DFFNode::new(
+        let dff = module.net_list.add_node(DFFNode::new(
             prim_ty,
             clk,
             rst_value,
@@ -126,21 +129,21 @@ impl RegisterFn {
             generator.idents.tmp(),
         ));
 
-        let comb = generator.evaluate_expr(&args[2])?;
+        let comb = generator.evaluate_expr(&args[2], module)?;
 
-        let dummy = generator
+        let dummy = module
             .net_list
             .find_dummy_inputs(comb)
             .first()
             .copied()
             .ok_or_else(|| Self::make_err(rec.span))?;
-        let dummy_out = generator.net_list.node_output(dummy);
+        let dummy_out = module.net_list.node_output(dummy);
 
-        generator
+        module
             .net_list
             .replace(dummy, PassNode::new(dummy_out.ty, dff, dummy_out.sym));
 
-        if let Node::DFF(dff) = generator.net_list.node_mut(dff) {
+        if let Node::DFF(dff) = module.net_list.node_mut(dff) {
             dff.data = Some(comb);
         }
 
@@ -162,7 +165,8 @@ impl Conversion {
     pub fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
-    ) -> Result<NodeIndex, Error> {
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
         match expr.kind {
             ExprKind::Call(rec, args) => {
                 let from = generator
@@ -175,7 +179,7 @@ impl Conversion {
                     }
                 };
 
-                Self::convert(from, target, generator, &args[0])
+                Self::convert(from, target, generator, &args[0], module)
             }
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from =
@@ -183,7 +187,7 @@ impl Conversion {
                 let target =
                     generator.find_prim_ty(generator.node_type(expr.hir_id), span)?;
 
-                Self::convert(from, target, generator, rec)
+                Self::convert(from, target, generator, rec, module)
             }
             _ => Err(Self::make_err(expr.span)),
         }
@@ -194,15 +198,16 @@ impl Conversion {
         target: PrimTy,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
-    ) -> Result<NodeIndex, Error> {
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
         match (from, target) {
             (PrimTy::Bool, PrimTy::Bit) => {
                 assert_convert::<bool, Bit>();
-                generator.evaluate_expr(expr)
+                generator.evaluate_expr(expr, module)
             }
             (PrimTy::Bit, PrimTy::Bool) => {
                 assert_convert::<Bit, bool>();
-                generator.evaluate_expr(expr)
+                generator.evaluate_expr(expr, module)
             }
             _ => Err(
                 SpanError::new(SpanErrorKind::UnsupportedConversion, expr.span).into(),

@@ -1,9 +1,9 @@
-use ferrum_netlist::{index::NodeIndex, symbol::Symbol};
+use ferrum_netlist::{net_list::NodeId, symbol::Symbol};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_span::symbol::Ident;
 
 #[derive(Debug, Default)]
-pub struct LocalScope(FxHashMap<Ident, NodeIndex>);
+pub struct LocalScope(FxHashMap<Ident, NodeId>);
 
 #[derive(Debug, Default)]
 pub struct Idents {
@@ -45,13 +45,13 @@ impl Idents {
         sym
     }
 
-    pub fn add_local_ident(&mut self, ident: Ident, node_idx: NodeIndex) {
+    pub fn add_local_ident(&mut self, ident: Ident, node_idx: NodeId) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.0.insert(ident, node_idx);
         }
     }
 
-    pub fn node_index(&self, ident: Ident) -> Option<NodeIndex> {
+    pub fn node_index(&self, ident: Ident) -> Option<NodeId> {
         for scope in self.scopes.iter().rev() {
             if let Some(node_idx) = scope.0.get(&ident) {
                 return Some(*node_idx);

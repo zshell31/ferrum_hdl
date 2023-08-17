@@ -3,22 +3,17 @@ use std::ops::BitOr;
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{
-    index::{Index, NodeIndex},
-    net_kind::NetKind,
-    output::NodeOutput,
-    symbol::Symbol,
-};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BitOrNode {
-    pub input1: NodeIndex,
-    pub input2: NodeIndex,
+    pub input1: NodeId,
+    pub input2: NodeId,
     pub out: NodeOutput,
 }
 
 impl BitOrNode {
-    pub fn new(ty: PrimTy, input1: NodeIndex, input2: NodeIndex, sym: Symbol) -> Self {
+    pub fn new(ty: PrimTy, input1: NodeId, input2: NodeId, sym: Symbol) -> Self {
         Self {
             input1,
             input2,
@@ -37,7 +32,7 @@ impl From<BitOrNode> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for BitOrNode {
+impl IsNode for BitOrNode {
     type Outputs = (<DummyTy as BitOr>::Output,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
@@ -54,7 +49,7 @@ impl<I: Index> IsNode<I> for BitOrNode {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         [self.input1, self.input2].into_iter()
     }
 }

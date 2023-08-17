@@ -33,7 +33,7 @@ fn with_symbols<T>(mut f: impl FnMut(&mut SymbolInterner) -> T) -> T {
     f(&mut interner)
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol(usize, usize);
 
 impl Debug for Symbol {

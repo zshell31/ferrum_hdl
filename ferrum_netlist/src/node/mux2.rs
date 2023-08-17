@@ -1,27 +1,22 @@
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
-use crate::{
-    index::{Index, NodeIndex},
-    net_kind::NetKind,
-    output::NodeOutput,
-    symbol::Symbol,
-};
+use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Mux2Node {
-    pub sel: NodeIndex,
-    pub input1: NodeIndex,
-    pub input2: NodeIndex,
+    pub sel: NodeId,
+    pub input1: NodeId,
+    pub input2: NodeId,
     pub out: NodeOutput,
 }
 
 impl Mux2Node {
     pub fn new(
         ty: PrimTy,
-        sel: NodeIndex,
-        input1: NodeIndex,
-        input2: NodeIndex,
+        sel: NodeId,
+        input1: NodeId,
+        input2: NodeId,
         sym: Symbol,
     ) -> Self {
         Self {
@@ -43,7 +38,7 @@ impl From<Mux2Node> for Node {
     }
 }
 
-impl<I: Index> IsNode<I> for Mux2Node {
+impl IsNode for Mux2Node {
     type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
@@ -60,7 +55,7 @@ impl<I: Index> IsNode<I> for Mux2Node {
         }
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
+    fn inputs(&self) -> impl Iterator<Item = NodeId> {
         [self.input1, self.input2].into_iter()
     }
 }

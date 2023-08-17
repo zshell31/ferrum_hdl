@@ -8,6 +8,7 @@ pub use self::{
     dff::{DFFNode, DFF},
     input::{Input, InputNode},
     mux2::{Mux2, Mux2Node},
+    not::{NotComp, NotNode},
     pass::{Pass, PassNode},
 };
 use crate::{
@@ -22,6 +23,7 @@ mod consta;
 mod dff;
 mod input;
 mod mux2;
+mod not;
 mod pass;
 
 pub trait IsNode: Into<Node> {
@@ -48,6 +50,7 @@ pub enum Node {
     BitNot(BitNotNode),
     BitAnd(BitAndNode),
     BitOr(BitOrNode),
+    Not(NotNode),
     Mux2(Mux2Node),
     DFF(DFFNode),
 }
@@ -71,6 +74,7 @@ impl Node {
             Self::BitNot(node) => node.node_output(out),
             Self::BitAnd(node) => node.node_output(out),
             Self::BitOr(node) => node.node_output(out),
+            Self::Not(node) => node.node_output(out),
             Self::DFF(node) => node.node_output(out),
         }
     }
@@ -85,6 +89,7 @@ impl Node {
             Self::BitNot(node) => node.node_output_mut(out),
             Self::BitAnd(node) => node.node_output_mut(out),
             Self::BitOr(node) => node.node_output_mut(out),
+            Self::Not(node) => node.node_output_mut(out),
             Self::DFF(node) => node.node_output_mut(out),
         }
     }
@@ -100,6 +105,7 @@ impl Node {
             Self::BitNot(node) => node.inputs(),
             Self::BitAnd(node) => node.inputs(),
             Self::BitOr(node) => node.inputs(),
+            Self::Not(node) => node.inputs(),
             Self::DFF(node) => node.inputs(),
         }
     }

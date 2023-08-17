@@ -6,14 +6,14 @@ use ferrum_netlist::{
     net_list::NetList,
     node::{
         BitAndComp, BitAndNode, BitNotComp, BitNotNode, BitOrComp, BitOrNode, Const,
-        ConstNode, Input, InputNode,
+        ConstNode, Input, InputNode, Mux2, Mux2Node, NotComp, NotNode,
     },
     symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
-    def::{DefKind, Res},
+    def::Res,
     def_id::{DefId, LocalDefId},
     intravisit::{self, FnKind, Visitor},
     BinOpKind, BodyId, Expr, ExprKind, FnDecl, HirId, ItemId, ItemKind, Param, Path,
@@ -188,6 +188,18 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
+    pub fn type_dependent_def_id(
+        &self,
+        hir_id: HirId,
+        span: Span,
+    ) -> Result<DefId, Error> {
+        self.tcx
+            .typeck(hir_id.owner)
+            .type_dependent_def_id(hir_id)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::MissingDefId, span))
+            .map_err(Into::into)
+    }
+
     pub fn find_blackbox<K: Into<TyOrDefId<'tcx>>>(
         &mut self,
         key: K,
@@ -195,7 +207,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<Blackbox, Error> {
         let key = key.into();
 
-        // TODO: check krate
+        // TODO: check crate
         #[allow(clippy::map_entry)]
         if !self.blackbox.contains_key(&key) {
             let mut blackbox = None;
@@ -227,7 +239,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<PrimTy, Error> {
         let key = key.into();
 
-        // TODO: check krate
+        // TODO: check crate
         #[allow(clippy::map_entry)]
         if !self.prim_ty.contains_key(&key) {
             let mut prim_ty = None;
@@ -412,18 +424,29 @@ impl<'tcx> Generator<'tcx> {
                 Ok(node_idx)
             }
             ExprKind::Call(rec, _) => {
-                if let ExprKind::Path(QPath::Resolved(
-                    _,
-                    Path {
-                        span,
-                        res: Res::Def(DefKind::Fn, def_id),
-                        ..
-                    },
-                )) = rec.kind
-                {
-                    let blackbox = self.find_blackbox(*def_id, *span)?;
-                    blackbox.evaluate_expr(self, expr)
+                if let ExprKind::Path(path) = rec.kind {
+                    match path {
+                        QPath::Resolved(_, Path { span, res, .. }) => {
+                            let def_id = res.def_id();
+                            let blackbox = self.find_blackbox(def_id, *span)?;
+                            blackbox.evaluate_expr(self, expr)
+                        }
+                        QPath::TypeRelative(ty, _) => {
+                            let res = self
+                                .tcx
+                                .typeck(rec.hir_id.owner)
+                                .qpath_res(&path, rec.hir_id);
+                            let def_id = res.def_id();
+                            let blackbox = self.find_blackbox(def_id, ty.span)?;
+                            blackbox.evaluate_expr(self, expr)
+                        }
+                        _ => {
+                            Err(SpanError::new(SpanErrorKind::NotSynthCall, rec.span)
+                                .into())
+                        }
+                    }
                 } else {
+                    println!("{:#?}", expr);
                     Err(SpanError::new(SpanErrorKind::NotSynthCall, expr.span).into())
                 }
             }
@@ -434,6 +457,26 @@ impl<'tcx> Generator<'tcx> {
 
                 self.evaluate_expr(body.value)
             }
+            ExprKind::DropTemps(inner) => self.evaluate_expr(inner),
+            ExprKind::If(cond, if_block, else_block) => {
+                let prim_ty = self.find_prim_ty(ty, expr.span)?;
+
+                let else_block = else_block.ok_or_else(|| {
+                    SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
+                })?;
+
+                let cond = self.evaluate_expr(cond)?;
+                let if_block = self.evaluate_expr(if_block)?;
+                let else_block = self.evaluate_expr(else_block)?;
+
+                Ok(self.net_list.add_node::<Mux2>(Mux2Node::new(
+                    prim_ty,
+                    cond,
+                    if_block,
+                    else_block,
+                    self.idents.tmp(),
+                )))
+            }
             ExprKind::Lit(lit) => {
                 let prim_ty = self.find_prim_ty(ty, lit.span)?;
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;
@@ -443,6 +486,11 @@ impl<'tcx> Generator<'tcx> {
                     value,
                     self.idents.tmp(),
                 )))
+            }
+            ExprKind::MethodCall(_, _, _, span) => {
+                let def_id = self.type_dependent_def_id(expr.hir_id, span)?;
+                let blackbox = self.find_blackbox(def_id, span)?;
+                blackbox.evaluate_expr(self, expr)
             }
             ExprKind::Path(QPath::Resolved(
                 _,
@@ -455,12 +503,15 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::Unary(UnOp::Not, inner) => {
                 let comb = self.evaluate_expr(inner)?;
                 let prim_ty = self.find_prim_ty(ty, expr.span)?;
+                let sym = self.idents.tmp();
 
-                Ok(self.net_list.add_node::<BitNotComp>(BitNotNode::new(
-                    prim_ty,
-                    comb,
-                    self.idents.tmp(),
-                )))
+                Ok(if prim_ty.is_bool() {
+                    self.net_list
+                        .add_node::<NotComp>(NotNode::new(prim_ty, comb, sym))
+                } else {
+                    self.net_list
+                        .add_node::<BitNotComp>(BitNotNode::new(prim_ty, comb, sym))
+                })
             }
             _ => {
                 println!("{:#?}", expr);

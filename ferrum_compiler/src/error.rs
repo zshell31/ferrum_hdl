@@ -50,7 +50,11 @@ pub enum SpanErrorKind {
     MissingPrimTy(String),
     #[error("cannot find node for ident {0}")]
     MissingNodeForIdent(Ident),
+    #[error("cannot define def_id")]
+    MissingDefId,
 
+    #[error("expected call")]
+    ExpectedCall,
     #[error("expected identifier")]
     ExpectedIdentifier,
     #[error("expected expression")]
@@ -59,6 +63,8 @@ pub enum SpanErrorKind {
     ExpectedLastExpr,
     #[error("expected let binding")]
     ExpectedLetBind,
+    #[error("expected if-else expression")]
+    ExpectedIfElseExpr,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(PrimTy),
@@ -66,6 +72,8 @@ pub enum SpanErrorKind {
     UnexpectedLitValue(PrimTy),
     #[error("unsupported binary operation")]
     UnsupportedBinOp,
+    #[error("unsupported conversion")]
+    UnsupportedConversion,
 
     #[error("not synthesizable expression")]
     NotSynthExpr,

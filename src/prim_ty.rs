@@ -10,6 +10,10 @@ pub enum PrimTy {
 }
 
 impl PrimTy {
+    pub fn is_bool(&self) -> bool {
+        matches!(self, PrimTy::Bool)
+    }
+
     pub fn width(&self) -> u8 {
         match self {
             Self::Bool => Bit::width(),

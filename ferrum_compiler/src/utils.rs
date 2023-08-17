@@ -1,4 +1,4 @@
-use rustc_hir::Pat;
+use rustc_hir::{Expr, ExprKind, Pat};
 use rustc_span::symbol::Ident;
 
 use crate::error::{Error, SpanError, SpanErrorKind};
@@ -21,6 +21,18 @@ pub fn pat_ident(pat: &Pat<'_>) -> Result<Ident, Error> {
 //         _ => Err(SpanError::new(SpanErrorKind::MissingDefId, ty.span).into()),
 //     }
 // }
+
+pub fn expected_call<'a, 'tcx>(
+    expr: &'a Expr<'tcx>,
+) -> Result<(&'a Expr<'tcx>, &'a [Expr<'tcx>]), Error>
+where
+    'tcx: 'a,
+{
+    match expr.kind {
+        ExprKind::Call(rec, args) => Ok((rec, args)),
+        _ => Err(SpanError::new(SpanErrorKind::ExpectedCall, expr.span).into()),
+    }
+}
 
 // pub fn closure_input1_def_id(expr: &Expr<'_>) -> Result<(DefId, Span), Error> {
 //     match expr.kind {

@@ -81,12 +81,6 @@ impl From<Bit> for bool {
     }
 }
 
-impl From<usize> for Bit {
-    fn from(value: usize) -> Bit {
-        (value > 0).into()
-    }
-}
-
 impl Not for Bit {
     type Output = Self;
 

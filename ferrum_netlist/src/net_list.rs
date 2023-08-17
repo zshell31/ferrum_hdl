@@ -6,7 +6,7 @@ use crate::{
     net_kind::NetKind,
     node::{
         BitAndNode, BitNotNode, BitOrNode, Component, ConstNode, DFFNode, Input,
-        InputNode, Mux2Node, Node, PassNode,
+        InputNode, Mux2Node, Node, NotNode, PassNode,
     },
     output::{IsOneOutput, NodeOutput, Outputs},
     symbol::Symbol,
@@ -245,6 +245,13 @@ impl<'a> Generator<'a> {
                 let output = out.sym;
 
                 buffer.write_template(format_args!("assign {output} = ~{input};",));
+            }
+            Node::Not(NotNode { input, out }) => {
+                self.add_local(*out, None);
+                let input = self.net_list.node_output(*input).sym;
+                let output = out.sym;
+
+                buffer.write_template(format_args!("assign {output} = !{input};",));
             }
             Node::BitAnd(BitAndNode {
                 input1,

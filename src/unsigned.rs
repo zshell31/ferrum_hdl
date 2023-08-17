@@ -1,10 +1,14 @@
-use std::fmt::{self, Binary, Display, LowerHex};
-use std::ops::{Add, Div, Mul, Sub};
+use std::{
+    fmt::{self, Binary, Display, LowerHex},
+    ops::{Add, Div, Mul, Sub},
+};
 
-use crate::bit::Bit;
-use crate::bit_pack::BitPack;
-use crate::const_asserts::{Assert, IsTrue};
-use crate::signal::SignalValue;
+use crate::{
+    bit::Bit,
+    bit_pack::BitPack,
+    const_asserts::{Assert, IsTrue},
+    signal::SignalValue,
+};
 
 pub const fn unsigned_guard(n: usize) -> bool {
     n > 0 && n <= 64
@@ -50,7 +54,10 @@ where
     }
 }
 
-impl<const N: usize> SignalValue for Unsigned<N> where Assert<{ unsigned_guard(N) }>: IsTrue {}
+impl<const N: usize> SignalValue for Unsigned<N> where
+    Assert<{ unsigned_guard(N) }>: IsTrue
+{
+}
 
 impl<const N: usize> Unsigned<N>
 where
@@ -65,7 +72,7 @@ where
     Assert<{ unsigned_guard(N) }>: IsTrue,
 {
     fn msb(&self) -> Bit {
-        (self.0 & Self::MSB_MASK).into()
+        ((self.0 & Self::MSB_MASK) > 0).into()
     }
 }
 

@@ -1,21 +1,16 @@
-use ferrum::prim_ty::{DummyTy, IsPrimTy, PrimTy};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
+use super::{IsNode, Node};
 use crate::{
-    index::{Index, NodeId, NodeIndex},
+    index::{Index, NodeIndex},
     net_kind::NetKind,
-    output::{NodeOutput, Outputs},
+    output::NodeOutput,
     symbol::Symbol,
 };
 
 // input wire a[N:0];
 // output wire b[N:0];
 // assign b = a;
-#[derive(Debug, Clone, Copy)]
-pub struct Pass<A = DummyTy> {
-    pub input: NodeId<A>,
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct PassNode {
     pub input: NodeIndex,
@@ -41,7 +36,9 @@ impl From<PassNode> for Node {
     }
 }
 
-impl IsNode for PassNode {
+impl<I: Index> IsNode<I> for PassNode {
+    type Outputs = (DummyTy,);
+
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.out,
@@ -58,21 +55,5 @@ impl IsNode for PassNode {
 
     fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
         [self.input].into_iter()
-    }
-}
-
-impl<I: Index, A: IsPrimTy> Component<I> for Pass<A> {
-    type Node = PassNode;
-    type Outputs = (A,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        PassNode {
-            input: self.input.index(),
-            out: NodeOutput {
-                ty: A::prim_ty(),
-                sym,
-                kind: NetKind::Wire,
-            },
-        }
     }
 }

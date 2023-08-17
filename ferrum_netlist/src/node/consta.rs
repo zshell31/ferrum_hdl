@@ -1,17 +1,12 @@
-use ferrum::prim_ty::{DummyTy, PrimTy, PrimValue};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
+use super::{IsNode, Node};
 use crate::{
     index::{Index, NodeIndex},
     net_kind::NetKind,
-    output::{NodeOutput, Outputs},
+    output::NodeOutput,
     symbol::Symbol,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct Const<A = DummyTy> {
-    pub value: A,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct ConstNode {
@@ -38,7 +33,9 @@ impl From<ConstNode> for Node {
     }
 }
 
-impl IsNode for ConstNode {
+impl<I: Index> IsNode<I> for ConstNode {
+    type Outputs = (DummyTy,);
+
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.out,
@@ -55,14 +52,5 @@ impl IsNode for ConstNode {
 
     fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
         [].into_iter()
-    }
-}
-
-impl<I: Index, A: PrimValue> Component<I> for Const<A> {
-    type Node = ConstNode;
-    type Outputs = (A,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        ConstNode::new(A::prim_ty(), self.value.value(), sym)
     }
 }

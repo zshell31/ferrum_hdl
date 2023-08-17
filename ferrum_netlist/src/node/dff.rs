@@ -1,23 +1,13 @@
 use either::Either;
-use ferrum::{
-    bit::Bit,
-    prim_ty::{DummyTy, IsPrimTy, PrimTy},
-};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
+use super::{IsNode, Node};
 use crate::{
-    index::{Index, NodeId, NodeIndex},
+    index::{Index, NodeIndex},
     net_kind::NetKind,
-    output::{NodeOutput, Outputs},
+    output::NodeOutput,
     symbol::Symbol,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct DFF<A = DummyTy> {
-    pub clk: NodeId<Bit>,
-    pub rst_value: NodeId<Bit>,
-    pub data: Option<NodeId<A>>,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct DFFNode {
@@ -54,7 +44,8 @@ impl From<DFFNode> for Node {
     }
 }
 
-impl IsNode for DFFNode {
+impl<I: Index> IsNode<I> for DFFNode {
+    type Outputs = (DummyTy,);
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.out,
@@ -74,20 +65,5 @@ impl IsNode for DFFNode {
             Some(data) => Either::Left([self.clk, self.rst_value, data].into_iter()),
             None => Either::Right([self.clk, self.rst_value].into_iter()),
         }
-    }
-}
-
-impl<I: Index, A: IsPrimTy> Component<I> for DFF<A> {
-    type Node = DFFNode;
-    type Outputs = (A,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        DFFNode::new(
-            A::prim_ty(),
-            self.clk.index(),
-            self.rst_value.index(),
-            self.data.map(|data| data.index()),
-            sym,
-        )
     }
 }

@@ -1,22 +1,12 @@
-use ferrum::{
-    bit::Bit,
-    prim_ty::{DummyTy, IsPrimTy, PrimTy},
-};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
+use super::{IsNode, Node};
 use crate::{
-    index::{Index, NodeId, NodeIndex},
+    index::{Index, NodeIndex},
     net_kind::NetKind,
-    output::{NodeOutput, Outputs},
+    output::NodeOutput,
     symbol::Symbol,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct Mux2<A = DummyTy> {
-    pub sel: NodeId<Bit>,
-    pub input1: NodeId<A>,
-    pub input2: NodeId<A>,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Mux2Node {
@@ -53,7 +43,9 @@ impl From<Mux2Node> for Node {
     }
 }
 
-impl IsNode for Mux2Node {
+impl<I: Index> IsNode<I> for Mux2Node {
+    type Outputs = (DummyTy,);
+
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.out,
@@ -70,20 +62,5 @@ impl IsNode for Mux2Node {
 
     fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
         [self.input1, self.input2].into_iter()
-    }
-}
-
-impl<I: Index, A: IsPrimTy> Component<I> for Mux2<A> {
-    type Node = Mux2Node;
-    type Outputs = (A,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        Mux2Node::new(
-            A::prim_ty(),
-            self.sel.index(),
-            self.input1.index(),
-            self.input2.index(),
-            sym,
-        )
     }
 }

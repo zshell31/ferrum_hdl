@@ -1,23 +1,14 @@
 use std::ops::BitOr;
 
-use ferrum::prim_ty::{DummyTy, IsPrimTy, PrimTy};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
+use super::{IsNode, Node};
 use crate::{
-    index::{Index, NodeId, NodeIndex},
+    index::{Index, NodeIndex},
     net_kind::NetKind,
-    output::{NodeOutput, Outputs},
+    output::NodeOutput,
     symbol::Symbol,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub struct BitOrComp<A = DummyTy>
-where
-    A: BitOr,
-{
-    pub input1: NodeId<A>,
-    pub input2: NodeId<A>,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct BitOrNode {
@@ -46,7 +37,9 @@ impl From<BitOrNode> for Node {
     }
 }
 
-impl IsNode for BitOrNode {
+impl<I: Index> IsNode<I> for BitOrNode {
+    type Outputs = (<DummyTy as BitOr>::Output,);
+
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.out,
@@ -63,22 +56,5 @@ impl IsNode for BitOrNode {
 
     fn inputs(&self) -> impl Iterator<Item = NodeIndex> {
         [self.input1, self.input2].into_iter()
-    }
-}
-
-impl<I: Index, A: BitOr + IsPrimTy> Component<I> for BitOrComp<A>
-where
-    <A as BitOr>::Output: IsPrimTy,
-{
-    type Node = BitOrNode;
-    type Outputs = (<A as BitOr>::Output,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        BitOrNode::new(
-            <A as BitOr>::Output::prim_ty(),
-            self.input1.index(),
-            self.input2.index(),
-            sym,
-        )
     }
 }

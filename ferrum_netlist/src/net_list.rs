@@ -2,11 +2,11 @@ use std::collections::{BTreeSet, HashMap};
 
 use crate::{
     buffer::Buffer,
-    index::{Index, NodeId, NodeIndex},
+    index::{Index, NodeIndex},
     net_kind::NetKind,
     node::{
-        BitAndNode, BitNotNode, BitOrNode, Component, ConstNode, DFFNode, Input,
-        InputNode, Mux2Node, Node, NotNode, PassNode,
+        BitAndNode, BitNotNode, BitOrNode, ConstNode, DFFNode, InputNode, IsNode,
+        Mux2Node, Node, NotNode, PassNode,
     },
     output::{IsOneOutput, NodeOutput, Outputs},
     symbol::Symbol,
@@ -30,22 +30,11 @@ impl NetList {
         }
     }
 
-    pub fn add_component<C: Component<Self>>(
-        &mut self,
-        component: C,
-        symbols: <C::Outputs as Outputs<Self>>::Symbols,
-    ) -> <C::Outputs as Outputs<Self>>::NodeIds {
-        let outputs = <C::Outputs as Outputs<Self>>::make_node_ids(self);
-        self.add_node_inner(component.into_node(symbols));
-
-        outputs
-    }
-
-    pub fn add_node<C: Component<Self>>(&mut self, node: C::Node) -> NodeIndex
+    pub fn add_node<N: IsNode<Self>>(&mut self, node: N) -> NodeIndex
     where
-        C::Outputs: IsOneOutput,
+        N::Outputs: IsOneOutput,
     {
-        let outputs = <C::Outputs as Outputs<Self>>::make_node_idx(self);
+        let outputs = <N::Outputs as Outputs<Self>>::make_node_idx(self);
         self.add_node_inner(node);
 
         outputs[0]
@@ -53,16 +42,16 @@ impl NetList {
 
     pub fn add_dummy_node(&mut self, node: InputNode) -> NodeIndex
     where
-        <Input as Component<Self>>::Outputs: IsOneOutput,
+        <InputNode as IsNode<Self>>::Outputs: IsOneOutput,
     {
         let outputs =
-            <<Input as Component<Self>>::Outputs as Outputs<Self>>::make_node_idx(self);
+            <<InputNode as IsNode<Self>>::Outputs as Outputs<Self>>::make_node_idx(self);
         self.add_node_inner(Node::DummyInput(node));
 
         outputs[0]
     }
 
-    pub fn replace<C: Component<Self>>(&mut self, node_index: NodeIndex, node: C::Node) {
+    pub fn replace<N: IsNode<Self>>(&mut self, node_index: NodeIndex, node: N) {
         if self.node(node_index).is_input() {
             self.inputs.remove(&node_index);
         }
@@ -84,10 +73,6 @@ impl NetList {
         self.nodes.push(node);
     }
 
-    pub fn add_output<A>(&mut self, node_id: NodeId<A>) {
-        self.add_output_node(node_id.index())
-    }
-
     pub fn add_output_node(&mut self, node_index: NodeIndex) {
         self.outputs.insert(node_index);
     }
@@ -102,12 +87,12 @@ impl NetList {
 
     pub fn node_output(&self, node_index: NodeIndex) -> &NodeOutput {
         let node = self.node(node_index);
-        node.node_output(node_index.1)
+        node.node_output::<Self>(node_index.1)
     }
 
     pub fn node_output_mut(&mut self, node_index: NodeIndex) -> &mut NodeOutput {
         let node = self.node_mut(node_index);
-        node.node_output_mut(node_index.1)
+        node.node_output_mut::<Self>(node_index.1)
     }
 
     pub fn find_node(
@@ -131,7 +116,7 @@ impl NetList {
             res.push(node_index)
         }
 
-        for input in node.inputs() {
+        for input in node.inputs::<Self>() {
             self.find_node_inner(input, f, res);
         }
     }
@@ -296,7 +281,7 @@ impl<'a> Generator<'a> {
 
                 buffer.write_template(format_args!(
                     "
-always @ (*) begin
+always @ ({sel} or {input1} or {input2}) begin
     case ({sel})
         1'h0: {output} = {input1};
         1'h1: {output} = {input2};

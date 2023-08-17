@@ -1,39 +1,9 @@
-use std::{
-    fmt::{self, Debug},
-    marker::PhantomData,
-};
+use std::fmt::Debug;
 
-use ferrum::prim_ty::{DummyTy, IsPrimTy, PrimTy};
+use ferrum::prim_ty::{DummyTy, PrimTy};
 
-use super::{Component, IsNode, Node};
-use crate::{
-    index::Index,
-    net_kind::NetKind,
-    output::{NodeOutput, Outputs},
-    symbol::Symbol,
-};
-
-pub struct Input<A = DummyTy>(PhantomData<A>);
-
-impl<A> Default for Input<A> {
-    fn default() -> Self {
-        Self(PhantomData)
-    }
-}
-
-impl<A> Debug for Input<A> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Input")
-    }
-}
-
-impl<A> Clone for Input<A> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
-impl<A> Copy for Input<A> {}
+use super::{IsNode, Node};
+use crate::{index::Index, net_kind::NetKind, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct InputNode(pub PrimTy, pub NodeOutput);
@@ -54,7 +24,9 @@ impl From<InputNode> for Node {
     }
 }
 
-impl IsNode for InputNode {
+impl<I: Index> IsNode<I> for InputNode {
+    type Outputs = (DummyTy,);
+
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {
             0 => &self.1,
@@ -71,14 +43,5 @@ impl IsNode for InputNode {
 
     fn inputs(&self) -> impl Iterator<Item = crate::index::NodeIndex> {
         [].into_iter()
-    }
-}
-
-impl<I: Index, A: IsPrimTy> Component<I> for Input<A> {
-    type Node = InputNode;
-    type Outputs = (A,);
-
-    fn into_node(self, (sym,): <Self::Outputs as Outputs<I>>::Symbols) -> Self::Node {
-        InputNode::new(A::prim_ty(), sym)
     }
 }

@@ -4,10 +4,7 @@ use ferrum::prim_ty::PrimTy;
 use ferrum_netlist::{
     index::NodeIndex,
     net_list::NetList,
-    node::{
-        BitAndComp, BitAndNode, BitNotComp, BitNotNode, BitOrComp, BitOrNode, Const,
-        ConstNode, Input, InputNode, Mux2, Mux2Node, NotComp, NotNode,
-    },
+    node::{BitAndNode, BitNotNode, BitOrNode, ConstNode, InputNode, Mux2Node, NotNode},
     symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -330,7 +327,7 @@ impl<'tcx> Generator<'tcx> {
                 let input = if is_dummy {
                     self.net_list.add_dummy_node(input)
                 } else {
-                    self.net_list.add_node::<Input>(input)
+                    self.net_list.add_node(input)
                 };
 
                 self.idents.add_local_ident(ident, input);
@@ -355,7 +352,7 @@ impl<'tcx> Generator<'tcx> {
                     BinOpKind::BitAnd => {
                         let lhs = self.evaluate_expr(lhs)?;
                         let rhs = self.evaluate_expr(rhs)?;
-                        Ok(self.net_list.add_node::<BitAndComp>(BitAndNode::new(
+                        Ok(self.net_list.add_node(BitAndNode::new(
                             prim_ty,
                             lhs,
                             rhs,
@@ -365,7 +362,7 @@ impl<'tcx> Generator<'tcx> {
                     BinOpKind::BitOr => {
                         let lhs = self.evaluate_expr(lhs)?;
                         let rhs = self.evaluate_expr(rhs)?;
-                        Ok(self.net_list.add_node::<BitOrComp>(BitOrNode::new(
+                        Ok(self.net_list.add_node(BitOrNode::new(
                             prim_ty,
                             lhs,
                             rhs,
@@ -469,7 +466,7 @@ impl<'tcx> Generator<'tcx> {
                 let if_block = self.evaluate_expr(if_block)?;
                 let else_block = self.evaluate_expr(else_block)?;
 
-                Ok(self.net_list.add_node::<Mux2>(Mux2Node::new(
+                Ok(self.net_list.add_node(Mux2Node::new(
                     prim_ty,
                     cond,
                     if_block,
@@ -481,7 +478,7 @@ impl<'tcx> Generator<'tcx> {
                 let prim_ty = self.find_prim_ty(ty, lit.span)?;
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;
 
-                Ok(self.net_list.add_node::<Const>(ConstNode::new(
+                Ok(self.net_list.add_node(ConstNode::new(
                     prim_ty,
                     value,
                     self.idents.tmp(),
@@ -506,11 +503,9 @@ impl<'tcx> Generator<'tcx> {
                 let sym = self.idents.tmp();
 
                 Ok(if prim_ty.is_bool() {
-                    self.net_list
-                        .add_node::<NotComp>(NotNode::new(prim_ty, comb, sym))
+                    self.net_list.add_node(NotNode::new(prim_ty, comb, sym))
                 } else {
-                    self.net_list
-                        .add_node::<BitNotComp>(BitNotNode::new(prim_ty, comb, sym))
+                    self.net_list.add_node(BitNotNode::new(prim_ty, comb, sym))
                 })
             }
             _ => {

@@ -4,7 +4,7 @@ use ferrum::{
 };
 use ferrum_netlist::{
     index::NodeIndex,
-    node::{DFFNode, Node, Pass, PassNode, DFF},
+    node::{DFFNode, Node, PassNode},
 };
 use rustc_ast::LitKind;
 use rustc_hir::{
@@ -118,7 +118,7 @@ impl RegisterFn {
         let clk = generator.evaluate_expr(&args[0])?;
         let rst_value = generator.evaluate_expr(&args[1])?;
 
-        let dff = generator.net_list.add_node::<DFF>(DFFNode::new(
+        let dff = generator.net_list.add_node(DFFNode::new(
             prim_ty,
             clk,
             rst_value,
@@ -138,7 +138,7 @@ impl RegisterFn {
 
         generator
             .net_list
-            .replace::<Pass>(dummy, PassNode::new(dummy_out.ty, dff, dummy_out.sym));
+            .replace(dummy, PassNode::new(dummy_out.ty, dff, dummy_out.sym));
 
         if let Node::DFF(dff) = generator.net_list.node_mut(dff) {
             dff.data = Some(comb);

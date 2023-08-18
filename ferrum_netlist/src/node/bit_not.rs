@@ -1,5 +1,3 @@
-use std::ops::Not;
-
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
@@ -31,7 +29,7 @@ impl From<BitNotNode> for Node {
 }
 
 impl IsNode for BitNotNode {
-    type Outputs = (<DummyTy as Not>::Output,);
+    type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {

@@ -4,13 +4,13 @@ use super::{IsNode, Node};
 use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
-pub struct BitAndNode {
+pub struct AddNode {
     pub input1: NodeId,
     pub input2: NodeId,
     pub out: NodeOutput,
 }
 
-impl BitAndNode {
+impl AddNode {
     pub fn new(ty: PrimTy, input1: NodeId, input2: NodeId, sym: Symbol) -> Self {
         Self {
             input1,
@@ -24,13 +24,13 @@ impl BitAndNode {
     }
 }
 
-impl From<BitAndNode> for Node {
-    fn from(node: BitAndNode) -> Self {
-        Self::BitAnd(node)
+impl From<AddNode> for Node {
+    fn from(node: AddNode) -> Self {
+        Self::Add(node)
     }
 }
 
-impl IsNode for BitAndNode {
+impl IsNode for AddNode {
     type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {

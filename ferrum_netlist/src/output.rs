@@ -1,4 +1,4 @@
-use ferrum::prim_ty::{IsPrimTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
 use crate::{
     net_kind::NetKind,
@@ -23,7 +23,7 @@ pub trait IsOneOutput {}
 
 impl<T1> IsOneOutput for (T1,) {}
 
-impl<T1: IsPrimTy> Outputs for (T1,) {
+impl<T1> Outputs for (T1,) {
     type Symbols = (Symbol,);
 
     fn make_node_ids(net_list: &mut NetList) -> Vec<NodeId> {

@@ -5,47 +5,18 @@ use std::{
 
 use ferrum_macros::blackbox;
 
-// use rustc_ast::LitKind;
-// use rustc_hir::Lit;
-use crate::prim_ty::{IsPrimTy, PrimTy, PrimValue};
 use crate::signal::SignalValue;
-// use crate::traits::Synthesizable;
 
 #[blackbox(Bit)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bit(bool);
 
-impl IsPrimTy for Bit {
-    fn prim_ty() -> PrimTy {
-        PrimTy::Bit
-    }
-
-    fn width() -> u8 {
-        1
+pub fn bit_value(value: bool) -> u128 {
+    match value {
+        false => 0,
+        true => 1,
     }
 }
-
-impl PrimValue for Bit {
-    fn value(self) -> u128 {
-        match self.0 {
-            false => 0,
-            true => 1,
-        }
-    }
-}
-
-// impl Synthesizable for Bit {
-//     fn width() -> u128 {
-//         1
-//     }
-
-//     fn synthesize_lit(lit: &Lit) -> Option<Expression> {
-//         match lit.node {
-//             LitKind::Bool(b) => Self::from(b).synthesize(),
-//             _ => None,
-//         }
-//     }
-// }
 
 impl Display for Bit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -60,13 +31,6 @@ impl Bit {
     pub const HIGH: Bit = Bit(true);
     #[blackbox(Bit(expr = 0))]
     pub const LOW: Bit = Bit(false);
-
-    // fn synthesize(self) -> Option<Expression> {
-    //     match self.0 {
-    //         false => Some(Expression::Literal(Literal { val: 0, width: 1 })),
-    //         true => Some(Expression::Literal(Literal { val: 1, width: 1 })),
-    //     }
-    // }
 }
 
 impl From<bool> for Bit {

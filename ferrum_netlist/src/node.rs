@@ -1,14 +1,16 @@
 use auto_enums::auto_enum;
 
 pub use self::{
-    bit_and::BitAndNode, bit_not::BitNotNode, bit_or::BitOrNode, consta::ConstNode,
-    dff::DFFNode, input::InputNode, mux2::Mux2Node, not::NotNode, pass::PassNode,
+    add::AddNode, bit_and::BitAndNode, bit_not::BitNotNode, bit_or::BitOrNode,
+    consta::ConstNode, dff::DFFNode, input::InputNode, mux2::Mux2Node, not::NotNode,
+    pass::PassNode, sub::SubNode,
 };
 use crate::{
     net_list::NodeId,
     output::{NodeOutput, Outputs},
 };
 
+mod add;
 mod bit_and;
 mod bit_not;
 mod bit_or;
@@ -18,6 +20,7 @@ mod input;
 mod mux2;
 mod not;
 mod pass;
+mod sub;
 
 pub trait IsNode: Into<Node> {
     type Outputs: Outputs;
@@ -38,6 +41,8 @@ pub enum Node {
     BitNot(BitNotNode),
     BitAnd(BitAndNode),
     BitOr(BitOrNode),
+    Add(AddNode),
+    Sub(SubNode),
     Not(NotNode),
     Mux2(Mux2Node),
     DFF(DFFNode),
@@ -62,6 +67,8 @@ impl Node {
             Self::BitNot(node) => node.node_output(out),
             Self::BitAnd(node) => node.node_output(out),
             Self::BitOr(node) => node.node_output(out),
+            Self::Add(node) => node.node_output(out),
+            Self::Sub(node) => node.node_output(out),
             Self::Not(node) => node.node_output(out),
             Self::DFF(node) => node.node_output(out),
         }
@@ -77,6 +84,8 @@ impl Node {
             Self::BitNot(node) => node.node_output_mut(out),
             Self::BitAnd(node) => node.node_output_mut(out),
             Self::BitOr(node) => node.node_output_mut(out),
+            Self::Add(node) => node.node_output_mut(out),
+            Self::Sub(node) => node.node_output_mut(out),
             Self::Not(node) => node.node_output_mut(out),
             Self::DFF(node) => node.node_output_mut(out),
         }
@@ -93,6 +102,8 @@ impl Node {
             Self::BitNot(node) => node.inputs(),
             Self::BitAnd(node) => node.inputs(),
             Self::BitOr(node) => node.inputs(),
+            Self::Add(node) => node.inputs(),
+            Self::Sub(node) => node.inputs(),
             Self::Not(node) => node.inputs(),
             Self::DFF(node) => node.inputs(),
         }

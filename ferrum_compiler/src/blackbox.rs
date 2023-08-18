@@ -1,6 +1,7 @@
 use ferrum::{
-    bit::Bit,
-    prim_ty::{PrimTy, PrimValue},
+    bit::{bit_value, Bit},
+    prim_ty::PrimTy,
+    unsigned::{unsigned_value, Unsigned},
 };
 use ferrum_netlist::{
     module::Module,
@@ -16,7 +17,7 @@ use rustc_span::Span;
 
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    generator::Generator,
+    generator::{Generator, Generic, Generics, Key},
     utils,
 };
 
@@ -63,7 +64,7 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     None
 }
 
-pub fn find_prim_ty(def_path: &DefPath) -> Option<PrimTy> {
+pub fn find_prim_ty(key: &Key<'_>, def_path: &DefPath) -> Option<PrimTy> {
     // TODO: check crate
     if def_path == &ItemPath(&["bit", "Bit"]) {
         #[allow(unused_imports)]
@@ -75,6 +76,15 @@ pub fn find_prim_ty(def_path: &DefPath) -> Option<PrimTy> {
         #[allow(unused_imports)]
         use ferrum::signal::Clock;
         return Some(PrimTy::Clock);
+    }
+
+    if def_path == &ItemPath(&["unsigned", "Unsigned"]) {
+        #[allow(unused_imports)]
+        use ferrum::unsigned::Unsigned;
+        return match key.generics {
+            Some(Generics::G1(Generic::Const(val))) => Some(PrimTy::Unsigned(val)),
+            _ => None,
+        };
     }
 
     None
@@ -116,7 +126,7 @@ impl RegisterFn {
         let gen = generator
             .generic_type(&ty, 1)
             .ok_or_else(|| Self::make_err(rec.span))?;
-        let prim_ty = generator.find_prim_ty(gen, rec.span)?;
+        let prim_ty = generator.find_prim_ty(&gen, rec.span)?;
 
         let clk = generator.evaluate_expr(&args[0], module)?;
         let rst_value = generator.evaluate_expr(&args[1], module)?;
@@ -170,10 +180,10 @@ impl Conversion {
         match expr.kind {
             ExprKind::Call(rec, args) => {
                 let from = generator
-                    .find_prim_ty(generator.node_type(args[0].hir_id), args[0].span)?;
+                    .find_prim_ty(&generator.node_type(args[0].hir_id), args[0].span)?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator
-                        .find_prim_ty(generator.node_type(ty.hir_id), rec.span)?,
+                        .find_prim_ty(&generator.node_type(ty.hir_id), rec.span)?,
                     _ => {
                         return Err(Self::make_err(rec.span));
                     }
@@ -183,9 +193,9 @@ impl Conversion {
             }
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from =
-                    generator.find_prim_ty(generator.node_type(rec.hir_id), rec.span)?;
+                    generator.find_prim_ty(&generator.node_type(rec.hir_id), rec.span)?;
                 let target =
-                    generator.find_prim_ty(generator.node_type(expr.hir_id), span)?;
+                    generator.find_prim_ty(&generator.node_type(expr.hir_id), span)?;
 
                 Self::convert(from, target, generator, rec, module)
             }
@@ -209,6 +219,13 @@ impl Conversion {
                 assert_convert::<Bit, bool>();
                 generator.evaluate_expr(expr, module)
             }
+            (PrimTy::U128, PrimTy::Unsigned(n)) => {
+                assert_convert::<u128, Unsigned<1>>();
+                let node_id = generator.evaluate_expr(expr, module)?;
+                let node = module.net_list.node_mut(node_id);
+                node.node_output_mut(0).ty = PrimTy::Unsigned(n);
+                Ok(node_id)
+            }
             _ => Err(
                 SpanError::new(SpanErrorKind::UnsupportedConversion, expr.span).into(),
             ),
@@ -222,6 +239,8 @@ pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
     match prim_ty {
         PrimTy::Bool => evaluate_bit_lit(lit),
         PrimTy::Bit => evaluate_bit_lit(lit),
+        PrimTy::U128 => evaluate_unsigned_lit(lit, prim_ty.width()),
+        PrimTy::Unsigned(n) => evaluate_unsigned_lit(lit, n),
         PrimTy::Clock => Err(SpanError::new(
             SpanErrorKind::PrimTyWithoutValue(PrimTy::Clock),
             lit.span,
@@ -232,9 +251,20 @@ pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
 
 fn evaluate_bit_lit(lit: &Lit) -> Result<u128, Error> {
     match lit.node {
-        LitKind::Bool(bool) => Ok(Bit::from(bool).value()),
+        LitKind::Bool(b) => Ok(bit_value(b)),
         _ => Err(SpanError::new(
             SpanErrorKind::UnexpectedLitValue(PrimTy::Bit),
+            lit.span,
+        )
+        .into()),
+    }
+}
+
+fn evaluate_unsigned_lit(lit: &Lit, width: u8) -> Result<u128, Error> {
+    match lit.node {
+        LitKind::Int(n, _) => Ok(unsigned_value(n, width)),
+        _ => Err(SpanError::new(
+            SpanErrorKind::UnexpectedLitValue(PrimTy::Unsigned(width)),
             lit.span,
         )
         .into()),

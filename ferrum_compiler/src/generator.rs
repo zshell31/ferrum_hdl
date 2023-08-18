@@ -5,26 +5,31 @@ use ferrum_netlist::{
     backend::Verilog,
     module::{Module, ModuleList},
     net_list::NodeId,
-    node::{BitAndNode, BitNotNode, BitOrNode, ConstNode, InputNode, Mux2Node, NotNode},
+    node::{
+        AddNode, BitAndNode, BitNotNode, BitOrNode, ConstNode, InputNode, Mux2Node,
+        NotNode, SubNode,
+    },
     symbol::Symbol,
 };
+use rustc_const_eval::interpret::{ConstValue, Scalar};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def::Res,
     def_id::{DefId, LocalDefId},
     intravisit::{self, FnKind, Visitor},
-    BinOpKind, BodyId, Expr, ExprKind, FnDecl, HirId, ItemId, ItemKind, Param, Path,
-    QPath, StmtKind, Ty as HirTy, TyKind as HirTyKind, UnOp,
+    AnonConst, BinOpKind, BodyId, ConstArg, Expr, ExprKind, FnDecl,
+    GenericArg as HirGenArg, HirId, ItemId, ItemKind, Param, Path, QPath, StmtKind,
+    Ty as HirTy, TyKind as HirTyKind, UnOp,
 };
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::{
     hir::nested_filter::OnlyBodies,
-    ty::{Ty, TyCtxt},
+    ty::{GenericArg, Ty, TyCtxt, UnevaluatedConst},
 };
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
-use rustc_type_ir::TyKind;
+use rustc_type_ir::{ConstKind, TyKind, UintTy};
 
 use crate::{
     blackbox::{self, Blackbox},
@@ -114,11 +119,151 @@ impl<'tcx> TyOrDefId<'tcx> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Generic<'tcx> {
+    Ty(TyOrDefId<'tcx>),
+    Const(u8),
+}
+
+impl<'tcx> Generic<'tcx> {
+    fn const_eval(def_id: DefId, tcx: TyCtxt<'_>) -> Option<u8> {
+        let value = tcx.const_eval_poly(def_id).ok()?;
+        match value {
+            ConstValue::Scalar(Scalar::Int(scalar)) => scalar.try_to_u8().ok(),
+            _ => None,
+        }
+    }
+
+    fn from_hir_gen_arg(arg: &HirGenArg, tcx: TyCtxt<'_>) -> Option<Self> {
+        match arg {
+            HirGenArg::Type(ty) => utils::def_id_for_hir_ty(ty)
+                .map(Into::into)
+                .map(Generic::Ty),
+            HirGenArg::Const(ConstArg {
+                value: AnonConst { def_id, .. },
+                ..
+            }) => Self::const_eval(def_id.to_def_id(), tcx).map(Generic::Const),
+            _ => None,
+        }
+    }
+
+    fn from_gen_arg(arg: &GenericArg<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
+        if let Some(ty) = arg.as_type() {
+            return Some(Generic::Ty(ty.into()));
+        }
+
+        if let Some(cons) = arg.as_const() {
+            match cons.kind() {
+                ConstKind::Unevaluated(UnevaluatedConst { def, .. }) => {
+                    Self::const_eval(def, tcx).map(Generic::Const)
+                }
+                ConstKind::Value(val_tree) => val_tree
+                    .try_to_scalar_int()
+                    .and_then(|scalar| scalar.try_to_u8().ok())
+                    .map(Generic::Const),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Generics<'tcx> {
+    G1(Generic<'tcx>),
+    G2(Generic<'tcx>, Generic<'tcx>),
+    G3(Generic<'tcx>, Generic<'tcx>, Generic<'tcx>),
+}
+
+impl<'tcx> Generics<'tcx> {
+    fn from_ty(ty: &Ty<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
+        match ty.kind() {
+            TyKind::Adt(_, generics) => match generics.as_slice() {
+                [gen] => Some(Self::G1(Generic::from_gen_arg(gen, tcx)?)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Key<'tcx> {
+    pub ty_or_def_id: TyOrDefId<'tcx>,
+    pub generics: Option<Generics<'tcx>>,
+}
+
+impl<'tcx> Key<'tcx> {
+    fn def_id(&self) -> Option<DefId> {
+        self.ty_or_def_id.def_id()
+    }
+
+    fn as_string(&self, tcx: TyCtxt<'tcx>) -> String {
+        self.ty_or_def_id.as_string(tcx)
+    }
+}
+
+pub trait AsKey<'tcx> {
+    fn as_key(&self, tcx: TyCtxt<'tcx>) -> Key<'tcx>;
+}
+
+impl<'tcx> AsKey<'tcx> for Path<'tcx> {
+    fn as_key(&self, tcx: TyCtxt<'tcx>) -> Key<'tcx> {
+        let def_id = self.res.def_id();
+
+        let generics = self
+            .segments
+            .last()
+            .map(|segment| segment.args())
+            .map(|generics| generics.args)
+            .filter(|args| !args.is_empty())
+            .and_then(|args| match args {
+                [arg] => Some(Generics::G1(Generic::from_hir_gen_arg(arg, tcx)?)),
+                [arg1, arg2] => Some(Generics::G2(
+                    Generic::from_hir_gen_arg(arg1, tcx)?,
+                    Generic::from_hir_gen_arg(arg2, tcx)?,
+                )),
+                [arg1, arg2, arg3] => Some(Generics::G3(
+                    Generic::from_hir_gen_arg(arg1, tcx)?,
+                    Generic::from_hir_gen_arg(arg2, tcx)?,
+                    Generic::from_hir_gen_arg(arg3, tcx)?,
+                )),
+                _ => None,
+            });
+
+        Key {
+            ty_or_def_id: def_id.into(),
+            generics,
+        }
+    }
+}
+
+impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
+    fn as_key(&self, tcx: TyCtxt<'tcx>) -> Key<'tcx> {
+        let generics = Generics::from_ty(self, tcx);
+
+        Key {
+            ty_or_def_id: (*self).into(),
+            generics,
+        }
+    }
+}
+
+impl<'tcx> AsKey<'tcx> for DefId {
+    fn as_key(&self, _: TyCtxt<'tcx>) -> Key<'tcx> {
+        Key {
+            ty_or_def_id: (*self).into(),
+            generics: None,
+        }
+    }
+}
+
 pub struct Generator<'tcx> {
     tcx: TyCtxt<'tcx>,
     top_module: ItemId,
-    blackbox: FxHashMap<TyOrDefId<'tcx>, Option<Blackbox>>,
-    prim_ty: FxHashMap<TyOrDefId<'tcx>, Option<PrimTy>>,
+    blackbox: FxHashMap<Key<'tcx>, Option<Blackbox>>,
+    prim_ty: FxHashMap<Key<'tcx>, Option<PrimTy>>,
     modules: ModuleList,
     pub idents: Idents,
 }
@@ -197,12 +342,12 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn find_blackbox<K: Into<TyOrDefId<'tcx>>>(
+    pub fn find_blackbox<K: AsKey<'tcx>>(
         &mut self,
-        key: K,
+        key: &K,
         span: Span,
     ) -> Result<Blackbox, Error> {
-        let key = key.into();
+        let key = key.as_key(self.tcx);
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -229,27 +374,33 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn find_prim_ty<K: Into<TyOrDefId<'tcx>>>(
+    pub fn find_prim_ty<K: AsKey<'tcx>>(
         &mut self,
-        key: K,
+        key: &K,
         span: Span,
     ) -> Result<PrimTy, Error> {
-        let key = key.into();
+        let key = key.as_key(self.tcx);
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
         if !self.prim_ty.contains_key(&key) {
             let mut prim_ty = None;
 
-            if let TyOrDefId::Ty(ty) = key {
-                if let TyKind::Bool = ty.kind() {
-                    prim_ty = Some(PrimTy::Bool);
+            if let TyOrDefId::Ty(ty) = key.ty_or_def_id {
+                match ty.kind() {
+                    TyKind::Bool => {
+                        prim_ty = Some(PrimTy::Bool);
+                    }
+                    TyKind::Uint(UintTy::U128) => {
+                        prim_ty = Some(PrimTy::U128);
+                    }
+                    _ => {}
                 }
             }
 
             if let Some(def_id) = key.def_id() {
                 let def_path = self.tcx.def_path(def_id);
-                prim_ty = blackbox::find_prim_ty(&def_path);
+                prim_ty = blackbox::find_prim_ty(&key, &def_path);
             }
 
             self.prim_ty.insert(key, prim_ty);
@@ -317,18 +468,13 @@ impl<'tcx> Generator<'tcx> {
         'tcx: 'a,
     {
         for (input, param) in inputs {
-            if let HirTyKind::Path(QPath::Resolved(
-                _,
-                Path {
-                    span,
-                    res: Res::Def(_, def_id),
-                    ..
-                },
-            )) = input.kind
-            {
+            if let HirTyKind::Path(QPath::Resolved(_, path)) = input.kind {
+                let span = path.span;
+
                 let ident = utils::pat_ident(param.pat)?;
+                let prim_ty = self.find_prim_ty(path, span)?;
+
                 let sym = Symbol::new(ident.as_str());
-                let prim_ty = self.find_prim_ty(*def_id, *span)?;
 
                 let input = InputNode::new(prim_ty, sym);
                 let input = if is_dummy {
@@ -357,7 +503,8 @@ impl<'tcx> Generator<'tcx> {
 
         match expr.kind {
             ExprKind::Binary(bin_op, lhs, rhs) => {
-                let prim_ty = self.find_prim_ty(ty, expr.span)?;
+                println!("binary");
+                let prim_ty = self.find_prim_ty(&ty, expr.span)?;
 
                 match bin_op.node {
                     BinOpKind::BitAnd => {
@@ -380,6 +527,26 @@ impl<'tcx> Generator<'tcx> {
                             self.idents.tmp(),
                         )))
                     }
+                    BinOpKind::Add => {
+                        let lhs = self.evaluate_expr(lhs, module)?;
+                        let rhs = self.evaluate_expr(rhs, module)?;
+                        Ok(module.net_list.add_node(AddNode::new(
+                            prim_ty,
+                            lhs,
+                            rhs,
+                            self.idents.tmp(),
+                        )))
+                    }
+                    BinOpKind::Sub => {
+                        let lhs = self.evaluate_expr(lhs, module)?;
+                        let rhs = self.evaluate_expr(rhs, module)?;
+                        Ok(module.net_list.add_node(SubNode::new(
+                            prim_ty,
+                            lhs,
+                            rhs,
+                            self.idents.tmp(),
+                        )))
+                    }
                     _ => {
                         Err(SpanError::new(SpanErrorKind::UnsupportedBinOp, bin_op.span)
                             .into())
@@ -387,6 +554,7 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
             ExprKind::Block(block, _) => {
+                println!("block");
                 self.idents.push_scope();
 
                 for stmt in block.stmts {
@@ -432,11 +600,12 @@ impl<'tcx> Generator<'tcx> {
                 Ok(node_idx)
             }
             ExprKind::Call(rec, _) => {
+                println!("call");
                 if let ExprKind::Path(path) = rec.kind {
                     match path {
                         QPath::Resolved(_, Path { span, res, .. }) => {
                             let def_id = res.def_id();
-                            let blackbox = self.find_blackbox(def_id, *span)?;
+                            let blackbox = self.find_blackbox(&def_id, *span)?;
                             blackbox.evaluate_expr(self, expr, module)
                         }
                         QPath::TypeRelative(ty, _) => {
@@ -445,7 +614,7 @@ impl<'tcx> Generator<'tcx> {
                                 .typeck(rec.hir_id.owner)
                                 .qpath_res(&path, rec.hir_id);
                             let def_id = res.def_id();
-                            let blackbox = self.find_blackbox(def_id, ty.span)?;
+                            let blackbox = self.find_blackbox(&def_id, ty.span)?;
                             blackbox.evaluate_expr(self, expr, module)
                         }
                         _ => {
@@ -459,6 +628,7 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
             ExprKind::Closure(closure) => {
+                println!("closure");
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
                 self.evaluate_inputs(inputs, module, true)?;
@@ -467,7 +637,8 @@ impl<'tcx> Generator<'tcx> {
             }
             ExprKind::DropTemps(inner) => self.evaluate_expr(inner, module),
             ExprKind::If(cond, if_block, else_block) => {
-                let prim_ty = self.find_prim_ty(ty, expr.span)?;
+                println!("if");
+                let prim_ty = self.find_prim_ty(&ty, expr.span)?;
 
                 let else_block = else_block.ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
@@ -486,7 +657,8 @@ impl<'tcx> Generator<'tcx> {
                 )))
             }
             ExprKind::Lit(lit) => {
-                let prim_ty = self.find_prim_ty(ty, lit.span)?;
+                println!("lit");
+                let prim_ty = self.find_prim_ty(&ty, lit.span)?;
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;
 
                 Ok(module.net_list.add_node(ConstNode::new(
@@ -496,8 +668,9 @@ impl<'tcx> Generator<'tcx> {
                 )))
             }
             ExprKind::MethodCall(_, _, _, span) => {
+                println!("method call");
                 let def_id = self.type_dependent_def_id(expr.hir_id, span)?;
-                let blackbox = self.find_blackbox(def_id, span)?;
+                let blackbox = self.find_blackbox(&def_id, span)?;
                 blackbox.evaluate_expr(self, expr, module)
             }
             ExprKind::Path(QPath::Resolved(
@@ -507,10 +680,16 @@ impl<'tcx> Generator<'tcx> {
                     segments,
                     ..
                 },
-            )) if segments.len() == 1 => self.node_idx_for_ident(segments[0].ident),
+            )) if segments.len() == 1 => {
+                println!("path");
+
+                self.node_idx_for_ident(segments[0].ident)
+            }
             ExprKind::Unary(UnOp::Not, inner) => {
+                println!("unary");
+
                 let comb = self.evaluate_expr(inner, module)?;
-                let prim_ty = self.find_prim_ty(ty, expr.span)?;
+                let prim_ty = self.find_prim_ty(&ty, expr.span)?;
                 let sym = self.idents.tmp();
 
                 Ok(if prim_ty.is_bool() {

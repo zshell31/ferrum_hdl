@@ -6,8 +6,8 @@ use crate::{
     net_kind::NetKind,
     net_list::NetList,
     node::{
-        BitAndNode, BitNotNode, BitOrNode, ConstNode, DFFNode, Mux2Node, Node, NotNode,
-        PassNode,
+        AddNode, BitAndNode, BitNotNode, BitOrNode, ConstNode, DFFNode, Mux2Node, Node,
+        NotNode, PassNode, SubNode,
     },
     output::NodeOutput,
     symbol::Symbol,
@@ -52,17 +52,23 @@ impl Verilog {
         self.buffer.buffer
     }
 
-    fn write_net_kind(&mut self, net_kind: NetKind) {
-        match net_kind {
+    fn write_out(&mut self, out: &NodeOutput) {
+        match out.kind {
             NetKind::Wire => self.buffer.write_str("wire"),
             NetKind::Reg => self.buffer.write_str("reg"),
         };
+
+        if out.ty.width() > 1 {
+            self.buffer
+                .write_fmt(format_args!(" [{}:0]", out.ty.width() - 1));
+        }
     }
 
-    fn write_local(&mut self, out: NodeOutput, init: Option<u128>) {
+    fn write_local(&mut self, out: &NodeOutput, init: Option<u128>) {
+        // TODO: don't write if node is output
         if !self.locals.contains(&out.sym) {
             self.buffer.write_tab();
-            self.write_net_kind(out.kind);
+            self.write_out(out);
             self.buffer.write_fmt(format_args!(" {}", out.sym));
 
             if let Some(init) = init {
@@ -132,7 +138,7 @@ impl Visitor for Verilog {
             ParamKind::Input => "input ",
             ParamKind::Output => "output ",
         });
-        self.write_net_kind(out.kind);
+        self.write_out(out);
         self.buffer.write_fmt(format_args!(" {}", out.sym));
     }
 
@@ -140,7 +146,7 @@ impl Visitor for Verilog {
         match node {
             Node::DummyInput(_) | Node::Input(_) => {}
             Node::Pass(PassNode { input, out }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let input = net_list.node_output(*input).sym;
                 let output = out.sym;
 
@@ -148,14 +154,14 @@ impl Visitor for Verilog {
                     .write_template(format_args!("assign {output} = {input};"));
             }
             Node::Const(ConstNode { value, out }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let output = out.sym;
 
                 self.buffer
                     .write_template(format_args!("assign {output} = {value};"));
             }
             Node::BitNot(BitNotNode { input, out }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let input = net_list.node_output(*input).sym;
                 let output = out.sym;
 
@@ -163,7 +169,7 @@ impl Visitor for Verilog {
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
             Node::Not(NotNode { input, out }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let input = net_list.node_output(*input).sym;
                 let output = out.sym;
 
@@ -175,7 +181,7 @@ impl Visitor for Verilog {
                 input2,
                 out,
             }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let input1 = net_list.node_output(*input1).sym;
                 let input2 = net_list.node_output(*input2).sym;
                 let output = out.sym;
@@ -189,7 +195,7 @@ impl Visitor for Verilog {
                 input2,
                 out,
             }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
                 let input1 = net_list.node_output(*input1).sym;
                 let input2 = net_list.node_output(*input2).sym;
                 let output = out.sym;
@@ -198,13 +204,41 @@ impl Visitor for Verilog {
                     "assign {output} = {input1} | {input2};",
                 ));
             }
+            Node::Add(AddNode {
+                input1,
+                input2,
+                out,
+            }) => {
+                self.write_local(out, None);
+                let input1 = net_list.node_output(*input1).sym;
+                let input2 = net_list.node_output(*input2).sym;
+                let output = out.sym;
+
+                self.buffer.write_template(format_args!(
+                    "assign {output} = {input1} + {input2};"
+                ));
+            }
+            Node::Sub(SubNode {
+                input1,
+                input2,
+                out,
+            }) => {
+                self.write_local(out, None);
+                let input1 = net_list.node_output(*input1).sym;
+                let input2 = net_list.node_output(*input2).sym;
+                let output = out.sym;
+
+                self.buffer.write_template(format_args!(
+                    "assign {output} = {input1} - {input2};"
+                ));
+            }
             Node::Mux2(Mux2Node {
                 sel,
                 input1,
                 input2,
                 out,
             }) => {
-                self.write_local(*out, None);
+                self.write_local(out, None);
 
                 let sel = net_list.node_output(*sel).sym;
                 let input1 = net_list.node_output(*input1).sym;
@@ -237,7 +271,7 @@ end
                 } else {
                     None
                 };
-                self.write_local(*out, init);
+                self.write_local(out, init);
 
                 let clk = net_list.node_output(*clk).sym;
                 let data = data.expect("data is not initialized in dff");

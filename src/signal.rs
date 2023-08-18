@@ -6,7 +6,6 @@ use std::{fmt::Display, marker::PhantomData};
 use ferrum_macros::blackbox;
 
 use super::domain::ClockDomain;
-use crate::prim_ty::{IsPrimTy, PrimTy};
 
 pub trait SignalValue: Clone {}
 
@@ -90,16 +89,6 @@ impl<D: ClockDomain, T: SignalValue> Signal<D> for T {
 pub struct Clock<D: ClockDomain> {
     _dom: PhantomData<D>,
     value: Option<bool>,
-}
-
-impl<D: ClockDomain> IsPrimTy for Clock<D> {
-    fn prim_ty() -> PrimTy {
-        PrimTy::Clock
-    }
-
-    fn width() -> u8 {
-        1
-    }
 }
 
 // impl<D: ClockDomain> Synthesizable for Clock<D> {
@@ -201,10 +190,10 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
 #[inline(always)]
 pub fn register<D: ClockDomain, V: SignalValue>(
     clock: Clock<D>,
-    reset_value: impl Into<V>,
+    reset_value: V,
     signal_fn: impl Fn(V) -> V + 'static,
 ) -> Register<D, V> {
-    Register::new(clock, reset_value.into(), signal_fn)
+    Register::new(clock, reset_value, signal_fn)
 }
 
 #[derive(Debug, Clone, Copy)]

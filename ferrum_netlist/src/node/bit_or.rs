@@ -1,5 +1,3 @@
-use std::ops::BitOr;
-
 use ferrum::prim_ty::{DummyTy, PrimTy};
 
 use super::{IsNode, Node};
@@ -33,7 +31,7 @@ impl From<BitOrNode> for Node {
 }
 
 impl IsNode for BitOrNode {
-    type Outputs = (<DummyTy as BitOr>::Output,);
+    type Outputs = (DummyTy,);
 
     fn node_output(&self, out: u8) -> &NodeOutput {
         match out {

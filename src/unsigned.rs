@@ -4,90 +4,79 @@ use std::{
 };
 
 use crate::{
-    bit::Bit,
-    bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
     signal::SignalValue,
 };
 
-pub const fn unsigned_guard(n: usize) -> bool {
-    n > 0 && n <= 64
+pub const fn is_unsigned(n: u8) -> bool {
+    n > 0 && n <= 128
 }
 
-const fn bit_mask(n: usize) -> usize {
-    (1 << n) - 1
+const fn bit_mask(n: u8) -> u128 {
+    // TODO: n == 128?
+    if n == 128 {
+        u128::MAX
+    } else {
+        (1 << n) - 1
+    }
 }
 
-const fn msb_mask(n: usize) -> usize {
-    1 << (n - 1)
-}
+// const fn msb_mask(n: u8) -> u128 {
+//     1 << (n - 1)
+// }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Unsigned<const N: usize>(usize)
+pub struct Unsigned<const N: u8>(u128)
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue;
+    Assert<{ is_unsigned(N) }>: IsTrue;
 
-impl<const N: usize> Display for Unsigned<N>
+impl<const N: u8> Display for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.0, f)
     }
 }
 
-impl<const N: usize> Binary for Unsigned<N>
+impl<const N: u8> Binary for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Binary::fmt(&self.0, f)
     }
 }
 
-impl<const N: usize> LowerHex for Unsigned<N>
+impl<const N: u8> LowerHex for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         LowerHex::fmt(&self.0, f)
     }
 }
 
-impl<const N: usize> SignalValue for Unsigned<N> where
-    Assert<{ unsigned_guard(N) }>: IsTrue
-{
+impl<const N: u8> SignalValue for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
+
+impl<const N: u8> Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
+
+pub fn unsigned_value(value: u128, width: u8) -> u128 {
+    value & bit_mask(width)
 }
 
-impl<const N: usize> Unsigned<N>
+impl<const N: u8> From<u128> for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
-    const BIT_MASK: usize = bit_mask(N);
-    const MSB_MASK: usize = msb_mask(N);
-}
-
-impl<const N: usize> BitPack<N> for Unsigned<N>
-where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
-{
-    fn msb(&self) -> Bit {
-        ((self.0 & Self::MSB_MASK) > 0).into()
+    fn from(value: u128) -> Self {
+        Self(unsigned_value(value, N))
     }
 }
 
-impl<const N: usize> From<usize> for Unsigned<N>
+impl<const N: u8> Add for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
-{
-    fn from(value: usize) -> Self {
-        Self(value & Self::BIT_MASK)
-    }
-}
-
-impl<const N: usize> Add for Unsigned<N>
-where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
@@ -96,20 +85,20 @@ where
     }
 }
 
-impl<const N: usize> Add<usize> for Unsigned<N>
+impl<const N: u8> Add<u128> for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
-    fn add(self, rhs: usize) -> Self::Output {
+    fn add(self, rhs: u128) -> Self::Output {
         self.add(Self::from(rhs))
     }
 }
 
-impl<const N: usize> Sub for Unsigned<N>
+impl<const N: u8> Sub for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
@@ -118,20 +107,20 @@ where
     }
 }
 
-impl<const N: usize> Sub<usize> for Unsigned<N>
+impl<const N: u8> Sub<u128> for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
-    fn sub(self, rhs: usize) -> Self::Output {
+    fn sub(self, rhs: u128) -> Self::Output {
         self.sub(Self::from(rhs))
     }
 }
 
-impl<const N: usize> Mul for Unsigned<N>
+impl<const N: u8> Mul for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
@@ -140,20 +129,20 @@ where
     }
 }
 
-impl<const N: usize> Mul<usize> for Unsigned<N>
+impl<const N: u8> Mul<u128> for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
-    fn mul(self, rhs: usize) -> Self::Output {
+    fn mul(self, rhs: u128) -> Self::Output {
         self.mul(Self::from(rhs))
     }
 }
 
-impl<const N: usize> Div for Unsigned<N>
+impl<const N: u8> Div for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
@@ -162,13 +151,13 @@ where
     }
 }
 
-impl<const N: usize> Div<usize> for Unsigned<N>
+impl<const N: u8> Div<u128> for Unsigned<N>
 where
-    Assert<{ unsigned_guard(N) }>: IsTrue,
+    Assert<{ is_unsigned(N) }>: IsTrue,
 {
     type Output = Self;
 
-    fn div(self, rhs: usize) -> Self::Output {
+    fn div(self, rhs: u128) -> Self::Output {
         self.div(Self::from(rhs))
     }
 }

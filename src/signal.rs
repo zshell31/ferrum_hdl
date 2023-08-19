@@ -190,10 +190,10 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
 #[inline(always)]
 pub fn register<D: ClockDomain, V: SignalValue>(
     clock: Clock<D>,
-    reset_value: V,
+    reset_value: impl Into<V>,
     signal_fn: impl Fn(V) -> V + 'static,
 ) -> Register<D, V> {
-    Register::new(clock, reset_value, signal_fn)
+    Register::new(clock, reset_value.into(), signal_fn)
 }
 
 #[derive(Debug, Clone, Copy)]

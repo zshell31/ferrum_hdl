@@ -6,6 +6,7 @@ use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Sym
 #[derive(Debug, Clone, Copy)]
 pub struct ConstNode {
     pub value: u128,
+    pub inject: bool,
     pub out: NodeOutput,
 }
 
@@ -13,6 +14,7 @@ impl ConstNode {
     pub fn new(ty: PrimTy, value: u128, sym: Symbol) -> Self {
         Self {
             value,
+            inject: false,
             out: NodeOutput {
                 ty,
                 sym,

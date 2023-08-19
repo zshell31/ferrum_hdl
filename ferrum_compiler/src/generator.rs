@@ -5,10 +5,7 @@ use ferrum_netlist::{
     backend::Verilog,
     module::{Module, ModuleList},
     net_list::NodeId,
-    node::{
-        AddNode, BitAndNode, BitNotNode, BitOrNode, ConstNode, InputNode, Mux2Node,
-        NotNode, SubNode,
-    },
+    node::{BinOp, BinOpNode, BitNotNode, ConstNode, InputNode, Mux2Node, Node, NotNode},
     symbol::Symbol,
 };
 use rustc_const_eval::interpret::{ConstValue, Scalar};
@@ -418,7 +415,7 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn node_idx_for_ident(&self, ident: Ident) -> Result<NodeId, Error> {
+    pub fn node_id_for_ident(&self, ident: Ident) -> Result<NodeId, Error> {
         self.idents
             .node_index(ident)
             .ok_or_else(|| {
@@ -506,52 +503,42 @@ impl<'tcx> Generator<'tcx> {
                 println!("binary");
                 let prim_ty = self.find_prim_ty(&ty, expr.span)?;
 
-                match bin_op.node {
-                    BinOpKind::BitAnd => {
-                        let lhs = self.evaluate_expr(lhs, module)?;
-                        let rhs = self.evaluate_expr(rhs, module)?;
-                        Ok(module.net_list.add_node(BitAndNode::new(
-                            prim_ty,
-                            lhs,
-                            rhs,
-                            self.idents.tmp(),
-                        )))
-                    }
-                    BinOpKind::BitOr => {
-                        let lhs = self.evaluate_expr(lhs, module)?;
-                        let rhs = self.evaluate_expr(rhs, module)?;
-                        Ok(module.net_list.add_node(BitOrNode::new(
-                            prim_ty,
-                            lhs,
-                            rhs,
-                            self.idents.tmp(),
-                        )))
-                    }
-                    BinOpKind::Add => {
-                        let lhs = self.evaluate_expr(lhs, module)?;
-                        let rhs = self.evaluate_expr(rhs, module)?;
-                        Ok(module.net_list.add_node(AddNode::new(
-                            prim_ty,
-                            lhs,
-                            rhs,
-                            self.idents.tmp(),
-                        )))
-                    }
-                    BinOpKind::Sub => {
-                        let lhs = self.evaluate_expr(lhs, module)?;
-                        let rhs = self.evaluate_expr(rhs, module)?;
-                        Ok(module.net_list.add_node(SubNode::new(
-                            prim_ty,
-                            lhs,
-                            rhs,
-                            self.idents.tmp(),
-                        )))
-                    }
+                let bin_op = match bin_op.node {
+                    BinOpKind::BitAnd => BinOp::BitAnd,
+                    BinOpKind::BitOr => BinOp::BitOr,
+                    BinOpKind::BitXor => BinOp::BitXor,
+                    BinOpKind::And => BinOp::And,
+                    BinOpKind::Or => BinOp::Or,
+                    BinOpKind::Add => BinOp::Add,
+                    BinOpKind::Sub => BinOp::Sub,
                     _ => {
-                        Err(SpanError::new(SpanErrorKind::UnsupportedBinOp, bin_op.span)
-                            .into())
+                        return Err(SpanError::new(
+                            SpanErrorKind::UnsupportedBinOp(bin_op.node),
+                            bin_op.span,
+                        )
+                        .into());
                     }
+                };
+
+                let lhs = self.evaluate_expr(lhs, module)?;
+                if let Node::Const(node) = module.net_list.node_mut(lhs) {
+                    node.out.ty = prim_ty;
+                    node.inject = true;
                 }
+
+                let rhs = self.evaluate_expr(rhs, module)?;
+                if let Node::Const(node) = module.net_list.node_mut(rhs) {
+                    node.out.ty = prim_ty;
+                    node.inject = true;
+                }
+
+                Ok(module.net_list.add_node(BinOpNode::new(
+                    prim_ty,
+                    bin_op,
+                    lhs,
+                    rhs,
+                    self.idents.tmp(),
+                )))
             }
             ExprKind::Block(block, _) => {
                 println!("block");
@@ -683,7 +670,7 @@ impl<'tcx> Generator<'tcx> {
             )) if segments.len() == 1 => {
                 println!("path");
 
-                self.node_idx_for_ident(segments[0].ident)
+                self.node_id_for_ident(segments[0].ident)
             }
             ExprKind::Unary(UnOp::Not, inner) => {
                 println!("unary");

@@ -4,6 +4,7 @@ use std::{
 };
 
 use ferrum::prim_ty::PrimTy;
+use rustc_hir::BinOpKind;
 use rustc_span::{symbol::Ident, Span};
 
 use crate::blackbox::Blackbox;
@@ -70,8 +71,8 @@ pub enum SpanErrorKind {
     PrimTyWithoutValue(PrimTy),
     #[error("unexpected literal value for prim type {0:?}")]
     UnexpectedLitValue(PrimTy),
-    #[error("unsupported binary operation")]
-    UnsupportedBinOp,
+    #[error("unsupported binary operation '{0:?}'")]
+    UnsupportedBinOp(BinOpKind),
     #[error("unsupported conversion")]
     UnsupportedConversion,
 

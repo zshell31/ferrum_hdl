@@ -123,6 +123,11 @@ impl RegisterFn {
         let (rec, args) = utils::expected_call(expr)?;
 
         let ty = generator.node_type(rec.hir_id);
+
+        let signal_val_ty = generator
+            .generic_type(&ty, 1)
+            .and_then(|ty| generator.find_prim_ty(&ty, rec.span).ok());
+
         let gen = generator
             .generic_type(&ty, 1)
             .ok_or_else(|| Self::make_err(rec.span))?;
@@ -130,6 +135,14 @@ impl RegisterFn {
 
         let clk = generator.evaluate_expr(&args[0], module)?;
         let rst_value = generator.evaluate_expr(&args[1], module)?;
+
+        if let Node::Const(node) = module.net_list.node_mut(rst_value) {
+            node.inject = true;
+            // Add conversion from node.out.ty to signal_val_ty
+            if let Some(prim_ty) = signal_val_ty {
+                node.out.ty = prim_ty;
+            }
+        }
 
         let dff = module.net_list.add_node(DFFNode::new(
             prim_ty,

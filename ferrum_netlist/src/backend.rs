@@ -4,10 +4,9 @@ use crate::{
     buffer::Buffer,
     module::{Module, ModuleList},
     net_kind::NetKind,
-    net_list::NetList,
+    net_list::{NetList, NodeId},
     node::{
-        AddNode, BitAndNode, BitNotNode, BitOrNode, ConstNode, DFFNode, Mux2Node, Node,
-        NotNode, PassNode, SubNode,
+        BinOpNode, BitNotNode, ConstNode, DFFNode, Mux2Node, Node, NotNode, PassNode,
     },
     output::NodeOutput,
     symbol::Symbol,
@@ -64,6 +63,12 @@ impl Verilog {
         }
     }
 
+    fn write_value(&mut self, out: &NodeOutput, value: u128) {
+        let width = out.ty.width();
+
+        self.buffer.write_fmt(format_args!("{}'d{}", width, value));
+    }
+
     fn write_local(&mut self, out: &NodeOutput, init: Option<u128>) {
         // TODO: don't write if node is output
         if !self.locals.contains(&out.sym) {
@@ -72,12 +77,28 @@ impl Verilog {
             self.buffer.write_fmt(format_args!(" {}", out.sym));
 
             if let Some(init) = init {
-                self.buffer.write_fmt(format_args!(" = {}", init));
+                self.buffer.write_str(" = ");
+                self.write_value(out, init);
             }
 
             self.buffer.write_str(";\n");
 
             self.locals.insert(out.sym);
+        }
+    }
+
+    fn inject_const(&mut self, node_id: NodeId, net_list: &NetList) {
+        let node = net_list.node(node_id);
+        if let Node::Const(ConstNode {
+            value,
+            inject: true,
+            out,
+        }) = node
+        {
+            self.write_value(out, *value);
+        } else {
+            let sym = net_list.node_output(node_id).sym;
+            self.buffer.write_fmt(format_args!("{}", sym));
         }
     }
 }
@@ -153,12 +174,14 @@ impl Visitor for Verilog {
                 self.buffer
                     .write_template(format_args!("assign {output} = {input};"));
             }
-            Node::Const(ConstNode { value, out }) => {
-                self.write_local(out, None);
-                let output = out.sym;
+            Node::Const(ConstNode { value, inject, out }) => {
+                if !inject {
+                    self.write_local(out, None);
+                    let output = out.sym;
 
-                self.buffer
-                    .write_template(format_args!("assign {output} = {value};"));
+                    self.buffer
+                        .write_template(format_args!("assign {output} = {value};"));
+                }
             }
             Node::BitNot(BitNotNode { input, out }) => {
                 self.write_local(out, None);
@@ -176,61 +199,25 @@ impl Visitor for Verilog {
                 self.buffer
                     .write_template(format_args!("assign {output} = !{input};",));
             }
-            Node::BitAnd(BitAndNode {
+            Node::BinOp(BinOpNode {
+                bin_op,
                 input1,
                 input2,
                 out,
             }) => {
                 self.write_local(out, None);
-                let input1 = net_list.node_output(*input1).sym;
-                let input2 = net_list.node_output(*input2).sym;
                 let output = out.sym;
 
-                self.buffer.write_template(format_args!(
-                    "assign {output} = {input1} & {input2};",
-                ));
-            }
-            Node::BitOr(BitOrNode {
-                input1,
-                input2,
-                out,
-            }) => {
-                self.write_local(out, None);
-                let input1 = net_list.node_output(*input1).sym;
-                let input2 = net_list.node_output(*input2).sym;
-                let output = out.sym;
+                self.buffer.write_tab();
+                self.buffer.write_fmt(format_args!("assign {output} = "));
 
-                self.buffer.write_template(format_args!(
-                    "assign {output} = {input1} | {input2};",
-                ));
-            }
-            Node::Add(AddNode {
-                input1,
-                input2,
-                out,
-            }) => {
-                self.write_local(out, None);
-                let input1 = net_list.node_output(*input1).sym;
-                let input2 = net_list.node_output(*input2).sym;
-                let output = out.sym;
+                self.inject_const(*input1, net_list);
 
-                self.buffer.write_template(format_args!(
-                    "assign {output} = {input1} + {input2};"
-                ));
-            }
-            Node::Sub(SubNode {
-                input1,
-                input2,
-                out,
-            }) => {
-                self.write_local(out, None);
-                let input1 = net_list.node_output(*input1).sym;
-                let input2 = net_list.node_output(*input2).sym;
-                let output = out.sym;
+                self.buffer.write_fmt(format_args!(" {bin_op} "));
 
-                self.buffer.write_template(format_args!(
-                    "assign {output} = {input1} - {input2};"
-                ));
+                self.inject_const(*input2, net_list);
+
+                self.buffer.write_str(";");
             }
             Node::Mux2(Mux2Node {
                 sel,
@@ -264,8 +251,11 @@ end
                 data,
                 out,
             }) => {
-                let init = if let Node::Const(ConstNode { value, .. }) =
-                    net_list.node(*rst_value)
+                let init = if let Node::Const(ConstNode {
+                    value,
+                    inject: true,
+                    ..
+                }) = net_list.node(*rst_value)
                 {
                     Some(*value)
                 } else {

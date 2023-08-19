@@ -455,6 +455,25 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
+    fn make_input(
+        &mut self,
+        ident: Ident,
+        prim_ty: PrimTy,
+        module: &mut Module,
+        is_dummy: bool,
+    ) {
+        let sym = Symbol::new(ident.as_str());
+
+        let input = InputNode::new(prim_ty, sym);
+        let input = if is_dummy {
+            module.net_list.add_dummy_node(input)
+        } else {
+            module.net_list.add_node(input)
+        };
+
+        self.idents.add_local_ident(ident, input);
+    }
+
     fn evaluate_inputs<'a>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
@@ -465,27 +484,28 @@ impl<'tcx> Generator<'tcx> {
         'tcx: 'a,
     {
         for (input, param) in inputs {
-            if let HirTyKind::Path(QPath::Resolved(_, path)) = input.kind {
-                let span = path.span;
+            match input.kind {
+                HirTyKind::Path(QPath::Resolved(_, path)) => {
+                    let ident = utils::pat_ident(param.pat)?;
+                    let prim_ty = self.find_prim_ty(path, path.span)?;
 
-                let ident = utils::pat_ident(param.pat)?;
-                let prim_ty = self.find_prim_ty(path, span)?;
+                    self.make_input(ident, prim_ty, module, is_dummy);
+                }
+                HirTyKind::Infer => {
+                    let ident = utils::pat_ident(param.pat)?;
+                    let prim_ty =
+                        self.find_prim_ty(&self.node_type(param.hir_id), param.span)?;
 
-                let sym = Symbol::new(ident.as_str());
-
-                let input = InputNode::new(prim_ty, sym);
-                let input = if is_dummy {
-                    module.net_list.add_dummy_node(input)
-                } else {
-                    module.net_list.add_node(input)
-                };
-
-                self.idents.add_local_ident(ident, input);
-            } else {
-                return Err(
-                    SpanError::new(SpanErrorKind::NotSynthInput, input.span).into()
-                );
-            }
+                    self.make_input(ident, prim_ty, module, is_dummy);
+                }
+                _ => {
+                    println!("input: {:#?}", input);
+                    println!("param: {:#?}", param);
+                    return Err(
+                        SpanError::new(SpanErrorKind::NotSynthInput, input.span).into()
+                    );
+                }
+            };
         }
 
         Ok(())

@@ -56,6 +56,8 @@ pub enum SpanErrorKind {
 
     #[error("expected call")]
     ExpectedCall,
+    #[error("expected method call")]
+    ExpectedMethodCall,
     #[error("expected identifier")]
     ExpectedIdentifier,
     #[error("expected expression")]

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use crate::{
-    node::{InputNode, IsNode, Node},
+    node::{InputNode, IsNode, Node, PassNode},
     output::{IsOneOutput, NodeOutput, Outputs},
 };
 
@@ -132,5 +132,19 @@ impl NetList {
 
     pub fn find_dummy_inputs(&self, node_index: NodeId) -> Vec<NodeId> {
         self.find_node(node_index, |node| node.is_dummy_input())
+    }
+
+    pub fn link_dff(&mut self, dff: NodeId, comb: NodeId) {
+        if let Node::DFF(dff) = self.node_mut(dff) {
+            dff.data = Some(comb);
+        }
+    }
+
+    pub fn link_dummy_input(&mut self, with_dummy: NodeId, to_link: NodeId) {
+        let dummy = self.find_dummy_inputs(with_dummy).first().copied().unwrap();
+
+        let dummy_out = self.node_output(dummy);
+
+        self.replace(dummy, PassNode::new(dummy_out.ty, to_link, dummy_out.sym));
     }
 }

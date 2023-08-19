@@ -76,14 +76,6 @@ where
     }
 }
 
-impl<D: ClockDomain, T: SignalValue> Signal<D> for T {
-    type Value = Self;
-
-    fn next(&mut self) -> Self::Value {
-        self.clone()
-    }
-}
-
 #[blackbox(Clock)]
 #[derive(Debug)]
 pub struct Clock<D: ClockDomain> {

@@ -9,6 +9,7 @@ pub use self::{
     mux2::Mux2Node,
     not::NotNode,
     pass::PassNode,
+    splitter::Splitter,
 };
 use crate::{
     net_list::NodeId,
@@ -23,6 +24,7 @@ mod input;
 mod mux2;
 mod not;
 mod pass;
+mod splitter;
 
 pub trait IsNode: Into<Node> {
     type Outputs: Outputs;
@@ -40,6 +42,7 @@ pub enum Node {
     Input(InputNode),
     Pass(PassNode),
     Const(ConstNode),
+    Splitter(Splitter),
     BinOp(BinOpNode),
     BitNot(BitNotNode),
     Not(NotNode),
@@ -67,6 +70,7 @@ impl Node {
             Self::Mux2(node) => node.node_output(out),
             Self::Pass(node) => node.node_output(out),
             Self::Const(node) => node.node_output(out),
+            Self::Splitter(node) => node.node_output(out),
             Self::BinOp(node) => node.node_output(out),
             Self::BitNot(node) => node.node_output(out),
             Self::Not(node) => node.node_output(out),
@@ -81,6 +85,7 @@ impl Node {
             Self::Mux2(node) => node.node_output_mut(out),
             Self::Pass(node) => node.node_output_mut(out),
             Self::Const(node) => node.node_output_mut(out),
+            Self::Splitter(node) => node.node_output_mut(out),
             Self::BinOp(node) => node.node_output_mut(out),
             Self::BitNot(node) => node.node_output_mut(out),
             Self::Not(node) => node.node_output_mut(out),
@@ -96,6 +101,7 @@ impl Node {
             Self::Mux2(node) => node.inputs(),
             Self::Pass(node) => node.inputs(),
             Self::Const(node) => node.inputs(),
+            Self::Splitter(node) => node.inputs(),
             Self::BinOp(node) => node.inputs(),
             Self::BitNot(node) => node.inputs(),
             Self::Not(node) => node.inputs(),

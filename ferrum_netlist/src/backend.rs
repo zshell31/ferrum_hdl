@@ -7,6 +7,7 @@ use crate::{
     net_list::{NetList, NodeId},
     node::{
         BinOpNode, BitNotNode, ConstNode, DFFNode, Mux2Node, Node, NotNode, PassNode,
+        Splitter,
     },
     output::NodeOutput,
     symbol::Symbol,
@@ -183,6 +184,33 @@ impl Visitor for Verilog {
                         .write_template(format_args!("assign {output} = {value};"));
                 }
             }
+            Node::Splitter(Splitter {
+                input,
+                start,
+                width,
+                out,
+            }) => {
+                self.write_local(out, None);
+                let input = net_list.node_output(*input).sym;
+                let output = out.sym;
+
+                self.buffer.write_tab();
+                self.buffer
+                    .write_fmt(format_args!("assign {output} = {input}"));
+
+                let width = *width;
+                let start = *start;
+                if width == 1 {
+                    self.buffer.write_fmt(format_args!("[{}]", start));
+                } else {
+                    self.buffer.write_fmt(format_args!(
+                        "[{}:{}]",
+                        start + width - 1,
+                        start
+                    ));
+                }
+                self.buffer.write_str(";\n\n");
+            }
             Node::BitNot(BitNotNode { input, out }) => {
                 self.write_local(out, None);
                 let input = net_list.node_output(*input).sym;
@@ -217,7 +245,7 @@ impl Visitor for Verilog {
 
                 self.inject_const(*input2, net_list);
 
-                self.buffer.write_str(";");
+                self.buffer.write_str(";\n\n");
             }
             Node::Mux2(Mux2Node {
                 sel,

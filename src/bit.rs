@@ -31,6 +31,10 @@ impl Bit {
     pub const HIGH: Bit = Bit(true);
     #[blackbox(Bit(expr = 0))]
     pub const LOW: Bit = Bit(false);
+
+    pub(crate) fn from_u128(value: u128) -> Self {
+        Self::from(value > 0)
+    }
 }
 
 impl From<bool> for Bit {

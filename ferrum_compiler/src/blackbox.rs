@@ -6,7 +6,7 @@ use ferrum::{
 use ferrum_netlist::{
     module::Module,
     net_list::NodeId,
-    node::{DFFNode, Node, PassNode},
+    node::{DFFNode, Node, Splitter},
 };
 use rustc_ast::LitKind;
 use rustc_hir::{
@@ -42,6 +42,8 @@ impl PartialEq<ItemPath> for DefPath {
 #[derive(Debug, Clone, Copy)]
 pub enum Blackbox {
     RegisterFn,
+    SignalMap,
+    BitPackMsb,
     Conversion,
 }
 
@@ -51,6 +53,20 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         #[allow(unused_imports)]
         use ferrum::signal::register;
         return Some(Blackbox::RegisterFn);
+    }
+
+    if def_path == &ItemPath(&["signal", "Signal", "map"]) {
+        #[allow(unused_imports)]
+        use ferrum::signal::Signal;
+        // TODO: check that map exists
+        return Some(Blackbox::SignalMap);
+    }
+
+    if def_path == &ItemPath(&["bit_pack", "BitPack", "msb"]) {
+        #[allow(unused_imports)]
+        use ferrum::bit_pack::BitPack;
+        // TODO: check that map exists
+        return Some(Blackbox::BitPackMsb);
     }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
@@ -99,6 +115,8 @@ impl Blackbox {
     ) -> Result<NodeId, Error> {
         match self {
             Self::RegisterFn => RegisterFn::evaluate_expr(generator, expr, module),
+            Self::SignalMap => SignalMap::evaluate_expr(generator, expr, module),
+            Self::BitPackMsb => BitPackMsb::evaluate_expr(generator, expr, module),
             Self::Conversion => Conversion::evaluate_expr(generator, expr, module),
         }
     }
@@ -135,6 +153,7 @@ impl RegisterFn {
 
         let clk = generator.evaluate_expr(&args[0], module)?;
         let rst_value = generator.evaluate_expr(&args[1], module)?;
+        let comb = generator.evaluate_expr(&args[2], module)?;
 
         if let Node::Const(node) = module.net_list.node_mut(rst_value) {
             node.inject = true;
@@ -152,25 +171,58 @@ impl RegisterFn {
             generator.idents.tmp(),
         ));
 
-        let comb = generator.evaluate_expr(&args[2], module)?;
-
-        let dummy = module
-            .net_list
-            .find_dummy_inputs(comb)
-            .first()
-            .copied()
-            .ok_or_else(|| Self::make_err(rec.span))?;
-        let dummy_out = module.net_list.node_output(dummy);
-
-        module
-            .net_list
-            .replace(dummy, PassNode::new(dummy_out.ty, dff, dummy_out.sym));
+        module.net_list.link_dummy_input(comb, dff);
+        module.net_list.link_dff(dff, comb);
 
         if let Node::DFF(dff) = module.net_list.node_mut(dff) {
             dff.data = Some(comb);
         }
 
         Ok(dff)
+    }
+}
+
+struct SignalMap;
+
+impl SignalMap {
+    pub fn evaluate_expr<'tcx>(
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
+        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+
+        let rec = generator.evaluate_expr(rec, module)?;
+        let comb = generator.evaluate_expr(&args[0], module)?;
+
+        module.net_list.link_dummy_input(comb, rec);
+
+        Ok(comb)
+    }
+}
+
+struct BitPackMsb;
+
+impl BitPackMsb {
+    pub fn evaluate_expr<'tcx>(
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+
+        let rec = generator.evaluate_expr(rec, module)?;
+
+        let start = module.net_list.node_output(rec).ty.width() - 1;
+        let split = module.net_list.add_node(Splitter::new(
+            PrimTy::Bit,
+            rec,
+            start,
+            1,
+            generator.idents.tmp(),
+        ));
+
+        Ok(split)
     }
 }
 

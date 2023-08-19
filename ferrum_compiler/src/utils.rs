@@ -1,8 +1,8 @@
 use rustc_hir::{
-    def::Res, def_id::DefId, Expr, ExprKind, Pat, Path, QPath, Ty as HirTy,
+    def::Res, def_id::DefId, Expr, ExprKind, Pat, Path, PathSegment, QPath, Ty as HirTy,
     TyKind as HirTyKind,
 };
-use rustc_span::symbol::Ident;
+use rustc_span::{symbol::Ident, Span};
 
 use crate::error::{Error, SpanError, SpanErrorKind};
 
@@ -34,6 +34,26 @@ where
     match expr.kind {
         ExprKind::Call(rec, args) => Ok((rec, args)),
         _ => Err(SpanError::new(SpanErrorKind::ExpectedCall, expr.span).into()),
+    }
+}
+
+pub fn exptected_method_call<'a, 'tcx>(
+    expr: &'a Expr<'tcx>,
+) -> Result<
+    (
+        &'a PathSegment<'tcx>,
+        &'a Expr<'tcx>,
+        &'a [Expr<'tcx>],
+        Span,
+    ),
+    Error,
+>
+where
+    'tcx: 'a,
+{
+    match expr.kind {
+        ExprKind::MethodCall(method, rec, args, span) => Ok((method, rec, args, span)),
+        _ => Err(SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span).into()),
     }
 }
 

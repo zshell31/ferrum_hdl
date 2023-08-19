@@ -4,6 +4,8 @@ use std::{
 };
 
 use crate::{
+    bit::Bit,
+    bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
     signal::SignalValue,
 };
@@ -21,9 +23,9 @@ const fn bit_mask(n: u8) -> u128 {
     }
 }
 
-// const fn msb_mask(n: u8) -> u128 {
-//     1 << (n - 1)
-// }
+const fn msb_mask(n: u8) -> u128 {
+    1 << (n - 1)
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Unsigned<const N: u8>(u128)
@@ -60,6 +62,15 @@ where
 impl<const N: u8> SignalValue for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
 
 impl<const N: u8> Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
+
+impl<const N: u8> BitPack<N> for Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn msb(&self) -> Bit {
+        Bit::from_u128(self.0 & msb_mask(N))
+    }
+}
 
 pub fn unsigned_value(value: u128, width: u8) -> u128 {
     value & bit_mask(width)

@@ -15,6 +15,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive-where"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bfdb377063755aaead8eab28e1e6738bf8154b0a6741a88b71f17fffe1c7b0b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "derive_utils"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -35,6 +46,7 @@ checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
 name = "ferrum"
 version = "0.1.0"
 dependencies = [
+ "derive-where",
  "ferrum_macros",
  "strum",
 ]

@@ -1,12 +1,9 @@
-use crate::{
-    const_asserts::{Assert, IsTrue},
-    signal::SignalValue,
-};
+use crate::const_asserts::{Assert, IsTrue};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Array<const N: usize, T: Copy>([T; N]);
 
-impl<const N: usize, T: Copy + SignalValue> SignalValue for Array<N, T> {}
+// impl<const N: usize, T: Copy + SignalValue> SignalValue for Array<N, T> {}
 
 impl<const N: usize, T: Copy> From<[T; N]> for Array<N, T> {
     fn from(value: [T; N]) -> Self {

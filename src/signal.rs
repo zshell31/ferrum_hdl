@@ -1,13 +1,18 @@
-// use crate::traits::Synthesizable;
+use std::{
+    fmt::{Debug, Display},
+    marker::PhantomData,
+    sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc,
+    },
+};
 
-// use rustc_hir::Lit;
-use std::{fmt::Display, marker::PhantomData};
-
+use derive_where::derive_where;
 use ferrum_macros::blackbox;
 
 use super::domain::ClockDomain;
 
-pub trait SignalValue: Clone {}
+pub trait SignalValue: Debug + Display + Clone {}
 
 impl SignalValue for bool {}
 
@@ -28,28 +33,43 @@ pub trait Signal<D: ClockDomain>: Sized {
         MapSignal::new(self, f)
     }
 
-    fn iter(self) -> SignalIter<D, Self> {
-        SignalIter {
+    fn clk_cycles(self, clock: Clock<D>) -> impl Iterator<Item = (isize, Self::Value)> {
+        SignalClkCycles {
             _dom: PhantomData,
+            before: true,
+            cycle: -1,
+            clock,
             signal: self,
         }
     }
 }
 
-pub struct SignalIter<D, S> {
+pub struct SignalClkCycles<D: ClockDomain, S> {
     _dom: PhantomData<D>,
+    before: bool,
+    cycle: isize,
+    clock: Clock<D>,
     signal: S,
 }
 
-impl<D: ClockDomain, S: Signal<D>> Iterator for SignalIter<D, S> {
-    type Item = S::Value;
+impl<D: ClockDomain, S: Signal<D>> Iterator for SignalClkCycles<D, S> {
+    type Item = (isize, S::Value);
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.signal.next())
+        if self.before {
+            self.before = false;
+            Some((self.cycle, self.signal.next()))
+        } else {
+            self.cycle += 1;
+            self.clock.next(); // rising
+            let _ = self.signal.next();
+            self.clock.next(); // falling
+            Some((self.cycle, self.signal.next()))
+        }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MapSignal<S, F> {
     signal: S,
     f: F,
@@ -76,143 +96,126 @@ where
     }
 }
 
-#[blackbox(Clock)]
-#[derive(Debug)]
-pub struct Clock<D: ClockDomain> {
-    _dom: PhantomData<D>,
-    value: Option<bool>,
+#[derive(Debug, Clone, Copy)]
+#[repr(u8)]
+enum ClockState {
+    Init,
+    Rising,
+    Falling,
 }
 
-// impl<D: ClockDomain> Synthesizable for Clock<D> {
-//     fn width() -> u128 {
-//         1
-//     }
+impl ClockState {
+    fn is_rising(&self) -> bool {
+        matches!(self, ClockState::Rising)
+    }
 
-//     fn synthesize_lit(_: &Lit) -> Option<Expression> {
-//         None
-//     }
-// }
+    fn is_falling(&self) -> bool {
+        matches!(self, ClockState::Falling)
+    }
+}
+
+impl From<u8> for ClockState {
+    fn from(value: u8) -> Self {
+        match value {
+            _ if Self::Init as u8 == value => Self::Init,
+            _ if Self::Rising as u8 == value => Self::Rising,
+            _ if Self::Falling as u8 == value => Self::Falling,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl From<ClockState> for u8 {
+    fn from(value: ClockState) -> Self {
+        value as u8
+    }
+}
+
+#[derive_where(Debug, Clone)]
+pub struct Clock<D: ClockDomain> {
+    _dom: PhantomData<D>,
+    state: Arc<AtomicU8>,
+}
 
 impl<D: ClockDomain> Default for Clock<D> {
     fn default() -> Self {
         Self {
             _dom: PhantomData,
-            value: None,
+            state: Arc::new(AtomicU8::new(ClockState::Init.into())),
         }
     }
 }
 
 impl<D: ClockDomain> Clock<D> {
-    pub fn value(&self) -> bool {
-        self.value.unwrap_or_default()
-    }
-
     pub fn new() -> Self {
         Self::default()
     }
 
+    fn state(&self) -> ClockState {
+        self.state.load(Ordering::Relaxed).into()
+    }
+
+    fn set_state(&self, state: ClockState) {
+        self.state.store(state.into(), Ordering::Relaxed)
+    }
+
+    pub(crate) fn next(&self) {
+        let state = self.state();
+        let next_state = match state {
+            ClockState::Init => ClockState::Falling,
+            ClockState::Rising => ClockState::Falling,
+            ClockState::Falling => ClockState::Rising,
+        };
+        self.set_state(next_state);
+    }
+
     pub fn is_rising(&mut self) -> bool {
-        let old = self.value();
-        let new = self.next();
-        !old && new
+        self.state().is_rising()
     }
 
     pub fn is_falling(&mut self) -> bool {
-        let old = self.value();
-        let new = self.next();
-        old && !new
+        self.state().is_falling()
     }
 }
 
-impl<D: ClockDomain> Signal<D> for Clock<D> {
-    type Value = bool;
-
-    fn next(&mut self) -> Self::Value {
-        match self.value.as_mut() {
-            Some(value) => {
-                *value = !(*value);
-            }
-            None => {
-                self.value = Some(false);
-            }
-        }
-
-        self.value.unwrap()
-    }
-}
-
-#[blackbox(Register)]
+#[blackbox(Register, Clone)]
 pub struct Register<D: ClockDomain, V: SignalValue> {
-    reset_value: V,
-    prev_value: V,
-    next_value: Option<V>,
+    value: V,
+    next_value: V,
     clock: Clock<D>,
-    signal_fn: Box<dyn Fn(V) -> V>,
+    comb_fn: Box<dyn Fn(V) -> V>,
 }
 
 impl<D: ClockDomain, V: SignalValue> Register<D, V> {
-    fn new(
-        clock: Clock<D>,
-        reset_value: V,
-        signal_fn: impl Fn(V) -> V + 'static,
-    ) -> Self {
-        let prev_value = reset_value.clone();
-
+    fn new(clock: Clock<D>, reset_value: V, comb_fn: impl Fn(V) -> V + 'static) -> Self {
         Self {
-            reset_value,
-            prev_value,
-            next_value: None,
+            value: reset_value.clone(),
+            next_value: reset_value,
             clock,
-            signal_fn: Box::new(signal_fn),
+            comb_fn: Box::new(comb_fn),
         }
     }
 }
 
-// impl<V: SignalValue + Synthesizable> Synthesizable for Register<DummySystem, V> {
-//     fn width() -> u128 {
-//         V::width()
-//     }
-
-//     fn synthesize_lit(lit: &Lit) -> Option<Expression> {
-//         V::synthesize_lit(lit)
-//     }
-// }
-
 #[blackbox(RegisterFn)]
 #[inline(always)]
-pub fn register<D: ClockDomain, V: SignalValue>(
+pub fn reg<D: ClockDomain, V: SignalValue>(
     clock: Clock<D>,
     reset_value: impl Into<V>,
-    signal_fn: impl Fn(V) -> V + 'static,
+    comb_fn: impl Fn(V) -> V + 'static,
 ) -> Register<D, V> {
-    Register::new(clock, reset_value.into(), signal_fn)
+    Register::new(clock, reset_value.into(), comb_fn)
 }
-
-#[derive(Debug, Clone, Copy)]
-pub struct RegisterFn<D: ClockDomain, V: SignalValue>((PhantomData<D>, PhantomData<V>));
-
-// impl<V: SignalValue + Synthesizable> Synthesizable for RegisterFn<DummySystem, V> {
-//     fn width() -> u128 {
-//         V::width()
-//     }
-
-//     fn synthesize_lit(lit: &Lit) -> Option<Expression> {
-//         V::synthesize_lit(lit)
-//     }
-// }
 
 impl<D: ClockDomain, V: SignalValue + Display> Signal<D> for Register<D, V> {
     type Value = V;
 
     fn next(&mut self) -> Self::Value {
         if self.clock.is_rising() {
-            self.prev_value = self
-                .next_value
-                .clone()
-                .unwrap_or_else(|| self.reset_value.clone());
-            self.next_value
-                .replace((self.signal_fn)(self.prev_value.clone()));
+            self.value = self.next_value.clone();
+            self.next_value = (self.comb_fn)(self.value.clone());
         }
-        self.prev_value.clone()
+
+        self.value.clone()
     }
 }

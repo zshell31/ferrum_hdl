@@ -13,6 +13,7 @@ use rustc_hir::{
     definitions::{DefPath, DefPathDataName},
     Expr, ExprKind, Lit, QPath,
 };
+use rustc_middle::ty::{GenericArg, List};
 use rustc_span::Span;
 
 use crate::{
@@ -49,9 +50,9 @@ pub enum Blackbox {
 
 pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     // TODO: check crate
-    if def_path == &ItemPath(&["signal", "register"]) {
+    if def_path == &ItemPath(&["signal", "reg"]) {
         #[allow(unused_imports)]
-        use ferrum::signal::register;
+        use ferrum::signal::reg;
         return Some(Blackbox::RegisterFn);
     }
 
@@ -103,6 +104,32 @@ pub fn find_prim_ty(key: &Key<'_>, def_path: &DefPath) -> Option<PrimTy> {
         };
     }
 
+    // if def_path == &ItemPath(&["signal", "MapSignal"]) {
+    //     #[allow(unused_imports)]
+    //     use ferrum::signal::MapSignal;
+    //     return match key.generics {
+    //         Some(Generics::G2(Generic::Ty(ty), _)) => {
+    //             let def_id = ty.def_id()?;
+    //             let def_path = tcx.def_path(def_id);
+    //             find_prim_ty(tcx, &ty.ty()?.as_key(tcx, None), &def_path)
+    //         }
+    //         _ => None,
+    //     };
+    // }
+
+    // if def_path == &ItemPath(&["signal", "Register"]) {
+    //     #[allow(unused_imports)]
+    //     use ferrum::signal::Register;
+    //     return match key.generics {
+    //         Some(Generics::G2(_, Generic::Ty(ty))) => {
+    //             let def_id = ty.def_id()?;
+    //             let def_path = tcx.def_path(def_id);
+    //             find_prim_ty(tcx, &ty.ty()?.as_key(tcx, None), &def_path)
+    //         }
+    //         _ => None,
+    //     };
+    // }
+
     None
 }
 
@@ -110,14 +137,23 @@ impl Blackbox {
     pub fn evaluate_expr<'tcx>(
         &self,
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
         match self {
-            Self::RegisterFn => RegisterFn::evaluate_expr(generator, expr, module),
-            Self::SignalMap => SignalMap::evaluate_expr(generator, expr, module),
-            Self::BitPackMsb => BitPackMsb::evaluate_expr(generator, expr, module),
-            Self::Conversion => Conversion::evaluate_expr(generator, expr, module),
+            Self::RegisterFn => {
+                RegisterFn::evaluate_expr(generator, generics, expr, module)
+            }
+            Self::SignalMap => {
+                SignalMap::evaluate_expr(generator, generics, expr, module)
+            }
+            Self::BitPackMsb => {
+                BitPackMsb::evaluate_expr(generator, generics, expr, module)
+            }
+            Self::Conversion => {
+                Conversion::evaluate_expr(generator, generics, expr, module)
+            }
         }
     }
 }
@@ -135,6 +171,7 @@ impl RegisterFn {
 
     fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
@@ -144,16 +181,16 @@ impl RegisterFn {
 
         let signal_val_ty = generator
             .generic_type(&ty, 1)
-            .and_then(|ty| generator.find_prim_ty(&ty, rec.span).ok());
+            .and_then(|ty| generator.find_prim_ty(&ty, generics, rec.span).ok());
 
         let gen = generator
             .generic_type(&ty, 1)
             .ok_or_else(|| Self::make_err(rec.span))?;
-        let prim_ty = generator.find_prim_ty(&gen, rec.span)?;
+        let prim_ty = generator.find_prim_ty(&gen, generics, rec.span)?;
 
-        let clk = generator.evaluate_expr(&args[0], module)?;
-        let rst_value = generator.evaluate_expr(&args[1], module)?;
-        let comb = generator.evaluate_expr(&args[2], module)?;
+        let clk = generator.evaluate_expr(&args[0], generics, module)?;
+        let rst_value = generator.evaluate_expr(&args[1], generics, module)?;
+        let comb = generator.evaluate_expr(&args[2], generics, module)?;
 
         if let Node::Const(node) = module.net_list.node_mut(rst_value) {
             node.inject = true;
@@ -187,13 +224,14 @@ struct SignalMap;
 impl SignalMap {
     pub fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
 
-        let rec = generator.evaluate_expr(rec, module)?;
-        let comb = generator.evaluate_expr(&args[0], module)?;
+        let rec = generator.evaluate_expr(rec, generics, module)?;
+        let comb = generator.evaluate_expr(&args[0], generics, module)?;
 
         module.net_list.link_dummy_input(comb, rec);
 
@@ -206,12 +244,13 @@ struct BitPackMsb;
 impl BitPackMsb {
     pub fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        let rec = generator.evaluate_expr(rec, module)?;
+        let rec = generator.evaluate_expr(rec, generics, module)?;
 
         let start = module.net_list.node_output(rec).ty.width() - 1;
         let split = module.net_list.add_node(Splitter::new(
@@ -239,30 +278,44 @@ impl Conversion {
 
     pub fn evaluate_expr<'tcx>(
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
         match expr.kind {
             ExprKind::Call(rec, args) => {
-                let from = generator
-                    .find_prim_ty(&generator.node_type(args[0].hir_id), args[0].span)?;
+                let from = generator.find_prim_ty(
+                    &generator.node_type(args[0].hir_id),
+                    generics,
+                    args[0].span,
+                )?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator
-                        .find_prim_ty(&generator.node_type(ty.hir_id), rec.span)?,
+                        .find_prim_ty(
+                            &generator.node_type(ty.hir_id),
+                            generics,
+                            rec.span,
+                        )?,
                     _ => {
                         return Err(Self::make_err(rec.span));
                     }
                 };
 
-                Self::convert(from, target, generator, &args[0], module)
+                Self::convert(from, target, generator, generics, &args[0], module)
             }
             ExprKind::MethodCall(_, rec, _, span) => {
-                let from =
-                    generator.find_prim_ty(&generator.node_type(rec.hir_id), rec.span)?;
-                let target =
-                    generator.find_prim_ty(&generator.node_type(expr.hir_id), span)?;
+                let from = generator.find_prim_ty(
+                    &generator.node_type(rec.hir_id),
+                    generics,
+                    rec.span,
+                )?;
+                let target = generator.find_prim_ty(
+                    &generator.node_type(expr.hir_id),
+                    generics,
+                    span,
+                )?;
 
-                Self::convert(from, target, generator, rec, module)
+                Self::convert(from, target, generator, generics, rec, module)
             }
             _ => Err(Self::make_err(expr.span)),
         }
@@ -272,21 +325,22 @@ impl Conversion {
         from: PrimTy,
         target: PrimTy,
         generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         expr: &Expr<'tcx>,
         module: &mut Module,
     ) -> Result<NodeId, Error> {
         match (from, target) {
             (PrimTy::Bool, PrimTy::Bit) => {
                 assert_convert::<bool, Bit>();
-                generator.evaluate_expr(expr, module)
+                generator.evaluate_expr(expr, generics, module)
             }
             (PrimTy::Bit, PrimTy::Bool) => {
                 assert_convert::<Bit, bool>();
-                generator.evaluate_expr(expr, module)
+                generator.evaluate_expr(expr, generics, module)
             }
             (PrimTy::U128, PrimTy::Unsigned(n)) => {
                 assert_convert::<u128, Unsigned<1>>();
-                let node_id = generator.evaluate_expr(expr, module)?;
+                let node_id = generator.evaluate_expr(expr, generics, module)?;
                 let node = module.net_list.node_mut(node_id);
                 node.node_output_mut(0).ty = PrimTy::Unsigned(n);
                 Ok(node_id)

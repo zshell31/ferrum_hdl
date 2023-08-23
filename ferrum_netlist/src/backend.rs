@@ -6,8 +6,8 @@ use crate::{
     net_kind::NetKind,
     net_list::{NetList, NodeId},
     node::{
-        BinOpNode, BitNotNode, ConstNode, DFFNode, Mux2Node, Node, NotNode, PassNode,
-        Splitter,
+        BinOpNode, BitNotNode, ConstNode, DFFNode, ModInst, Mux2Node, Node, NotNode,
+        PassNode, Splitter,
     },
     output::NodeOutput,
     symbol::Symbol,
@@ -143,6 +143,7 @@ impl Visitor for Verilog {
         self.buffer.write_str("\n);\n");
 
         self.buffer.push_tab();
+        self.buffer.write_eol();
 
         for node in module.net_list.nodes() {
             self.visit_node(modules, &module.net_list, node);
@@ -150,7 +151,7 @@ impl Visitor for Verilog {
 
         self.buffer.pop_tab();
 
-        self.buffer.write_str("\nendmodule\n");
+        self.buffer.write_str("endmodule\n\n");
     }
 
     fn visit_param(&mut self, param: &Node, kind: ParamKind) {
@@ -164,9 +165,55 @@ impl Visitor for Verilog {
         self.buffer.write_fmt(format_args!(" {}", out.sym));
     }
 
-    fn visit_node(&mut self, _: &ModuleList, net_list: &NetList, node: &Node) {
+    fn visit_node(&mut self, modules: &ModuleList, net_list: &NetList, node: &Node) {
         match node {
             Node::DummyInput(_) | Node::Input(_) => {}
+            Node::ModInst(ModInst {
+                name,
+                module_id,
+                inputs,
+                out,
+            }) => {
+                let module = modules.module(*module_id);
+                assert_eq!(inputs.len(), module.net_list.inputs.len());
+                assert_eq!(module.net_list.outputs.len(), 1);
+
+                self.write_local(out, None);
+                let output = out.sym;
+
+                self.buffer.write_tab();
+
+                self.buffer
+                    .write_fmt(format_args!("{} {} (\n", module.name, name));
+
+                self.buffer.push_tab();
+                if !inputs.is_empty() {
+                    self.buffer.write_tab();
+                    self.buffer.write_str("// Inputs\n");
+                }
+                for (input, mod_input) in inputs.iter().zip(module.net_list.inputs.iter())
+                {
+                    let input_sym = net_list.node_output(*input).sym;
+                    let mod_input_sym = module.net_list.node_output(*mod_input).sym;
+                    self.buffer.write_tab();
+                    self.buffer
+                        .write_fmt(format_args!(".{mod_input_sym}({input_sym}),\n"));
+                }
+                self.buffer.write_tab();
+                self.buffer.write_str("// Outputs\n");
+                self.buffer.write_tab();
+
+                let mod_output = module
+                    .net_list
+                    .node_output(module.net_list.outputs.first().copied().unwrap())
+                    .sym;
+                self.buffer
+                    .write_fmt(format_args!(".{mod_output}({output})\n"));
+
+                self.buffer.pop_tab();
+                self.buffer.write_tab();
+                self.buffer.write_str(");\n\n");
+            }
             Node::Pass(PassNode { input, out }) => {
                 self.write_local(out, None);
                 let input = net_list.node_output(*input).sym;

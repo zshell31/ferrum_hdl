@@ -6,6 +6,7 @@ pub use self::{
     consta::ConstNode,
     dff::DFFNode,
     input::InputNode,
+    mod_inst::ModInst,
     mux2::Mux2Node,
     not::NotNode,
     pass::PassNode,
@@ -21,6 +22,7 @@ mod bit_not;
 mod consta;
 mod dff;
 mod input;
+mod mod_inst;
 mod mux2;
 mod not;
 mod pass;
@@ -33,13 +35,14 @@ pub trait IsNode: Into<Node> {
 
     fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput;
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId>;
+    fn inputs(&self) -> impl Iterator<Item = NodeId> + '_;
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Node {
     DummyInput(InputNode),
     Input(InputNode),
+    ModInst(ModInst),
     Pass(PassNode),
     Const(ConstNode),
     Splitter(Splitter),
@@ -67,6 +70,7 @@ impl Node {
         match self {
             Self::DummyInput(node) => node.node_output(out),
             Self::Input(node) => node.node_output(out),
+            Self::ModInst(node) => node.node_output(out),
             Self::Mux2(node) => node.node_output(out),
             Self::Pass(node) => node.node_output(out),
             Self::Const(node) => node.node_output(out),
@@ -82,6 +86,7 @@ impl Node {
         match self {
             Self::DummyInput(node) => node.node_output_mut(out),
             Self::Input(node) => node.node_output_mut(out),
+            Self::ModInst(node) => node.node_output_mut(out),
             Self::Mux2(node) => node.node_output_mut(out),
             Self::Pass(node) => node.node_output_mut(out),
             Self::Const(node) => node.node_output_mut(out),
@@ -94,10 +99,11 @@ impl Node {
     }
 
     #[auto_enum(Iterator)]
-    pub fn inputs(&self) -> impl Iterator<Item = NodeId> {
+    pub fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
         match self {
             Self::DummyInput(node) => node.inputs(),
             Self::Input(node) => node.inputs(),
+            Self::ModInst(node) => node.inputs(),
             Self::Mux2(node) => node.inputs(),
             Self::Pass(node) => node.inputs(),
             Self::Const(node) => node.inputs(),

@@ -10,6 +10,7 @@ pub struct Idents {
     scopes: Vec<LocalScope>,
     temp: usize,
     out: usize,
+    inst: usize,
 }
 
 impl Idents {
@@ -31,6 +32,10 @@ impl Idents {
 
     pub fn out(&mut self) -> Symbol {
         Self::temp_ident("__out", &mut self.out)
+    }
+
+    pub fn inst(&mut self) -> Symbol {
+        Self::temp_ident("__inst", &mut self.inst)
     }
 
     fn temp_ident(prefix: &str, idx: &mut usize) -> Symbol {

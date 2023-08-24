@@ -56,7 +56,7 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::RegisterFn);
     }
 
-    if def_path == &ItemPath(&["signal", "Signal", "map"]) {
+    if def_path == &ItemPath(&["signal", "Signal", "smap"]) {
         #[allow(unused_imports)]
         use ferrum::signal::Signal;
         // TODO: check that map exists

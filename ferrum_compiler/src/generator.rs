@@ -277,10 +277,6 @@ impl<'tcx> AsKey<'tcx> for Path<'tcx> {
     }
 }
 
-// fn find_trait_ref(def_id: DefId, tcx: TyCtxt<'_>) -> Option<DefId> {
-//     let def_id = def_id.
-// }
-
 impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
     fn as_key(
         &self,
@@ -327,25 +323,26 @@ impl<'tcx> Generator<'tcx> {
     }
 
     pub fn generate(&mut self) {
-        let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        let name = env::var("CARGO_PKG_NAME").unwrap();
-
-        let mut path = StdPath::new(&dir)
-            .join("generated")
-            .join("verilog")
-            .join(name);
-
-        path.set_extension("v");
-
-        if let Err(e) = self.generate_inner(path) {
+        if let Err(e) = self.generate_inner() {
             self.emit_err(e);
         }
     }
 
-    fn generate_inner<P: AsRef<StdPath>>(&mut self, path: P) -> Result<(), Error> {
+    fn generate_inner(&mut self) -> Result<(), Error> {
+        let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let name = env::var("CARGO_PKG_NAME").unwrap();
+
+        let path = StdPath::new(&dir).join("generated").join("verilog");
+        fs::create_dir_all(&path)?;
+
+        let mut path = path.join(name);
+        path.set_extension("v");
+
         let item = self.tcx.hir().item(self.top_module);
         self.evaluate_item(item, None)?;
+
         let verilog = Verilog::new().generate(&self.modules);
+
         Ok(fs::write(path, verilog)?)
     }
 
@@ -484,7 +481,8 @@ impl<'tcx> Generator<'tcx> {
         item: &Item<'tcx>,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
     ) -> Result<Option<ModuleId>, Error> {
-        if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
+        if let ItemKind::Fn(FnSig { decl, .. }, hir_generics, body_id) = item.kind {
+            println!("{:#?}", hir_generics);
             return self
                 .evaluate_fn(item.ident, decl, body_id, generics)
                 .map(Some);
@@ -555,6 +553,8 @@ impl<'tcx> Generator<'tcx> {
         'tcx: 'a,
     {
         for (input, param) in inputs {
+            // println!("{:#?}", input);
+            // println!("{:#?}", param);
             match input.kind {
                 HirTyKind::Path(QPath::Resolved(_, path)) => {
                     let ident = utils::pat_ident(param.pat)?;

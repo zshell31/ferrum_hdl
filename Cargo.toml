@@ -15,6 +15,10 @@ edition = "2021"
 # [package.metadata.rust-analyzer]
 # rustc_private = true
 
+[[example]]
+name = "blinking"
+crate-type = ["staticlib"]
+
 [dependencies]
 derive-where = "1.2.2"
 ferrum_macros = { path = "ferrum_macros/" }

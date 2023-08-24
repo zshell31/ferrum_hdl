@@ -27,10 +27,8 @@ impl Display for Bit {
 impl SignalValue for Bit {}
 
 impl Bit {
-    #[blackbox(Bit(expr = 1))]
-    pub const HIGH: Bit = Bit(true);
-    #[blackbox(Bit(expr = 0))]
-    pub const LOW: Bit = Bit(false);
+    pub const H: Bit = Bit(true);
+    pub const L: Bit = Bit(false);
 
     pub(crate) fn from_u128(value: u128) -> Self {
         Self::from(value > 0)

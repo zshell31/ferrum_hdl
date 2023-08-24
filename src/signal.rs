@@ -1,10 +1,6 @@
 use std::{
     fmt::{Debug, Display},
     marker::PhantomData,
-    sync::{
-        atomic::{AtomicU8, Ordering},
-        Arc,
-    },
 };
 
 use derive_where::derive_where;
@@ -25,7 +21,7 @@ pub trait Signal<D: ClockDomain>: Sized {
 
     fn next(&mut self) -> Self::Value;
 
-    fn map<O, F>(self, f: F) -> MapSignal<Self, F>
+    fn smap<O, F>(self, f: F) -> MapSignal<Self, F>
     where
         Self: Sized,
         F: Fn(Self::Value) -> O,
@@ -33,39 +29,24 @@ pub trait Signal<D: ClockDomain>: Sized {
         MapSignal::new(self, f)
     }
 
-    fn clk_cycles(self, clock: Clock<D>) -> impl Iterator<Item = (isize, Self::Value)> {
-        SignalClkCycles {
+    fn iter(self) -> impl Iterator<Item = Self::Value> {
+        SignalIter {
             _dom: PhantomData,
-            before: true,
-            cycle: -1,
-            clock,
             signal: self,
         }
     }
 }
 
-pub struct SignalClkCycles<D: ClockDomain, S> {
+pub struct SignalIter<D, S> {
     _dom: PhantomData<D>,
-    before: bool,
-    cycle: isize,
-    clock: Clock<D>,
     signal: S,
 }
 
-impl<D: ClockDomain, S: Signal<D>> Iterator for SignalClkCycles<D, S> {
-    type Item = (isize, S::Value);
+impl<D: ClockDomain, S: Signal<D>> Iterator for SignalIter<D, S> {
+    type Item = S::Value;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.before {
-            self.before = false;
-            Some((self.cycle, self.signal.next()))
-        } else {
-            self.cycle += 1;
-            self.clock.next(); // rising
-            let _ = self.signal.next();
-            self.clock.next(); // falling
-            Some((self.cycle, self.signal.next()))
-        }
+        Some(self.signal.next())
     }
 }
 
@@ -96,53 +77,56 @@ where
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(u8)]
-enum ClockState {
-    Init,
-    Rising,
-    Falling,
+pub struct Apply2<S1, S2, F> {
+    s1: S1,
+    s2: S2,
+    f: F,
 }
 
-impl ClockState {
-    fn is_rising(&self) -> bool {
-        matches!(self, ClockState::Rising)
-    }
+pub fn apply2<D, S1, S2, O, F>(s1: S1, s2: S2, f: F) -> Apply2<S1, S2, F>
+where
+    D: ClockDomain,
+    S1: Signal<D>,
+    S2: Signal<D>,
+    O: SignalValue,
+    F: Fn(S1::Value, S2::Value) -> O,
+{
+    Apply2 { s1, s2, f }
+}
 
-    fn is_falling(&self) -> bool {
-        matches!(self, ClockState::Falling)
+impl<D, S1, S2, O, F> Signal<D> for Apply2<S1, S2, F>
+where
+    D: ClockDomain,
+    S1: Signal<D>,
+    S2: Signal<D>,
+    O: SignalValue,
+    F: Fn(S1::Value, S2::Value) -> O,
+{
+    type Value = O;
+
+    fn next(&mut self) -> Self::Value {
+        let s1 = self.s1.next();
+        let s2 = self.s2.next();
+        (self.f)(s1, s2)
     }
 }
 
-impl From<u8> for ClockState {
-    fn from(value: u8) -> Self {
-        match value {
-            _ if Self::Init as u8 == value => Self::Init,
-            _ if Self::Rising as u8 == value => Self::Rising,
-            _ if Self::Falling as u8 == value => Self::Falling,
-            _ => unreachable!(),
-        }
+impl<D: ClockDomain, T: SignalValue, I: Iterator<Item = T>> Signal<D> for I {
+    type Value = T;
+
+    fn next(&mut self) -> Self::Value {
+        Iterator::next(self).expect("No values")
     }
 }
 
-impl From<ClockState> for u8 {
-    fn from(value: ClockState) -> Self {
-        value as u8
-    }
-}
-
-#[derive_where(Debug, Clone)]
+#[derive_where(Debug, Clone, Copy)]
 pub struct Clock<D: ClockDomain> {
     _dom: PhantomData<D>,
-    state: Arc<AtomicU8>,
 }
 
 impl<D: ClockDomain> Default for Clock<D> {
     fn default() -> Self {
-        Self {
-            _dom: PhantomData,
-            state: Arc::new(AtomicU8::new(ClockState::Init.into())),
-        }
+        Self { _dom: PhantomData }
     }
 }
 
@@ -150,39 +134,13 @@ impl<D: ClockDomain> Clock<D> {
     pub fn new() -> Self {
         Self::default()
     }
-
-    fn state(&self) -> ClockState {
-        self.state.load(Ordering::Relaxed).into()
-    }
-
-    fn set_state(&self, state: ClockState) {
-        self.state.store(state.into(), Ordering::Relaxed)
-    }
-
-    pub(crate) fn next(&self) {
-        let state = self.state();
-        let next_state = match state {
-            ClockState::Init => ClockState::Falling,
-            ClockState::Rising => ClockState::Falling,
-            ClockState::Falling => ClockState::Rising,
-        };
-        self.set_state(next_state);
-    }
-
-    pub fn is_rising(&mut self) -> bool {
-        self.state().is_rising()
-    }
-
-    pub fn is_falling(&mut self) -> bool {
-        self.state().is_falling()
-    }
 }
 
 #[blackbox(Register, Clone)]
 pub struct Register<D: ClockDomain, V: SignalValue> {
     value: V,
     next_value: V,
-    clock: Clock<D>,
+    _clock: Clock<D>,
     comb_fn: Box<dyn Fn(V) -> V>,
 }
 
@@ -191,7 +149,7 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
         Self {
             value: reset_value.clone(),
             next_value: reset_value,
-            clock,
+            _clock: clock,
             comb_fn: Box::new(comb_fn),
         }
     }
@@ -211,10 +169,8 @@ impl<D: ClockDomain, V: SignalValue + Display> Signal<D> for Register<D, V> {
     type Value = V;
 
     fn next(&mut self) -> Self::Value {
-        if self.clock.is_rising() {
-            self.value = self.next_value.clone();
-            self.next_value = (self.comb_fn)(self.value.clone());
-        }
+        self.value = self.next_value.clone();
+        self.next_value = (self.comb_fn)(self.value.clone());
 
         self.value.clone()
     }

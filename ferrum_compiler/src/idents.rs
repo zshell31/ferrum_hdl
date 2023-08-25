@@ -38,6 +38,18 @@ impl Idents {
         Self::temp_ident("__inst", &mut self.inst)
     }
 
+    pub fn module(&self, ident: Ident) -> Symbol {
+        Symbol::new(ident.as_str())
+    }
+
+    pub fn ident(&self, ident: Ident) -> Symbol {
+        if self.scopes.len() == 1 {
+            Symbol::new(ident.as_str())
+        } else {
+            Symbol::new(&format!("{}_{}", ident.as_str(), self.scopes.len() - 1))
+        }
+    }
+
     fn temp_ident(prefix: &str, idx: &mut usize) -> Symbol {
         let sym = if (*idx) == 0 {
             Symbol::new(prefix)

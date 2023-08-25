@@ -77,6 +77,8 @@ pub enum SpanErrorKind {
     UnsupportedBinOp(BinOpKind),
     #[error("unsupported conversion")]
     UnsupportedConversion,
+    #[error("unsupported generic")]
+    UnsupportedGeneric,
 
     #[error("not synthesizable expression")]
     NotSynthExpr,

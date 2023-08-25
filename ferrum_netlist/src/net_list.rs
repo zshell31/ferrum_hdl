@@ -140,11 +140,13 @@ impl NetList {
         }
     }
 
-    pub fn link_dummy_input(&mut self, with_dummy: NodeId, to_link: NodeId) {
-        let dummy = self.find_dummy_inputs(with_dummy).first().copied().unwrap();
+    pub fn link_dummy_input(&mut self, with_dummy: NodeId, to_link: &[NodeId]) {
+        let dummy = self.find_dummy_inputs(with_dummy);
+        assert_eq!(dummy.len(), to_link.len());
+        for (dummy, to_link) in dummy.into_iter().zip(to_link.iter().copied()) {
+            let dummy_out = self.node_output(dummy);
 
-        let dummy_out = self.node_output(dummy);
-
-        self.replace(dummy, PassNode::new(dummy_out.ty, to_link, dummy_out.sym));
+            self.replace(dummy, PassNode::new(dummy_out.ty, to_link, dummy_out.sym));
+        }
     }
 }

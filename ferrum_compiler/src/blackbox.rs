@@ -22,7 +22,7 @@ use crate::{
     utils,
 };
 
-pub struct ItemPath(&'static [&'static str]);
+pub struct ItemPath(pub &'static [&'static str]);
 
 impl PartialEq<ItemPath> for DefPath {
     fn eq(&self, other: &ItemPath) -> bool {
@@ -44,8 +44,10 @@ impl PartialEq<ItemPath> for DefPath {
 pub enum Blackbox {
     RegisterFn,
     SignalMap,
+    SignalApply2,
     BitPackMsb,
-    Conversion,
+    StdConversion,
+    StdClone,
 }
 
 pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
@@ -63,19 +65,30 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::SignalMap);
     }
 
+    if def_path == &ItemPath(&["signal", "apply2"]) {
+        #[allow(unused_imports)]
+        use ferrum::signal::apply2;
+        // TODO: check that map exists
+        return Some(Blackbox::SignalApply2);
+    }
+
     if def_path == &ItemPath(&["bit_pack", "BitPack", "msb"]) {
         #[allow(unused_imports)]
         use ferrum::bit_pack::BitPack;
-        // TODO: check that map exists
+        // TODO: check that msb exists
         return Some(Blackbox::BitPackMsb);
     }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
-        return Some(Blackbox::Conversion);
+        return Some(Blackbox::StdConversion);
     }
 
     if def_path == &ItemPath(&["convert", "Into", "into"]) {
-        return Some(Blackbox::Conversion);
+        return Some(Blackbox::StdConversion);
+    }
+
+    if def_path == &ItemPath(&["clone", "Clone", "clone"]) {
+        return Some(Blackbox::StdClone);
     }
 
     None
@@ -148,12 +161,16 @@ impl Blackbox {
             Self::SignalMap => {
                 SignalMap::evaluate_expr(generator, generics, expr, module)
             }
+            Self::SignalApply2 => {
+                SignalApply2::evaluate_expr(generator, generics, expr, module)
+            }
             Self::BitPackMsb => {
                 BitPackMsb::evaluate_expr(generator, generics, expr, module)
             }
-            Self::Conversion => {
-                Conversion::evaluate_expr(generator, generics, expr, module)
+            Self::StdConversion => {
+                StdConversion::evaluate_expr(generator, generics, expr, module)
             }
+            Self::StdClone => StdClone::evaluate_expr(generator, generics, expr, module),
         }
     }
 }
@@ -208,7 +225,7 @@ impl RegisterFn {
             generator.idents.tmp(),
         ));
 
-        module.net_list.link_dummy_input(comb, dff);
+        module.net_list.link_dummy_input(comb, &[dff]);
         module.net_list.link_dff(dff, comb);
 
         if let Node::DFF(dff) = module.net_list.node_mut(dff) {
@@ -233,7 +250,28 @@ impl SignalMap {
         let rec = generator.evaluate_expr(rec, generics, module)?;
         let comb = generator.evaluate_expr(&args[0], generics, module)?;
 
-        module.net_list.link_dummy_input(comb, rec);
+        module.net_list.link_dummy_input(comb, &[rec]);
+
+        Ok(comb)
+    }
+}
+
+struct SignalApply2;
+
+impl SignalApply2 {
+    pub fn evaluate_expr<'tcx>(
+        generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        expr: &Expr<'tcx>,
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
+        let (_, args) = utils::expected_call(expr)?;
+
+        let arg1 = generator.evaluate_expr(&args[0], generics, module)?;
+        let arg2 = generator.evaluate_expr(&args[1], generics, module)?;
+        let comb = generator.evaluate_expr(&args[2], generics, module)?;
+
+        module.net_list.link_dummy_input(comb, &[arg1, arg2]);
 
         Ok(comb)
     }
@@ -265,9 +303,9 @@ impl BitPackMsb {
     }
 }
 
-struct Conversion;
+struct StdConversion;
 
-impl Conversion {
+impl StdConversion {
     fn make_err(span: Span) -> Error {
         SpanError::new(
             SpanErrorKind::NotSynthBlackboxExpr(Blackbox::RegisterFn),
@@ -353,6 +391,21 @@ impl Conversion {
 }
 
 fn assert_convert<F, T: From<F>>() {}
+
+struct StdClone;
+
+impl StdClone {
+    fn evaluate_expr<'tcx>(
+        generator: &mut Generator<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        expr: &Expr<'tcx>,
+        module: &mut Module,
+    ) -> Result<NodeId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+
+        generator.evaluate_expr(rec, generics, module)
+    }
+}
 
 pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
     match prim_ty {

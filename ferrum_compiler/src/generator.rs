@@ -9,15 +9,15 @@ use ferrum_netlist::{
         BinOp, BinOpNode, BitNotNode, ConstNode, InputNode, ModInst, Mux2Node, Node,
         NotNode,
     },
-    symbol::Symbol,
 };
 use rustc_const_eval::interpret::{ConstValue, Scalar};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def::Res, def_id::DefId, AnonConst, BinOpKind, BodyId, ConstArg, Expr, ExprKind,
-    FnDecl, FnSig, GenericArg as HirGenArg, HirId, Item, ItemId, ItemKind, Param, Path,
-    QPath, StmtKind, Ty as HirTy, TyKind as HirTyKind, UnOp,
+    FnDecl, FnSig, GenericArg as HirGenArg, Generics as HirGenerics, HirId, Item, ItemId,
+    ItemKind, Param, Path, QPath, StmtKind, Ty as HirTy, TyKind as HirTyKind, UnOp,
+    WherePredicate,
 };
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::ty::{EarlyBinder, GenericArg, List, Ty, TyCtxt, UnevaluatedConst};
@@ -30,7 +30,7 @@ use rustc_type_ir::{
 };
 
 use crate::{
-    blackbox::{self, Blackbox},
+    blackbox::{self, Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
     utils,
@@ -482,13 +482,87 @@ impl<'tcx> Generator<'tcx> {
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
     ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, hir_generics, body_id) = item.kind {
-            println!("{:#?}", hir_generics);
+            self.evaluate_generics(hir_generics)?;
+
             return self
                 .evaluate_fn(item.ident, decl, body_id, generics)
                 .map(Some);
         }
 
         Ok(None)
+    }
+
+    fn evaluate_generics(&mut self, generics: &HirGenerics<'tcx>) -> Result<(), Error> {
+        let make_err =
+            |span| Error::from(SpanError::new(SpanErrorKind::UnsupportedGeneric, span));
+
+        let mut params: FxHashMap<DefId, Span> = generics
+            .params
+            .iter()
+            .map(|param| (param.def_id.to_def_id(), param.span))
+            .collect();
+
+        for predicate in generics.predicates {
+            match predicate {
+                WherePredicate::BoundPredicate(predicate) => {
+                    let (def_id, _) = predicate
+                        .bounded_ty
+                        .as_generic_param()
+                        .ok_or_else(|| make_err(predicate.span))?;
+
+                    let (_, span) = params
+                        .remove_entry(&def_id)
+                        .ok_or_else(|| make_err(predicate.span))?;
+
+                    let mut found_signal = false;
+                    for bound in predicate.bounds {
+                        let trait_ref =
+                            bound.trait_ref().ok_or_else(|| make_err(span))?;
+                        let trait_def_id = trait_ref
+                            .path
+                            .res
+                            .opt_def_id()
+                            .ok_or_else(|| make_err(span))?;
+
+                        // TODO: move into blackbox
+                        if self.tcx.def_path(trait_def_id)
+                            == ItemPath(&["signal", "Signal"])
+                        {
+                            let arg = trait_ref.path.segments[0]
+                                .args
+                                .ok_or_else(|| make_err(span))?;
+
+                            let ty = arg.bindings[0].ty();
+                            match ty.kind {
+                                HirTyKind::Path(QPath::Resolved(_, path)) => {
+                                    let prim_ty = self.find_prim_ty(path, None, span)?;
+                                    let key = def_id.as_key(self.tcx, None);
+                                    self.prim_ty.insert(key, Some(prim_ty));
+
+                                    found_signal = true;
+                                }
+                                _ => return Err(make_err(span)),
+                            }
+                            break;
+                        }
+                    }
+
+                    if !found_signal {
+                        return Err(make_err(span));
+                    }
+                }
+                _ => {
+                    return Err(make_err(predicate.span()));
+                }
+            }
+        }
+
+        if !params.is_empty() {
+            let span = params.values().next().unwrap();
+            return Err(make_err(*span));
+        }
+
+        Ok(())
     }
 
     fn evaluate_fn(
@@ -498,7 +572,7 @@ impl<'tcx> Generator<'tcx> {
         body_id: BodyId,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
     ) -> Result<ModuleId, Error> {
-        let module_sym = Symbol::new(name.as_str());
+        let module_sym = self.idents.module(name);
         let module_id = self.modules.add_module(module_sym);
         let mut module = Module::new(module_id, module_sym);
 
@@ -530,7 +604,7 @@ impl<'tcx> Generator<'tcx> {
         module: &mut Module,
         is_dummy: bool,
     ) {
-        let sym = Symbol::new(ident.as_str());
+        let sym = self.idents.ident(ident);
 
         let input = InputNode::new(prim_ty, sym);
         let input = if is_dummy {
@@ -643,7 +717,7 @@ impl<'tcx> Generator<'tcx> {
                     match stmt.kind {
                         StmtKind::Local(local) if local.els.is_none() => {
                             let ident = utils::pat_ident(local.pat)?;
-                            let sym = Symbol::new(ident.as_str());
+                            let sym = self.idents.ident(ident);
 
                             let init = local.init.ok_or_else(|| {
                                 SpanError::new(SpanErrorKind::ExpectedExpr, local.span)

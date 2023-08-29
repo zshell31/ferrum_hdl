@@ -2,14 +2,13 @@ use std::collections::BTreeSet;
 
 use crate::{
     buffer::Buffer,
-    module::{Module, ModuleList},
     net_kind::NetKind,
-    net_list::{NetList, NodeId},
+    net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, ConstNode, DFFNode, ModInst, Mux2Node, Node, NotNode,
-        PassNode, Splitter,
+        BinOpNode, BitNotNode, ConstNode, DFFNode, IsNode, ModInst, Mux2Node, Node,
+        NodeOutput, NotNode, PassNode, Splitter,
     },
-    output::NodeOutput,
+    params::Outputs,
     symbol::Symbol,
 };
 
@@ -22,32 +21,32 @@ pub enum ParamKind {
 }
 
 pub trait Visitor {
-    fn visit_modules(&mut self, modules: &ModuleList) {
-        for module in modules.iter() {
-            self.visit_module(modules, module);
+    fn visit_modules(&mut self);
+
+    fn visit_module(&mut self, module_id: ModuleId);
+
+    fn visit_param(&mut self, param: NodeOutId, kind: ParamKind);
+
+    fn visit_node(&mut self, node_id: NodeId);
+}
+
+pub struct Verilog<'n> {
+    buffer: Buffer,
+    locals: BTreeSet<Symbol>,
+    net_list: &'n NetList,
+}
+
+impl<'n> Verilog<'n> {
+    pub fn new(net_list: &'n NetList) -> Self {
+        Self {
+            buffer: Buffer::new(),
+            locals: BTreeSet::new(),
+            net_list,
         }
     }
 
-    fn visit_module(&mut self, modules: &ModuleList, module: &Module);
-
-    fn visit_param(&mut self, param: &Node, kind: ParamKind);
-
-    fn visit_node(&mut self, modules: &ModuleList, net_list: &NetList, node: &Node);
-}
-
-#[derive(Default)]
-pub struct Verilog {
-    buffer: Buffer,
-    locals: BTreeSet<Symbol>,
-}
-
-impl Verilog {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn generate(mut self, modules: &ModuleList) -> String {
-        self.visit_modules(modules);
+    pub fn generate(mut self) -> String {
+        self.visit_modules();
 
         self.buffer.buffer
     }
@@ -71,62 +70,83 @@ impl Verilog {
     }
 
     fn write_local(&mut self, out: &NodeOutput, init: Option<u128>) {
-        // TODO: don't write if node is output
         if !self.locals.contains(&out.sym) {
+            // TODO: don't write if node is output
             self.buffer.write_tab();
             self.write_out(out);
             self.buffer.write_fmt(format_args!(" {}", out.sym));
+            self.buffer.write_str(";\n");
 
             if let Some(init) = init {
-                self.buffer.write_str(" = ");
-                self.write_value(out, init);
-            }
+                self.buffer.write_tab();
+                self.buffer.write_str("initial begin\n");
+                self.buffer.push_tab();
 
-            self.buffer.write_str(";\n");
+                self.buffer.write_tab();
+                self.buffer.write_fmt(format_args!("{} = ", out.sym));
+                self.write_value(out, init);
+                self.buffer.write_str(";\n");
+
+                self.buffer.pop_tab();
+                self.buffer.write_tab();
+                self.buffer.write_str("end\n");
+            }
 
             self.locals.insert(out.sym);
         }
     }
 
-    fn inject_const(&mut self, node_id: NodeId, net_list: &NetList) {
-        let node = net_list.node(node_id);
+    fn inject_const(&mut self, node_out_id: NodeOutId) {
+        let node = &self.net_list[node_out_id.node_id()];
+
         if let Node::Const(ConstNode {
             value,
             inject: true,
-            out,
+            output,
         }) = node
         {
-            self.write_value(out, *value);
+            self.write_value(output, *value);
         } else {
-            let sym = net_list.node_output(node_id).sym;
+            let sym = node.outputs().only_one().out.sym;
             self.buffer.write_fmt(format_args!("{}", sym));
         }
     }
 }
 
-impl Backend for Verilog {}
+impl<'n> Backend for Verilog<'n> {}
 
-impl Visitor for Verilog {
-    fn visit_module(&mut self, modules: &ModuleList, module: &Module) {
+impl<'n> Visitor for Verilog<'n> {
+    fn visit_modules(&mut self) {
+        for module_id in self.net_list.modules() {
+            self.visit_module(module_id);
+        }
+    }
+
+    fn visit_module(&mut self, module_id: ModuleId) {
         self.locals = BTreeSet::new();
+
+        let module = &self.net_list[module_id];
 
         self.buffer
             .write_fmt(format_args!("module {}\n(\n", module.name));
         self.buffer.push_tab();
 
-        let mut inputs = module.net_list.inputs().peekable();
+        let mut inputs = module.inputs().peekable();
         if inputs.peek().is_some() {
             self.buffer.write_tab();
             self.buffer.write_str("// Inputs\n");
 
             for input in inputs {
-                self.buffer.write_tab();
-                self.visit_param(input, ParamKind::Input);
-                self.buffer.write_str(",\n");
+                let node = &module[input];
+                for node_out_id in node.outputs().items() {
+                    self.buffer.write_tab();
+                    self.visit_param(node_out_id.node_out_id(input), ParamKind::Input);
+                    self.buffer.write_str(",\n");
+                }
             }
         }
 
-        let mut outputs = module.net_list.outputs().peekable();
+        let mut outputs = module.outputs().peekable();
         if outputs.peek().is_some() {
             self.buffer.write_tab();
             self.buffer.write_str("// Outputs\n");
@@ -145,8 +165,8 @@ impl Visitor for Verilog {
         self.buffer.push_tab();
         self.buffer.write_eol();
 
-        for node in module.net_list.nodes() {
-            self.visit_node(modules, &module.net_list, node);
+        for node in module.nodes() {
+            self.visit_node(node);
         }
 
         self.buffer.pop_tab();
@@ -154,8 +174,8 @@ impl Visitor for Verilog {
         self.buffer.write_str("endmodule\n\n");
     }
 
-    fn visit_param(&mut self, param: &Node, kind: ParamKind) {
-        let out = param.node_output(0);
+    fn visit_param(&mut self, param: NodeOutId, kind: ParamKind) {
+        let out = &self.net_list[param];
 
         self.buffer.write_str(match kind {
             ParamKind::Input => "input ",
@@ -165,21 +185,24 @@ impl Visitor for Verilog {
         self.buffer.write_fmt(format_args!(" {}", out.sym));
     }
 
-    fn visit_node(&mut self, modules: &ModuleList, net_list: &NetList, node: &Node) {
+    fn visit_node(&mut self, node_id: NodeId) {
+        let node = &self.net_list[node_id];
+
         match node {
             Node::DummyInput(_) | Node::Input(_) => {}
             Node::ModInst(ModInst {
                 name,
                 module_id,
                 inputs,
-                out,
+                outputs,
             }) => {
-                let module = modules.module(*module_id);
-                assert_eq!(inputs.len(), module.net_list.inputs.len());
-                assert_eq!(module.net_list.outputs.len(), 1);
+                let module = &self.net_list[*module_id];
+                assert_eq!(inputs.len(), module.inputs_len());
+                assert_eq!(outputs.len(), module.outputs_len());
 
-                self.write_local(out, None);
-                let output = out.sym;
+                for output in outputs {
+                    self.write_local(output, None);
+                }
 
                 self.buffer.write_tab();
 
@@ -191,41 +214,48 @@ impl Visitor for Verilog {
                     self.buffer.write_tab();
                     self.buffer.write_str("// Inputs\n");
                 }
-                for (input, mod_input) in inputs.iter().zip(module.net_list.inputs.iter())
-                {
-                    let input_sym = net_list.node_output(*input).sym;
-                    let mod_input_sym = module.net_list.node_output(*mod_input).sym;
+                for (input, mod_input) in inputs.iter().zip(module.inputs()) {
+                    let input_sym = self.net_list[*input].sym;
+                    let mod_input_sym = module[mod_input].outputs().only_one().out.sym;
+
                     self.buffer.write_tab();
                     self.buffer
                         .write_fmt(format_args!(".{mod_input_sym}({input_sym}),\n"));
                 }
                 self.buffer.write_tab();
                 self.buffer.write_str("// Outputs\n");
-                self.buffer.write_tab();
 
-                let mod_output = module
-                    .net_list
-                    .node_output(module.net_list.outputs.first().copied().unwrap())
-                    .sym;
-                self.buffer
-                    .write_fmt(format_args!(".{mod_output}({output})\n"));
+                for (output, mod_output) in outputs.iter().zip(module.outputs()) {
+                    let output_sym = output.sym;
+                    let mod_output_sym = module[mod_output].sym;
+
+                    self.buffer.write_tab();
+                    self.buffer
+                        .write_fmt(format_args!(".{mod_output_sym}({output_sym}),\n"));
+                }
+                self.buffer.pop(2);
+                self.buffer.write_eol();
 
                 self.buffer.pop_tab();
                 self.buffer.write_tab();
                 self.buffer.write_str(");\n\n");
             }
-            Node::Pass(PassNode { input, out }) => {
-                self.write_local(out, None);
-                let input = net_list.node_output(*input).sym;
-                let output = out.sym;
+            Node::Pass(PassNode { input, output }) => {
+                self.write_local(output, None);
+                let input = self.net_list[*input].sym;
+                let output = output.sym;
 
                 self.buffer
                     .write_template(format_args!("assign {output} = {input};"));
             }
-            Node::Const(ConstNode { value, inject, out }) => {
+            Node::Const(ConstNode {
+                value,
+                inject,
+                output,
+            }) => {
                 if !inject {
-                    self.write_local(out, None);
-                    let output = out.sym;
+                    self.write_local(output, None);
+                    let output = output.sym;
 
                     self.buffer
                         .write_template(format_args!("assign {output} = {value};"));
@@ -235,11 +265,11 @@ impl Visitor for Verilog {
                 input,
                 start,
                 width,
-                out,
+                output,
             }) => {
-                self.write_local(out, None);
-                let input = net_list.node_output(*input).sym;
-                let output = out.sym;
+                self.write_local(output, None);
+                let input = self.net_list[*input].sym;
+                let output = output.sym;
 
                 self.buffer.write_tab();
                 self.buffer
@@ -258,54 +288,52 @@ impl Visitor for Verilog {
                 }
                 self.buffer.write_str(";\n\n");
             }
-            Node::BitNot(BitNotNode { input, out }) => {
-                self.write_local(out, None);
-                let input = net_list.node_output(*input).sym;
-                let output = out.sym;
+            Node::BitNot(BitNotNode { input, output }) => {
+                self.write_local(output, None);
+                let input = self.net_list[*input].sym;
+                let output = output.sym;
 
                 self.buffer
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
-            Node::Not(NotNode { input, out }) => {
-                self.write_local(out, None);
-                let input = net_list.node_output(*input).sym;
-                let output = out.sym;
+            Node::Not(NotNode { input, output }) => {
+                self.write_local(output, None);
+                let input = self.net_list[*input].sym;
+                let output = output.sym;
 
                 self.buffer
                     .write_template(format_args!("assign {output} = !{input};",));
             }
             Node::BinOp(BinOpNode {
                 bin_op,
-                input1,
-                input2,
-                out,
+                inputs: (input1, input2),
+                output,
             }) => {
-                self.write_local(out, None);
-                let output = out.sym;
+                self.write_local(output, None);
+                let output = output.sym;
 
                 self.buffer.write_tab();
                 self.buffer.write_fmt(format_args!("assign {output} = "));
 
-                self.inject_const(*input1, net_list);
+                self.inject_const(*input1);
 
                 self.buffer.write_fmt(format_args!(" {bin_op} "));
 
-                self.inject_const(*input2, net_list);
+                self.inject_const(*input2);
 
                 self.buffer.write_str(";\n\n");
             }
             Node::Mux2(Mux2Node {
                 sel,
-                input1,
-                input2,
-                out,
+                inputs: (input1, input2),
+                output,
             }) => {
-                self.write_local(out, None);
+                self.write_local(output, None);
 
-                let sel = net_list.node_output(*sel).sym;
-                let input1 = net_list.node_output(*input1).sym;
-                let input2 = net_list.node_output(*input2).sym;
-                let output = out.sym;
+                let sel = self.net_list[*sel].sym;
+                let input1 = self.net_list[*input1].sym;
+                let input2 = self.net_list[*input2].sym;
+                let output = output.sym;
 
                 self.buffer.write_template(format_args!(
                     "
@@ -321,27 +349,24 @@ end
                 ));
             }
             Node::DFF(DFFNode {
-                clk,
-                rst_value,
-                data,
-                out,
+                inputs: (clk, rst_val, data),
+                output,
             }) => {
                 let init = if let Node::Const(ConstNode {
                     value,
                     inject: true,
                     ..
-                }) = net_list.node(*rst_value)
+                }) = &self.net_list[rst_val.node_id()]
                 {
                     Some(*value)
                 } else {
                     None
                 };
-                self.write_local(out, init);
+                self.write_local(output, init);
 
-                let clk = net_list.node_output(*clk).sym;
-                let data = data.expect("data is not initialized in dff");
-                let data = net_list.node_output(data).sym;
-                let output = out.sym;
+                let clk = self.net_list[*clk].sym;
+                let data = self.net_list[*data].sym;
+                let output = output.sym;
 
                 self.buffer.write_template(format_args!(
                     "

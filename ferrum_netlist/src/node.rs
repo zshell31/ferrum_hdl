@@ -1,4 +1,18 @@
+mod bin_op;
+mod bit_not;
+mod consta;
+mod dff;
+mod input;
+mod mod_inst;
+mod mux2;
+mod not;
+mod pass;
+mod splitter;
+
+use std::mem;
+
 use auto_enums::auto_enum;
+use ferrum::prim_ty::PrimTy;
 
 pub use self::{
     bin_op::{BinOp, BinOpNode},
@@ -13,45 +27,155 @@ pub use self::{
     splitter::Splitter,
 };
 use crate::{
-    net_list::NodeId,
-    output::{NodeOutput, Outputs},
+    net_kind::NetKind,
+    net_list::{NodeOutId, OutId},
+    params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
+    symbol::Symbol,
 };
 
-mod bin_op;
-mod bit_not;
-mod consta;
-mod dff;
-mod input;
-mod mod_inst;
-mod mux2;
-mod not;
-mod pass;
-mod splitter;
+#[derive(Debug, Clone)]
+pub struct NodeOutput {
+    pub ty: PrimTy,
+    pub sym: Symbol,
+    pub kind: NetKind,
+}
 
 pub trait IsNode: Into<Node> {
+    type Inputs: Inputs;
     type Outputs: Outputs;
 
-    fn node_output(&self, out: u8) -> &NodeOutput;
+    fn inputs(&self) -> &Self::Inputs;
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput;
+    fn outputs(&self) -> &Self::Outputs;
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> + '_;
+    fn outputs_mut(&mut self) -> &mut Self::Outputs;
 }
 
-#[derive(Debug, Clone)]
-pub enum Node {
-    DummyInput(InputNode),
-    Input(InputNode),
-    ModInst(ModInst),
-    Pass(PassNode),
-    Const(ConstNode),
-    Splitter(Splitter),
-    BinOp(BinOpNode),
-    BitNot(BitNotNode),
-    Not(NotNode),
-    Mux2(Mux2Node),
-    DFF(DFFNode),
+macro_rules! define_nodes {
+    (
+        $( $kind:ident => $node:ident ),+ $(,)?
+    ) => {
+        #[derive(Debug)]
+        pub enum Node {
+            $(
+                $kind($node),
+            )+
+        }
+
+        // should be the same as Node
+        #[derive(Debug)]
+        pub enum NodeInputs {
+            $(
+                $kind($node),
+            )+
+        }
+
+        impl Inputs for NodeInputs {
+            #[auto_enum(Iterator)]
+            fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+                match self {
+                    $(
+                        Self::$kind(node) => node.inputs().items(),
+                    )+
+                }
+            }
+
+            fn len(&self) -> usize {
+                match self {
+                    $(
+                        Self::$kind(node) => node.inputs().len(),
+                    )+
+                }
+            }
+        }
+
+        // should be the same as Node
+        #[derive(Debug)]
+        pub enum NodeOutputs {
+            $(
+                $kind($node),
+            )+
+        }
+
+        impl Outputs for NodeOutputs {
+            #[auto_enum(Iterator)]
+            fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
+                match self {
+                    $(
+                        Self::$kind(node) => node.outputs().items(),
+                    )+
+                }
+            }
+
+            #[auto_enum(Iterator)]
+            fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_ {
+                match self {
+                    $(
+                        Self::$kind(node) => node.outputs_mut().items_mut(),
+                    )+
+                }
+            }
+
+            fn by_ind(&self, out: OutId) -> &NodeOutput {
+                match self {
+                    $(
+                        Self::$kind(node) => node.outputs().by_ind(out),
+                    )+
+                }
+            }
+
+            fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
+                match self {
+                    $(
+                        Self::$kind(node) => node.outputs_mut().by_ind_mut(out),
+                    )+
+                }
+            }
+
+            fn len(&self) -> usize {
+                match self {
+                    $(
+                        Self::$kind(node) => node.outputs().len(),
+                    )+
+                }
+            }
+
+        }
+
+        impl IsNode for Node {
+            type Inputs = NodeInputs;
+            type Outputs = NodeOutputs;
+
+            fn inputs(&self) -> &NodeInputs {
+                unsafe { mem::transmute(self) }
+            }
+
+            fn outputs(&self) -> &NodeOutputs {
+                unsafe { mem::transmute(self) }
+            }
+
+            fn outputs_mut(&mut self) -> &mut NodeOutputs {
+                unsafe { mem::transmute(self) }
+            }
+        }
+
+
+    };
 }
+
+define_nodes!(
+    DummyInput => InputNode,
+    Input => InputNode,
+    ModInst => ModInst,
+    Pass => PassNode,
+    Const => ConstNode,
+    Splitter => Splitter,
+    BinOp => BinOpNode,
+    BitNot => BitNotNode,
+    Not => NotNode,
+    Mux2 => Mux2Node,
+    DFF => DFFNode,
+);
 
 impl Node {
     pub fn is_input(&self) -> bool {
@@ -64,54 +188,5 @@ impl Node {
 
     pub fn is_dummy_input(&self) -> bool {
         matches!(self, Self::DummyInput(_))
-    }
-
-    pub fn node_output(&self, out: u8) -> &NodeOutput {
-        match self {
-            Self::DummyInput(node) => node.node_output(out),
-            Self::Input(node) => node.node_output(out),
-            Self::ModInst(node) => node.node_output(out),
-            Self::Mux2(node) => node.node_output(out),
-            Self::Pass(node) => node.node_output(out),
-            Self::Const(node) => node.node_output(out),
-            Self::Splitter(node) => node.node_output(out),
-            Self::BinOp(node) => node.node_output(out),
-            Self::BitNot(node) => node.node_output(out),
-            Self::Not(node) => node.node_output(out),
-            Self::DFF(node) => node.node_output(out),
-        }
-    }
-
-    pub fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match self {
-            Self::DummyInput(node) => node.node_output_mut(out),
-            Self::Input(node) => node.node_output_mut(out),
-            Self::ModInst(node) => node.node_output_mut(out),
-            Self::Mux2(node) => node.node_output_mut(out),
-            Self::Pass(node) => node.node_output_mut(out),
-            Self::Const(node) => node.node_output_mut(out),
-            Self::Splitter(node) => node.node_output_mut(out),
-            Self::BinOp(node) => node.node_output_mut(out),
-            Self::BitNot(node) => node.node_output_mut(out),
-            Self::Not(node) => node.node_output_mut(out),
-            Self::DFF(node) => node.node_output_mut(out),
-        }
-    }
-
-    #[auto_enum(Iterator)]
-    pub fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
-        match self {
-            Self::DummyInput(node) => node.inputs(),
-            Self::Input(node) => node.inputs(),
-            Self::ModInst(node) => node.inputs(),
-            Self::Mux2(node) => node.inputs(),
-            Self::Pass(node) => node.inputs(),
-            Self::Const(node) => node.inputs(),
-            Self::Splitter(node) => node.inputs(),
-            Self::BinOp(node) => node.inputs(),
-            Self::BitNot(node) => node.inputs(),
-            Self::Not(node) => node.inputs(),
-            Self::DFF(node) => node.inputs(),
-        }
     }
 }

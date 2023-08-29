@@ -50,6 +50,11 @@ impl Symbol {
         with_symbols(|interner| interner.sym(name))
     }
 
+    pub fn as_string(&self) -> String {
+        // TODO: return as static
+        with_symbols(|interner| interner.as_str(self).to_string())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.1 == 0
     }

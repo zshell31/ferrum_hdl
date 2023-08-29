@@ -1,16 +1,14 @@
-use ferrum_netlist::{net_list::NodeId, symbol::Symbol};
+use ferrum_netlist::{group_list::ItemId, symbol::Symbol};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_span::symbol::Ident;
 
 #[derive(Debug, Default)]
-pub struct LocalScope(FxHashMap<Ident, NodeId>);
+pub struct LocalScope(FxHashMap<Ident, ItemId>);
 
 #[derive(Debug, Default)]
 pub struct Idents {
     scopes: Vec<LocalScope>,
-    temp: usize,
-    out: usize,
-    inst: usize,
+    idents: FxHashMap<String, usize>,
 }
 
 impl Idents {
@@ -26,52 +24,57 @@ impl Idents {
         self.scopes.pop();
     }
 
+    fn ident_inner(&mut self, ident: &str) -> Symbol {
+        // TODO: check if ident is keyword
+        let ident = match ident {
+            "input" => "input$",
+            "output" => "output$",
+            "reg" => "reg$",
+            _ => ident,
+        };
+
+        match self.idents.get_mut(ident) {
+            Some(count) => {
+                *count += 1;
+                Symbol::new(&format!("{}_{}", ident, count))
+            }
+            None => {
+                self.idents.insert(ident.to_string(), 1);
+                Symbol::new(ident)
+            }
+        }
+    }
+
+    pub fn ident(&mut self, ident: Ident) -> Symbol {
+        self.ident_inner(ident.as_str())
+    }
+
     pub fn tmp(&mut self) -> Symbol {
-        Self::temp_ident("__tmp", &mut self.temp)
+        self.ident_inner("__tmp")
     }
 
     pub fn out(&mut self) -> Symbol {
-        Self::temp_ident("__out", &mut self.out)
+        self.ident_inner("__out")
     }
 
-    pub fn inst(&mut self) -> Symbol {
-        Self::temp_ident("__inst", &mut self.inst)
+    pub fn inst(&mut self, module: Symbol) -> Symbol {
+        self.ident_inner(&format!("__{}", module))
     }
 
     pub fn module(&self, ident: Ident) -> Symbol {
         Symbol::new(ident.as_str())
     }
 
-    pub fn ident(&self, ident: Ident) -> Symbol {
-        if self.scopes.len() == 1 {
-            Symbol::new(ident.as_str())
-        } else {
-            Symbol::new(&format!("{}_{}", ident.as_str(), self.scopes.len() - 1))
-        }
-    }
-
-    fn temp_ident(prefix: &str, idx: &mut usize) -> Symbol {
-        let sym = if (*idx) == 0 {
-            Symbol::new(prefix)
-        } else {
-            Symbol::new(&format!("{}_{}", prefix, *idx))
-        };
-
-        *idx += 1;
-
-        sym
-    }
-
-    pub fn add_local_ident(&mut self, ident: Ident, node_idx: NodeId) {
+    pub fn add_local_ident(&mut self, ident: Ident, item_id: ItemId) {
         if let Some(scope) = self.scopes.last_mut() {
-            scope.0.insert(ident, node_idx);
+            scope.0.insert(ident, item_id);
         }
     }
 
-    pub fn node_index(&self, ident: Ident) -> Option<NodeId> {
+    pub fn item_id(&self, ident: Ident) -> Option<ItemId> {
         for scope in self.scopes.iter().rev() {
-            if let Some(node_idx) = scope.0.get(&ident) {
-                return Some(*node_idx);
+            if let Some(item_id) = scope.0.get(&ident) {
+                return Some(*item_id);
             }
         }
 

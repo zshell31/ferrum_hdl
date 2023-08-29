@@ -1,30 +1,25 @@
-use either::Either;
-use ferrum::prim_ty::{DummyTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
-use super::{IsNode, Node};
-use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
+use super::{IsNode, Node, NodeOutput};
+use crate::{net_kind::NetKind, net_list::NodeOutId, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DFFNode {
-    pub clk: NodeId,
-    pub rst_value: NodeId,
-    pub data: Option<NodeId>,
-    pub out: NodeOutput,
+    pub inputs: (NodeOutId, NodeOutId, NodeOutId),
+    pub output: NodeOutput,
 }
 
 impl DFFNode {
     pub fn new(
         ty: PrimTy,
-        clk: NodeId,
-        rst_value: NodeId,
-        data: Option<NodeId>,
+        clk: NodeOutId,
+        rst_val: NodeOutId,
+        data: NodeOutId,
         sym: Symbol,
     ) -> Self {
         Self {
-            clk,
-            rst_value,
-            data,
-            out: NodeOutput {
+            inputs: (clk, rst_val, data),
+            output: NodeOutput {
                 ty,
                 sym,
                 kind: NetKind::Reg,
@@ -40,25 +35,18 @@ impl From<DFFNode> for Node {
 }
 
 impl IsNode for DFFNode {
-    type Outputs = (DummyTy,);
-    fn node_output(&self, out: u8) -> &NodeOutput {
-        match out {
-            0 => &self.out,
-            _ => unreachable!(),
-        }
+    type Inputs = (NodeOutId, NodeOutId, NodeOutId);
+    type Outputs = NodeOutput;
+
+    fn inputs(&self) -> &Self::Inputs {
+        &self.inputs
     }
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match out {
-            0 => &mut self.out,
-            _ => unreachable!(),
-        }
+    fn outputs(&self) -> &Self::Outputs {
+        &self.output
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> {
-        match self.data {
-            Some(data) => Either::Left([self.clk, self.rst_value, data].into_iter()),
-            None => Either::Right([self.clk, self.rst_value].into_iter()),
-        }
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        &mut self.output
     }
 }

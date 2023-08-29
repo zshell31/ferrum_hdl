@@ -6,12 +6,6 @@ use rustc_span::{symbol::Ident, Span};
 
 use crate::error::{Error, SpanError, SpanErrorKind};
 
-pub fn pat_ident(pat: &Pat<'_>) -> Result<Ident, Error> {
-    pat.simple_ident()
-        .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span))
-        .map_err(Into::into)
-}
-
 pub fn def_id_for_hir_ty(ty: &HirTy<'_>) -> Option<DefId> {
     match ty.kind {
         HirTyKind::Path(QPath::Resolved(
@@ -54,6 +48,19 @@ where
     match expr.kind {
         ExprKind::MethodCall(method, rec, args, span) => Ok((method, rec, args, span)),
         _ => Err(SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span).into()),
+    }
+}
+
+pub fn pat_ident(pat: &Pat<'_>) -> Result<Ident, Error> {
+    pat.simple_ident()
+        .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span))
+        .map_err(Into::into)
+}
+
+pub fn pat_idents(pats: &[Pat<'_>], ind: usize) -> Result<Option<Ident>, Error> {
+    match pats.get(ind) {
+        Some(pat) => pat_ident(pat).map(Some),
+        None => Ok(None),
     }
 }
 

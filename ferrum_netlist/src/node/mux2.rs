@@ -1,29 +1,27 @@
-use ferrum::prim_ty::{DummyTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
-use super::{IsNode, Node};
-use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
+use super::{IsNode, Node, NodeOutput};
+use crate::{net_kind::NetKind, net_list::NodeOutId, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Mux2Node {
-    pub sel: NodeId,
-    pub input1: NodeId,
-    pub input2: NodeId,
-    pub out: NodeOutput,
+    pub sel: NodeOutId,
+    pub inputs: (NodeOutId, NodeOutId),
+    pub output: NodeOutput,
 }
 
 impl Mux2Node {
     pub fn new(
         ty: PrimTy,
-        sel: NodeId,
-        input1: NodeId,
-        input2: NodeId,
+        sel: NodeOutId,
+        input1: NodeOutId,
+        input2: NodeOutId,
         sym: Symbol,
     ) -> Self {
         Self {
             sel,
-            input1,
-            input2,
-            out: NodeOutput {
+            inputs: (input1, input2),
+            output: NodeOutput {
                 ty,
                 sym,
                 kind: NetKind::Wire,
@@ -39,23 +37,18 @@ impl From<Mux2Node> for Node {
 }
 
 impl IsNode for Mux2Node {
-    type Outputs = (DummyTy,);
+    type Inputs = (NodeOutId, NodeOutId);
+    type Outputs = NodeOutput;
 
-    fn node_output(&self, out: u8) -> &NodeOutput {
-        match out {
-            0 => &self.out,
-            _ => unreachable!(),
-        }
+    fn inputs(&self) -> &Self::Inputs {
+        &self.inputs
     }
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match out {
-            0 => &mut self.out,
-            _ => unreachable!(),
-        }
+    fn outputs(&self) -> &Self::Outputs {
+        &self.output
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> {
-        [self.input1, self.input2].into_iter()
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        &mut self.output
     }
 }

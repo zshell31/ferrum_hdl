@@ -1,20 +1,24 @@
 use std::fmt::Debug;
 
-use ferrum::prim_ty::{DummyTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
-use super::{IsNode, Node};
-use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
+use super::{IsNode, Node, NodeOutput};
+use crate::{net_kind::NetKind, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
-pub struct InputNode(pub PrimTy, pub NodeOutput);
+#[derive(Debug, Clone)]
+pub struct InputNode {
+    output: NodeOutput,
+}
 
 impl InputNode {
     pub fn new(ty: PrimTy, sym: Symbol) -> Self {
-        Self(ty, NodeOutput {
-            ty,
-            sym,
-            kind: NetKind::Wire,
-        })
+        Self {
+            output: NodeOutput {
+                ty,
+                sym,
+                kind: NetKind::Wire,
+            },
+        }
     }
 }
 
@@ -25,23 +29,18 @@ impl From<InputNode> for Node {
 }
 
 impl IsNode for InputNode {
-    type Outputs = (DummyTy,);
+    type Inputs = ();
+    type Outputs = NodeOutput;
 
-    fn node_output(&self, out: u8) -> &NodeOutput {
-        match out {
-            0 => &self.1,
-            _ => unreachable!(),
-        }
+    fn inputs(&self) -> &Self::Inputs {
+        &()
     }
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match out {
-            0 => &mut self.1,
-            _ => unreachable!(),
-        }
+    fn outputs(&self) -> &Self::Outputs {
+        &self.output
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> {
-        [].into_iter()
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        &mut self.output
     }
 }

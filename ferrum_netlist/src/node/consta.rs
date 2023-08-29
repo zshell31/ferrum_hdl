@@ -1,13 +1,13 @@
-use ferrum::prim_ty::{DummyTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
-use super::{IsNode, Node};
-use crate::{net_kind::NetKind, net_list::NodeId, output::NodeOutput, symbol::Symbol};
+use super::{IsNode, Node, NodeOutput};
+use crate::{net_kind::NetKind, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ConstNode {
     pub value: u128,
     pub inject: bool,
-    pub out: NodeOutput,
+    pub output: NodeOutput,
 }
 
 impl ConstNode {
@@ -15,7 +15,7 @@ impl ConstNode {
         Self {
             value,
             inject: false,
-            out: NodeOutput {
+            output: NodeOutput {
                 ty,
                 sym,
                 kind: NetKind::Wire,
@@ -31,23 +31,18 @@ impl From<ConstNode> for Node {
 }
 
 impl IsNode for ConstNode {
-    type Outputs = (DummyTy,);
+    type Inputs = ();
+    type Outputs = NodeOutput;
 
-    fn node_output(&self, out: u8) -> &NodeOutput {
-        match out {
-            0 => &self.out,
-            _ => unreachable!(),
-        }
+    fn inputs(&self) -> &Self::Inputs {
+        &()
     }
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match out {
-            0 => &mut self.out,
-            _ => unreachable!(),
-        }
+    fn outputs(&self) -> &Self::Outputs {
+        &self.output
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> {
-        [].into_iter()
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        &mut self.output
     }
 }

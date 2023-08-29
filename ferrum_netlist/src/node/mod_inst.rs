@@ -1,8 +1,9 @@
-use ferrum::prim_ty::{DummyTy, PrimTy};
+use ferrum::prim_ty::PrimTy;
 
-use super::{IsNode, Node};
+use super::{IsNode, Node, NodeOutput};
 use crate::{
-    module::ModuleId, net_kind::NetKind, net_list::NodeId, output::NodeOutput,
+    net_kind::NetKind,
+    net_list::{ModuleId, NodeOutId},
     symbol::Symbol,
 };
 
@@ -10,27 +11,29 @@ use crate::{
 pub struct ModInst {
     pub name: Symbol,
     pub module_id: ModuleId,
-    pub inputs: Vec<NodeId>,
-    pub out: NodeOutput,
+    pub inputs: Vec<NodeOutId>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl ModInst {
     pub fn new(
-        ty: PrimTy,
         name: Symbol,
         module_id: ModuleId,
-        inputs: Vec<NodeId>,
-        sym: Symbol,
+        inputs: impl IntoIterator<Item = NodeOutId>,
+        outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
     ) -> Self {
         Self {
             name,
             module_id,
-            inputs,
-            out: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
+            inputs: inputs.into_iter().collect(),
+            outputs: outputs
+                .into_iter()
+                .map(|(ty, sym)| NodeOutput {
+                    ty,
+                    sym,
+                    kind: NetKind::Wire,
+                })
+                .collect(),
         }
     }
 }
@@ -42,23 +45,18 @@ impl From<ModInst> for Node {
 }
 
 impl IsNode for ModInst {
-    type Outputs = (DummyTy,);
+    type Inputs = Vec<NodeOutId>;
+    type Outputs = Vec<NodeOutput>;
 
-    fn node_output(&self, out: u8) -> &NodeOutput {
-        match out {
-            0 => &self.out,
-            _ => unreachable!(),
-        }
+    fn inputs(&self) -> &Self::Inputs {
+        &self.inputs
     }
 
-    fn node_output_mut(&mut self, out: u8) -> &mut NodeOutput {
-        match out {
-            0 => &mut self.out,
-            _ => unreachable!(),
-        }
+    fn outputs(&self) -> &Self::Outputs {
+        &self.outputs
     }
 
-    fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.inputs.iter().copied()
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        &mut self.outputs
     }
 }

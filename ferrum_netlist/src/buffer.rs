@@ -65,6 +65,7 @@ impl Buffer {
         self.write_eol();
     }
 
+    // TODO: use other approach
     pub fn pop(&mut self, symbols: usize) {
         for _ in 0 .. symbols {
             self.buffer.pop();

@@ -9,9 +9,11 @@ use ferrum_macros::blackbox;
 
 use super::domain::ClockDomain;
 
-pub trait SignalValue: Debug + Display + Clone {}
+pub trait SignalValue: Debug + Clone {}
 
 impl SignalValue for bool {}
+
+impl<T1: SignalValue, T2: SignalValue> SignalValue for (T1, T2) {}
 
 pub trait Signal<D: ClockDomain>: Sized {
     type Value: SignalValue;
@@ -35,6 +37,14 @@ pub trait Signal<D: ClockDomain>: Sized {
             _dom: PhantomData,
             signal: self,
         }
+    }
+}
+
+impl<D: ClockDomain, S1: Signal<D>, S2: Signal<D>> Signal<D> for (S1, S2) {
+    type Value = (S1::Value, S2::Value);
+
+    fn next(&mut self) -> Self::Value {
+        (self.0.next(), self.1.next())
     }
 }
 
@@ -112,11 +122,29 @@ where
     }
 }
 
-impl<D: ClockDomain, T: SignalValue, I: Iterator<Item = T>> Signal<D> for I {
-    type Value = T;
+pub trait SignalIterExt: Iterator + Sized {
+    fn into_signal(self) -> IterSignal<Self> {
+        IterSignal(self)
+    }
+}
+
+impl<I> SignalIterExt for I
+where
+    I: Iterator,
+    I::Item: SignalValue,
+{
+}
+
+pub struct IterSignal<I>(I);
+
+impl<D: ClockDomain, I: Iterator> Signal<D> for IterSignal<I>
+where
+    I::Item: SignalValue,
+{
+    type Value = I::Item;
 
     fn next(&mut self) -> Self::Value {
-        Iterator::next(self).expect("No values")
+        Iterator::next(&mut self.0).expect("No values")
     }
 }
 

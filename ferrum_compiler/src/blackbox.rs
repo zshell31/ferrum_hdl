@@ -202,6 +202,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
         );
 
         let dff_out = generator.net_list.only_one_node_out_id(dff);
+
         generator.net_list.link_dummy_input(comb, &[dff_out], true);
 
         Ok(dff.into())

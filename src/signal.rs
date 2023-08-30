@@ -1,6 +1,7 @@
 use std::{
     fmt::{Debug, Display},
     marker::PhantomData,
+    rc::Rc,
 };
 
 use derive_where::derive_where;
@@ -137,11 +138,12 @@ impl<D: ClockDomain> Clock<D> {
 }
 
 #[blackbox(Register, Clone)]
+#[derive_where(Clone)]
 pub struct Register<D: ClockDomain, V: SignalValue> {
     value: V,
     next_value: V,
     _clock: Clock<D>,
-    comb_fn: Box<dyn Fn(V) -> V>,
+    comb_fn: Rc<dyn Fn(V) -> V>,
 }
 
 impl<D: ClockDomain, V: SignalValue> Register<D, V> {
@@ -150,7 +152,7 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
             value: reset_value.clone(),
             next_value: reset_value,
             _clock: clock,
-            comb_fn: Box::new(comb_fn),
+            comb_fn: Rc::new(comb_fn),
         }
     }
 }

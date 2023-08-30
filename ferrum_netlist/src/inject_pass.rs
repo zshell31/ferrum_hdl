@@ -40,7 +40,9 @@ impl<'n> Visitor for InjectPass<'n> {
     fn visit_node(&mut self, node_id: NodeId) {
         let node = &self.net_list[node_id];
         let sym = match node {
-            Node::Pass(PassNode { input, .. }) => self.net_list[*input].sym,
+            Node::Pass(PassNode { inject, input, .. }) if !inject => {
+                self.net_list[*input].sym
+            }
             _ => return,
         };
 

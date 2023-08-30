@@ -295,9 +295,11 @@ impl NetList {
         ignore: bool,
     ) {
         let dummy = self.find_dummy_inputs(with_dummy);
-        if !ignore && !dummy.is_empty() {
+        if !ignore {
             assert_eq!(dummy.len(), to_link.len());
+        }
 
+        if dummy.len() == to_link.len() {
             for (dummy, to_link) in dummy.into_iter().zip(to_link.iter().copied()) {
                 let to_link_node = &self[to_link.node_id()];
                 let to_link_out = to_link_node.outputs().only_one().out;

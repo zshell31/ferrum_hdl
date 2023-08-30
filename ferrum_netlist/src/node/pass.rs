@@ -5,6 +5,7 @@ use crate::{net_kind::NetKind, net_list::NodeOutId, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct PassNode {
+    pub inject: bool,
     pub input: NodeOutId,
     pub output: NodeOutput,
 }
@@ -12,6 +13,7 @@ pub struct PassNode {
 impl PassNode {
     pub fn new(ty: PrimTy, input: NodeOutId, sym: Symbol) -> Self {
         Self {
+            inject: false,
             input,
             output: NodeOutput {
                 ty,

@@ -10,25 +10,10 @@ use crate::{
     },
     params::Outputs,
     symbol::Symbol,
+    visitor::{ParamKind, Visitor},
 };
 
 pub trait Backend {}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ParamKind {
-    Input,
-    Output,
-}
-
-pub trait Visitor {
-    fn visit_modules(&mut self);
-
-    fn visit_module(&mut self, module_id: ModuleId);
-
-    fn visit_param(&mut self, param: NodeOutId, kind: ParamKind);
-
-    fn visit_node(&mut self, node_id: NodeId);
-}
 
 pub struct Verilog<'n> {
     buffer: Buffer,
@@ -240,13 +225,19 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_str(");\n\n");
             }
-            Node::Pass(PassNode { input, output }) => {
-                self.write_local(output, None);
-                let input = self.net_list[*input].sym;
-                let output = output.sym;
+            Node::Pass(PassNode {
+                inject,
+                input,
+                output,
+            }) => {
+                if !inject {
+                    self.write_local(output, None);
+                    let input = self.net_list[*input].sym;
+                    let output = output.sym;
 
-                self.buffer
-                    .write_template(format_args!("assign {output} = {input};"));
+                    self.buffer
+                        .write_template(format_args!("assign {output} = {input};"));
+                }
             }
             Node::Const(ConstNode {
                 value,

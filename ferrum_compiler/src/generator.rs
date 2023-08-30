@@ -4,6 +4,7 @@ use ferrum::prim_ty::PrimTy;
 use ferrum_netlist::{
     backend::Verilog,
     group_list::{Group, GroupList, ItemId},
+    inject_pass::InjectPass,
     net_list::{ModuleId, NetList, NodeId},
     node::{
         BinOp, BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node,
@@ -371,6 +372,8 @@ impl<'tcx> Generator<'tcx> {
 
         let item = self.tcx.hir().item(self.top_module);
         self.evaluate_item(item, None, true)?;
+
+        InjectPass::new(&mut self.net_list).inject();
 
         let verilog = Verilog::new(&self.net_list).generate();
 

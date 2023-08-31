@@ -12,6 +12,7 @@ use ferrum_netlist::{
     },
     params::Outputs,
 };
+use rustc_ast::{BorrowKind, Mutability};
 use rustc_const_eval::interpret::{ConstValue, Scalar};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -501,7 +502,7 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn item_id_for_ident(&self, ident: Ident) -> Result<ItemId, Error> {
+    pub fn item_id_for_ident(&mut self, ident: Ident) -> Result<ItemId, Error> {
         self.idents
             .item_id(ident)
             .ok_or_else(|| {
@@ -642,37 +643,78 @@ impl<'tcx> Generator<'tcx> {
         'tcx: 'a,
     {
         for (input, param) in inputs {
-            let ident = match self.param_ident(param.pat, is_dummy)? {
-                Some(ident) => ident,
-                None => continue,
-            };
+            let item_id = self.make_input(input, ctx, is_dummy)?;
 
-            let item_id = self.make_input(ident, input, ctx, is_dummy)?;
-
-            self.idents.add_local_ident(ident, item_id);
+            self.pattern_match(param.pat, item_id)?;
         }
 
         Ok(())
     }
 
-    fn param_ident(
-        &self,
-        param: &Pat<'tcx>,
-        is_dummy: bool,
-    ) -> Result<Option<Ident>, Error> {
-        if is_dummy {
-            match utils::pat_ident(param) {
-                Ok(ident) => Ok(Some(ident)),
-                Err(_) => Ok(None),
+    fn pattern_match(&mut self, pat: &Pat<'tcx>, item_id: ItemId) -> Result<(), Error> {
+        match pat.kind {
+            PatKind::Binding(..) => {
+                let ident = utils::pat_ident(pat)?;
+                let sym = self.idents.ident(ident);
+                match item_id {
+                    ItemId::Node(node_id) => {
+                        self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
+                    }
+                    ItemId::Group(group_id) => {
+                        let item_ids = self.group_list[group_id].item_ids();
+                        for item_id in item_ids.iter() {
+                            self.pattern_match(pat, *item_id)?;
+                        }
+                    }
+                }
+
+                self.idents.add_local_ident(ident, item_id);
             }
-        } else {
-            utils::pat_ident(param).map(Some)
+            PatKind::Tuple(pats, dot_dot_pos) => {
+                let group_id = item_id.group_id();
+                match dot_dot_pos.as_opt_usize() {
+                    Some(pos) => {
+                        let group = &self.group_list[group_id];
+                        let len = group.len();
+                        assert!(pats.len() < len);
+
+                        let item_ids = group.item_ids();
+                        for (pat, item_id) in
+                            pats[0 .. pos].iter().zip(item_ids[0 .. pos].iter())
+                        {
+                            self.pattern_match(pat, *item_id)?;
+                        }
+
+                        for (pat, item_id) in pats[pos ..]
+                            .iter()
+                            .zip(item_ids[(len - (pats.len() - pos)) ..].iter())
+                        {
+                            self.pattern_match(pat, *item_id)?;
+                        }
+                    }
+                    None => {
+                        let group = &self.group_list[group_id];
+                        assert_eq!(pats.len(), group.len());
+
+                        let item_ids = group.item_ids();
+                        for (pat, item_id) in pats.iter().zip(item_ids.iter()) {
+                            self.pattern_match(pat, *item_id)?;
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(
+                    SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span).into()
+                );
+            }
         }
+
+        Ok(())
     }
 
     fn make_input(
         &mut self,
-        ident: Ident,
         input: &HirTy<'tcx>,
         ctx: EvalContext<'tcx>,
         is_dummy: bool,
@@ -685,17 +727,17 @@ impl<'tcx> Generator<'tcx> {
                     input.span,
                 )?;
 
-                Ok(self.make_input_with_prim_ty(ident, prim_ty, ctx.module_id, is_dummy))
+                Ok(self.make_input_with_prim_ty(prim_ty, ctx.module_id, is_dummy))
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let prim_ty = self.find_prim_ty(path, ctx.generics, path.span)?;
 
-                Ok(self.make_input_with_prim_ty(ident, prim_ty, ctx.module_id, is_dummy))
+                Ok(self.make_input_with_prim_ty(prim_ty, ctx.module_id, is_dummy))
             }
             HirTyKind::Tup(ty) => {
                 let group = ty
                     .iter()
-                    .map(|ty| self.make_input(ident, ty, ctx, is_dummy))
+                    .map(|ty| self.make_input(ty, ctx, is_dummy))
                     .collect::<Result<Vec<_>, _>>()?;
 
                 Ok(self.group_list.add_group(Group::new(group)).into())
@@ -709,12 +751,11 @@ impl<'tcx> Generator<'tcx> {
 
     fn make_input_with_prim_ty(
         &mut self,
-        ident: Ident,
         prim_ty: PrimTy,
         module_id: ModuleId,
         is_dummy: bool,
     ) -> ItemId {
-        let sym = self.idents.ident(ident);
+        let sym = self.idents.tmp();
         let input = InputNode::new(prim_ty, sym);
 
         (if is_dummy {
@@ -726,19 +767,34 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn evaluate_outputs(&mut self, item_id: ItemId) -> Result<(), Error> {
-        let mut evaluate = |node_id: NodeId| {
-            let node = &mut self.net_list[node_id];
-            for out in node.outputs_mut().items_mut() {
-                let sym = self.idents.out();
-                out.out.sym = sym;
-            }
-            self.net_list.add_all_outputs(node_id);
+        self.group_list
+            .deep_iter::<Error, _>(item_id, &mut |node_id| {
+                Self::make_output(&mut self.net_list, &mut self.idents, node_id);
 
-            Ok(())
+                Ok(())
+            })
+    }
+
+    fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {
+        let node = &net_list[node_id];
+        let node_id = if node.is_input() || node.is_pass() {
+            let out = node.outputs().only_one();
+            let mut pass =
+                PassNode::new(out.out.ty, out.node_out_id(node_id), idents.tmp());
+            pass.inject = Some(false);
+
+            net_list.add_node(node_id.module_id(), pass)
+        } else {
+            node_id
         };
 
-        self.group_list
-            .deep_iter::<Error, _>(item_id, &mut evaluate)
+        let node = &mut net_list[node_id];
+        for out in node.outputs_mut().items_mut() {
+            let sym = idents.out();
+            out.out.sym = sym;
+        }
+
+        net_list.add_all_outputs(node_id);
     }
 
     pub fn evaluate_expr(
@@ -749,6 +805,9 @@ impl<'tcx> Generator<'tcx> {
         let ty = self.node_type(expr.hir_id);
 
         match expr.kind {
+            ExprKind::AddrOf(BorrowKind::Ref, Mutability::Not, expr) => {
+                self.evaluate_expr(expr, ctx)
+            }
             ExprKind::Binary(bin_op, lhs, rhs) => {
                 println!("binary");
                 let prim_ty = self.find_prim_ty(&ty, ctx.generics, expr.span)?;
@@ -843,52 +902,25 @@ impl<'tcx> Generator<'tcx> {
                                 ItemId::Group(_) => item_id,
                             };
 
-                            match local.pat.kind {
-                                PatKind::Binding(..) => {
-                                    let ident = utils::pat_ident(local.pat)?;
-
-                                    if let ItemId::Node(node_id) = item_id {
-                                        let out = self.net_list[node_id]
-                                            .outputs_mut()
-                                            .only_one_mut();
-                                        out.out.sym = self.idents.ident(ident);
-                                    }
-
-                                    self.idents.add_local_ident(ident, item_id)
+                            let item_id = match item_id {
+                                ItemId::Node(node_id) => {
+                                    let out =
+                                        &self.net_list[node_id].outputs().only_one();
+                                    self.net_list
+                                        .add_node(
+                                            ctx.module_id,
+                                            PassNode::new(
+                                                out.out.ty,
+                                                out.node_out_id(node_id),
+                                                self.idents.tmp(),
+                                            ),
+                                        )
+                                        .into()
                                 }
-                                PatKind::Tuple(pats, dot_dot_pos)
-                                    if dot_dot_pos.as_opt_usize().is_none() =>
-                                {
-                                    let group_id = item_id.group_id();
-                                    self.group_list.shadow_iter::<Error>(
-                                        group_id,
-                                        |ind, item_id| {
-                                            if let Some(ident) =
-                                                utils::pat_idents(pats, ind)?
-                                            {
-                                                if let ItemId::Node(node_id) = item_id {
-                                                    let out = self.net_list[node_id]
-                                                        .outputs_mut()
-                                                        .only_one_mut();
-                                                    out.out.sym =
-                                                        self.idents.ident(ident);
-                                                }
-                                                self.idents
-                                                    .add_local_ident(ident, item_id);
-                                            }
-
-                                            Ok(())
-                                        },
-                                    )?;
-                                }
-                                _ => {
-                                    return Err(SpanError::new(
-                                        SpanErrorKind::NotSynthExpr,
-                                        local.span,
-                                    )
-                                    .into());
-                                }
+                                ItemId::Group(_) => item_id,
                             };
+
+                            self.pattern_match(local.pat, item_id)?;
                         }
                         _ => {
                             return Err(SpanError::new(
@@ -911,11 +943,11 @@ impl<'tcx> Generator<'tcx> {
                     }
                 };
 
-                let node_id = self.evaluate_expr(expr, ctx)?;
+                let item_id = self.evaluate_expr(expr, ctx)?;
 
                 self.idents.pop_scope();
 
-                Ok(node_id)
+                Ok(item_id)
             }
             ExprKind::Call(rec, args) => {
                 println!("call");

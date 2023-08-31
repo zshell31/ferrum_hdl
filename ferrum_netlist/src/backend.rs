@@ -230,7 +230,7 @@ impl<'n> Visitor for Verilog<'n> {
                 input,
                 output,
             }) => {
-                if !inject {
+                if !inject.unwrap_or_default() {
                     self.write_local(output, None);
                     let input = self.net_list[*input].sym;
                     let output = output.sym;

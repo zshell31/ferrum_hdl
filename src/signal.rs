@@ -88,6 +88,7 @@ where
     }
 }
 
+#[derive(Clone)]
 pub struct Apply2<S1, S2, F> {
     s1: S1,
     s2: S2,

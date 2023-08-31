@@ -57,13 +57,6 @@ pub fn pat_ident(pat: &Pat<'_>) -> Result<Ident, Error> {
         .map_err(Into::into)
 }
 
-pub fn pat_idents(pats: &[Pat<'_>], ind: usize) -> Result<Option<Ident>, Error> {
-    match pats.get(ind) {
-        Some(pat) => pat_ident(pat).map(Some),
-        None => Ok(None),
-    }
-}
-
 // pub fn closure_input1_def_id(expr: &Expr<'_>) -> Result<(DefId, Span), Error> {
 //     match expr.kind {
 //         ExprKind::Closure(Closure {

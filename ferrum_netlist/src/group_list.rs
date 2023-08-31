@@ -1,4 +1,7 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    ops::{Index, IndexMut},
+    rc::Rc,
+};
 
 use crate::net_list::NodeId;
 
@@ -41,13 +44,14 @@ impl From<GroupId> for ItemId {
 
 #[derive(Debug)]
 pub struct Group {
-    groups: Vec<ItemId>,
+    // TODO: use arena to store vec of ids
+    groups: Rc<Vec<ItemId>>,
 }
 
 impl Group {
     pub fn new(groups: impl IntoIterator<Item = ItemId>) -> Self {
         Self {
-            groups: groups.into_iter().collect(),
+            groups: Rc::new(groups.into_iter().collect()),
         }
     }
 
@@ -56,6 +60,18 @@ impl Group {
             Ok(ind) => self.groups.get(ind).copied(),
             Err(_) => None,
         }
+    }
+
+    pub fn len(&self) -> usize {
+        self.groups.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
+    pub fn item_ids(&self) -> Rc<Vec<ItemId>> {
+        self.groups.clone()
     }
 }
 
@@ -95,20 +111,6 @@ impl GroupList {
         let group_id = GroupId(self.groups.len());
         self.groups.push(group);
         group_id
-    }
-
-    pub fn shadow_iter<E>(
-        &self,
-        group_id: GroupId,
-        mut f: impl FnMut(usize, ItemId) -> Result<(), E>,
-    ) -> Result<(), E> {
-        let group = &self[group_id];
-
-        for (ind, item_id) in group.groups.iter().copied().enumerate() {
-            f(ind, item_id)?;
-        }
-
-        Ok(())
     }
 
     pub fn deep_iter<E, F: FnMut(NodeId) -> Result<(), E>>(

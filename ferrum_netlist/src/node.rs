@@ -189,4 +189,8 @@ impl Node {
     pub fn is_dummy_input(&self) -> bool {
         matches!(self, Self::DummyInput(_))
     }
+
+    pub fn is_pass(&self) -> bool {
+        matches!(self, Self::Pass(_))
+    }
 }

@@ -1,23 +1,20 @@
-use rustc_hir::{
-    def::Res, def_id::DefId, Expr, ExprKind, Pat, Path, PathSegment, QPath, Ty as HirTy,
-    TyKind as HirTyKind,
-};
+use rustc_hir::{Expr, ExprKind, Pat, PathSegment};
 use rustc_span::{symbol::Ident, Span};
 
 use crate::error::{Error, SpanError, SpanErrorKind};
 
-pub fn def_id_for_hir_ty(ty: &HirTy<'_>) -> Option<DefId> {
-    match ty.kind {
-        HirTyKind::Path(QPath::Resolved(
-            _,
-            Path {
-                res: Res::Def(_, def_id),
-                ..
-            },
-        )) => Some(*def_id),
-        _ => None,
-    }
-}
+// pub fn def_id_for_hir_ty(ty: &HirTy<'_>) -> Option<DefId> {
+//     match ty.kind {
+//         HirTyKind::Path(QPath::Resolved(
+//             _,
+//             Path {
+//                 res: Res::Def(_, def_id),
+//                 ..
+//             },
+//         )) => Some(*def_id),
+//         _ => None,
+//     }
+// }
 
 pub fn expected_call<'a, 'tcx>(
     expr: &'a Expr<'tcx>,

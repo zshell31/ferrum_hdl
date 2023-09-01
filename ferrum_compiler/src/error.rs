@@ -84,6 +84,8 @@ pub enum SpanErrorKind {
 
     #[error("not synthesizable type")]
     NotSynthTy,
+    #[error("not synthesizable generic parameter")]
+    NotSynthGenParam,
     #[error("not synthesizable expression")]
     NotSynthExpr,
     #[error("not synthesizable call")]

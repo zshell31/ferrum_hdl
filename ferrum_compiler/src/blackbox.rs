@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use ferrum::{
     bit::{bit_value, Bit},
-    prim_ty::PrimTy,
+    prim_ty::{PrimTy, SignalTy},
     unsigned::{unsigned_value, Unsigned},
 };
 use ferrum_netlist::{
@@ -17,7 +19,7 @@ use rustc_span::Span;
 
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    generator::{EvalContext, Generator, Generic, Generics, Key},
+    generator::{EvalContext, Generator, Key},
     utils,
 };
 
@@ -45,6 +47,7 @@ pub enum Blackbox {
     SignalMap,
     SignalApply2,
     BitPackMsb,
+    // ArrayReverse,
     StdConversion,
     StdClone,
 }
@@ -78,6 +81,12 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::BitPackMsb);
     }
 
+    // if def_path == &ItemPath(&["array", "Array", "reverse"]) {
+    //     #[allow(unused_imports)]
+    //     use ferrum::array::Array;
+    //     return Some(Blackbox::ArrayReverse);
+    // }
+
     if def_path == &ItemPath(&["convert", "From", "from"]) {
         return Some(Blackbox::StdConversion);
     }
@@ -93,27 +102,52 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     None
 }
 
-pub fn find_prim_ty(key: &Key<'_>, def_path: &DefPath) -> Option<PrimTy> {
+pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
     // TODO: check crate
     if def_path == &ItemPath(&["bit", "Bit"]) {
         #[allow(unused_imports)]
         use ferrum::bit::Bit;
-        return Some(PrimTy::Bit);
+        return Some(PrimTy::Bit.into());
     }
 
     if def_path == &ItemPath(&["signal", "Clock"]) {
         #[allow(unused_imports)]
         use ferrum::signal::Clock;
-        return Some(PrimTy::Clock);
+        return Some(PrimTy::Clock.into());
     }
 
     if def_path == &ItemPath(&["unsigned", "Unsigned"]) {
         #[allow(unused_imports)]
         use ferrum::unsigned::Unsigned;
-        return match key.generics {
-            Some(Generics::G1(Generic::Const(val))) => Some(PrimTy::Unsigned(val)),
-            _ => None,
-        };
+
+        return key
+            .generics
+            .as_ref()
+            .and_then(|generics| generics.get(0))
+            .and_then(|generic| generic.as_const())
+            .and_then(|val| val.try_into().ok())
+            .map(|val| PrimTy::Unsigned(val).into());
+    }
+
+    if def_path == &ItemPath(&["array", "Array"]) {
+        #[allow(unused_imports)]
+        use ferrum::array::Array;
+        println!("{:?}", key.generics);
+
+        let n = key
+            .generics
+            .as_ref()
+            .and_then(|generics| generics.get(0))
+            .and_then(|generic| generic.as_const())
+            .and_then(|val| val.try_into().ok())?;
+
+        let ty = key
+            .generics
+            .as_ref()
+            .and_then(|generics| generics.get(1))
+            .and_then(|generic| generic.as_ty())?;
+
+        return Some(SignalTy::Array(n, Rc::new(ty.clone())));
     }
 
     None
@@ -396,7 +430,13 @@ pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
     match prim_ty {
         PrimTy::Bool => evaluate_bit_lit(lit),
         PrimTy::Bit => evaluate_bit_lit(lit),
-        PrimTy::U128 => evaluate_unsigned_lit(lit, prim_ty.width()),
+        PrimTy::U128 => evaluate_unsigned_lit(
+            lit,
+            prim_ty
+                .width()
+                .try_into()
+                .map_err(|_| SpanError::new(SpanErrorKind::NotSynthExpr, lit.span))?,
+        ),
         PrimTy::Unsigned(n) => evaluate_unsigned_lit(lit, n),
         PrimTy::Clock => Err(SpanError::new(
             SpanErrorKind::PrimTyWithoutValue(PrimTy::Clock),

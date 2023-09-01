@@ -1,4 +1,4 @@
-use std::{env, fs, path::Path as StdPath};
+use std::{env, fs, iter, path::Path as StdPath};
 
 use ferrum::prim_ty::{PrimTy, SignalTy};
 use ferrum_netlist::{
@@ -23,7 +23,9 @@ use rustc_hir::{
     Ty as HirTy, TyKind as HirTyKind, UnOp, WherePredicate,
 };
 use rustc_interface::{interface::Compiler, Queries};
-use rustc_middle::ty::{EarlyBinder, GenericArg, List, Ty, TyCtxt, UnevaluatedConst};
+use rustc_middle::ty::{
+    EarlyBinder, GenericArg, List, ScalarInt, Ty, TyCtxt, UnevaluatedConst,
+};
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
 use rustc_type_ir::{
@@ -120,23 +122,48 @@ impl<'tcx> TyOrDefId<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Generic<'tcx> {
-    Ty(TyOrDefId<'tcx>),
-    Const(u8),
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Generic {
+    Ty(SignalTy),
+    Const(u128),
 }
 
-impl<'tcx> Generic<'tcx> {
-    fn eval_const_val(value: ConstValue) -> Option<u8> {
-        match value {
-            ConstValue::Scalar(Scalar::Int(scalar)) => scalar.try_to_u8().ok(),
+impl Generic {
+    pub fn as_ty(&self) -> Option<&SignalTy> {
+        match self {
+            Self::Ty(sig_ty) => Some(sig_ty),
             _ => None,
         }
     }
-    fn resolve_const(
+
+    pub fn as_const(&self) -> Option<u128> {
+        match self {
+            Self::Const(val) => Some(*val),
+            _ => None,
+        }
+    }
+
+    fn eval_scalar_int(scalar: ScalarInt) -> Option<u128> {
+        scalar
+            .try_to_u128()
+            .ok()
+            .or_else(|| scalar.try_to_u64().ok().map(|n| n as u128))
+            .or_else(|| scalar.try_to_u32().ok().map(|n| n as u128))
+            .or_else(|| scalar.try_to_u16().ok().map(|n| n as u128))
+            .or_else(|| scalar.try_to_u8().ok().map(|n| n as u128))
+    }
+
+    fn eval_const_val(value: ConstValue) -> Option<u128> {
+        match value {
+            ConstValue::Scalar(Scalar::Int(scalar)) => Self::eval_scalar_int(scalar),
+            _ => None,
+        }
+    }
+
+    fn resolve_const<'tcx>(
         unevaluated: UnevaluatedConst<'tcx>,
         tcx: TyCtxt<'tcx>,
-    ) -> Option<u8> {
+    ) -> Option<u128> {
         let param_env = tcx.param_env(unevaluated.def);
         let value = tcx
             .const_eval_resolve(param_env, unevaluated.expand(), None)
@@ -145,96 +172,107 @@ impl<'tcx> Generic<'tcx> {
         Self::eval_const_val(value)
     }
 
-    fn from_hir_gen_arg(
-        arg: &HirGenArg,
-        tcx: TyCtxt<'tcx>,
+    fn from_hir_gen_arg<'tcx>(
+        arg: &HirGenArg<'tcx>,
+        generator: &mut Generator<'tcx>,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> Option<Self> {
+    ) -> Result<Self, Error> {
         match arg {
-            HirGenArg::Type(ty) => utils::def_id_for_hir_ty(ty)
-                .map(Into::into)
-                .map(Generic::Ty),
+            HirGenArg::Type(ty) => {
+                let sig_ty = generator.find_sig_ty_for_hir(ty, generics)?;
+
+                Ok(Generic::Ty(sig_ty))
+            }
             HirGenArg::Const(ConstArg {
                 value: AnonConst { def_id, .. },
                 ..
-            }) => match generics.as_ref() {
-                Some(generics) => {
-                    let unevaluated = UnevaluatedConst::new(def_id.to_def_id(), generics);
-                    Self::resolve_const(unevaluated, tcx).map(Generic::Const)
-                }
-                None => {
-                    let value = tcx.const_eval_poly(def_id.to_def_id()).ok()?;
-                    Self::eval_const_val(value).map(Generic::Const)
-                }
-            },
-            _ => None,
-        }
-    }
+            }) => {
+                let tcx = generator.tcx;
+                let cons_val = match generics.as_ref() {
+                    Some(generics) => {
+                        let unevaluated =
+                            UnevaluatedConst::new(def_id.to_def_id(), generics);
+                        Self::resolve_const(unevaluated, tcx)
+                    }
+                    None => tcx
+                        .const_eval_poly(def_id.to_def_id())
+                        .ok()
+                        .and_then(|value| Self::eval_const_val(value)),
+                };
 
-    fn from_gen_arg(arg: &GenericArg<'tcx>, tcx: TyCtxt<'tcx>) -> Option<Self> {
-        if let Some(ty) = arg.as_type() {
-            return Some(Generic::Ty(ty.into()));
-        }
-
-        if let Some(cons) = arg.as_const() {
-            match cons.kind() {
-                ConstKind::Unevaluated(unevaluated) => {
-                    Self::resolve_const(unevaluated, tcx).map(Generic::Const)
-                }
-                ConstKind::Value(val_tree) => val_tree
-                    .try_to_scalar_int()
-                    .and_then(|scalar| scalar.try_to_u8().ok())
-                    .map(Generic::Const),
-                _ => None,
+                cons_val
+                    .ok_or_else(|| {
+                        SpanError::new(SpanErrorKind::NotSynthGenParam, arg.span()).into()
+                    })
+                    .map(Generic::Const)
             }
-        } else {
-            None
+            _ => Err(SpanError::new(SpanErrorKind::NotSynthGenParam, arg.span()).into()),
         }
+    }
+
+    fn from_gen_arg<'tcx>(
+        arg: &GenericArg<'tcx>,
+        generator: &mut Generator<'tcx>,
+        span: Span,
+    ) -> Result<Self, Error> {
+        if let Some(ty) = arg.as_type() {
+            let sig_ty = generator.find_sig_ty(&ty, None, span)?;
+            return Ok(Generic::Ty(sig_ty));
+        }
+
+        let cons_val = arg.as_const().and_then(|cons| match cons.kind() {
+            ConstKind::Unevaluated(unevaluated) => {
+                Self::resolve_const(unevaluated, generator.tcx)
+            }
+            ConstKind::Value(val_tree) => {
+                val_tree.try_to_scalar_int().and_then(Self::eval_scalar_int)
+            }
+            _ => None,
+        });
+
+        cons_val
+            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
+            .map(Generic::Const)
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Generics<'tcx> {
-    G1(Generic<'tcx>),
-    G2(Generic<'tcx>, Generic<'tcx>),
-    G3(Generic<'tcx>, Generic<'tcx>, Generic<'tcx>),
-}
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Generics(pub Vec<Generic>);
 
-impl<'tcx> Generics<'tcx> {
-    fn from_ty(
+impl Generics {
+    pub fn get(&self, ind: usize) -> Option<&Generic> {
+        self.0.get(ind)
+    }
+
+    fn from_ty<'tcx>(
         ty: &Ty<'tcx>,
-        tcx: TyCtxt<'tcx>,
+        generator: &mut Generator<'tcx>,
         generics: Option<&List<GenericArg<'tcx>>>,
-    ) -> Option<Self> {
+        span: Span,
+    ) -> Result<Option<Self>, Error> {
+        let tcx = generator.tcx;
+
         let ty = match generics {
             Some(generics) => EarlyBinder::bind(*ty).instantiate(tcx, generics),
             None => *ty,
         };
-        let res = match ty.kind() {
-            TyKind::Adt(_, generics) => match generics.as_slice() {
-                [gen] => Some(Self::G1(Generic::from_gen_arg(gen, tcx)?)),
-                [gen1, gen2] => Some(Self::G2(
-                    Generic::from_gen_arg(gen1, tcx)?,
-                    Generic::from_gen_arg(gen2, tcx)?,
-                )),
-                [gen1, gen2, gen3] => Some(Self::G3(
-                    Generic::from_gen_arg(gen1, tcx)?,
-                    Generic::from_gen_arg(gen2, tcx)?,
-                    Generic::from_gen_arg(gen3, tcx)?,
-                )),
-                _ => None,
-            },
-            _ => None,
-        };
 
-        res
+        match ty.kind() {
+            TyKind::Adt(_, generics) if !generics.is_empty() => Ok(Some(Self(
+                generics
+                    .iter()
+                    .map(|generic| Generic::from_gen_arg(&generic, generator, span))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))),
+            _ => Ok(None),
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Key<'tcx> {
     pub ty_or_def_id: TyOrDefId<'tcx>,
-    pub generics: Option<Generics<'tcx>>,
+    pub generics: Option<Generics>,
 }
 
 impl<'tcx> Key<'tcx> {
@@ -250,17 +288,19 @@ impl<'tcx> Key<'tcx> {
 pub trait AsKey<'tcx> {
     fn as_key(
         &self,
-        tcx: TyCtxt<'tcx>,
+        generator: &mut Generator<'tcx>,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> Key<'tcx>;
+        span: Span,
+    ) -> Result<Key<'tcx>, Error>;
 }
 
 impl<'tcx> AsKey<'tcx> for Path<'tcx> {
     fn as_key(
         &self,
-        tcx: TyCtxt<'tcx>,
+        generator: &mut Generator<'tcx>,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> Key<'tcx> {
+        _: Span,
+    ) -> Result<Key<'tcx>, Error> {
         let def_id = self.res.def_id();
 
         let generics = self
@@ -269,50 +309,58 @@ impl<'tcx> AsKey<'tcx> for Path<'tcx> {
             .map(|segment| segment.args())
             .map(|generics| generics.args)
             .filter(|args| !args.is_empty())
-            .and_then(|args| match args {
-                [arg] => {
-                    Some(Generics::G1(Generic::from_hir_gen_arg(arg, tcx, generics)?))
-                }
-                [arg1, arg2] => Some(Generics::G2(
-                    Generic::from_hir_gen_arg(arg1, tcx, generics)?,
-                    Generic::from_hir_gen_arg(arg2, tcx, generics)?,
-                )),
-                [arg1, arg2, arg3] => Some(Generics::G3(
-                    Generic::from_hir_gen_arg(arg1, tcx, generics)?,
-                    Generic::from_hir_gen_arg(arg2, tcx, generics)?,
-                    Generic::from_hir_gen_arg(arg3, tcx, generics)?,
-                )),
-                _ => None,
-            });
+            .map(|args| {
+                args.iter()
+                    .map(|arg| Generic::from_hir_gen_arg(arg, generator, generics))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(Generics)
+            })
+            .transpose()?;
 
-        Key {
+        Ok(Key {
             ty_or_def_id: def_id.into(),
             generics,
-        }
+        })
     }
 }
 
 impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
     fn as_key(
         &self,
-        tcx: TyCtxt<'tcx>,
+        generator: &mut Generator<'tcx>,
         generics: Option<&List<GenericArg<'tcx>>>,
-    ) -> Key<'tcx> {
-        let generics = Generics::from_ty(self, tcx, generics);
+        span: Span,
+    ) -> Result<Key<'tcx>, Error> {
+        let generics = Generics::from_ty(self, generator, generics, span)?;
 
-        Key {
+        Ok(Key {
             ty_or_def_id: (*self).into(),
             generics,
-        }
+        })
     }
 }
 
 impl<'tcx> AsKey<'tcx> for DefId {
-    fn as_key(&self, _: TyCtxt<'tcx>, _: Option<&List<GenericArg<'tcx>>>) -> Key<'tcx> {
-        Key {
+    fn as_key(
+        &self,
+        generator: &mut Generator<'tcx>,
+        generics: Option<&List<GenericArg<'tcx>>>,
+        span: Span,
+    ) -> Result<Key<'tcx>, Error> {
+        let tcx = generator.tcx;
+        let ty = tcx.type_of(*self);
+
+        let ty = match generics {
+            Some(generics) => ty.instantiate(tcx, generics),
+            None => ty.instantiate_identity(),
+        };
+
+        let generics = Generics::from_ty(&ty, generator, None, span)?;
+
+        Ok(Key {
             ty_or_def_id: (*self).into(),
-            generics: None,
-        }
+            generics,
+        })
     }
 }
 
@@ -430,7 +478,7 @@ impl<'tcx> Generator<'tcx> {
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<Blackbox, Error> {
-        let key = key.as_key(self.tcx, generics);
+        let key = key.as_key(self, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -442,7 +490,7 @@ impl<'tcx> Generator<'tcx> {
                 blackbox = blackbox::find_blackbox(&def_path);
             }
 
-            self.blackbox.insert(key, blackbox);
+            self.blackbox.insert(key.clone(), blackbox);
         }
 
         self.blackbox
@@ -463,7 +511,7 @@ impl<'tcx> Generator<'tcx> {
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<SignalTy, Error> {
-        let key = key.as_key(self.tcx, generics);
+        let key = key.as_key(self, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -492,11 +540,11 @@ impl<'tcx> Generator<'tcx> {
             if sig_ty.is_none() {
                 if let Some(def_id) = key.def_id() {
                     let def_path = self.tcx.def_path(def_id);
-                    sig_ty = blackbox::find_prim_ty(&key, &def_path).map(Into::into);
+                    sig_ty = blackbox::find_sig_ty(&key, &def_path);
                 }
             }
 
-            self.sig_ty.insert(key, sig_ty);
+            self.sig_ty.insert(key.clone(), sig_ty);
         }
 
         self.sig_ty
@@ -585,7 +633,7 @@ impl<'tcx> Generator<'tcx> {
 
                             let ty = arg.bindings[0].ty();
                             let sig_ty = self.find_sig_ty_for_hir(ty, None)?;
-                            let key = def_id.as_key(self.tcx, None);
+                            let key = def_id.as_key(self, None, span)?;
                             self.sig_ty.insert(key, Some(sig_ty));
 
                             found_signal = true;
@@ -681,9 +729,9 @@ impl<'tcx> Generator<'tcx> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
-                let sym = self.idents.ident(ident);
                 match item_id {
                     ItemId::Node(node_id) => {
+                        let sym = self.idents.ident(ident);
                         self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
                     }
                     ItemId::Group(group_id) => {
@@ -792,6 +840,18 @@ impl<'tcx> Generator<'tcx> {
                     self.net_list.add_node(module_id, input)
                 })
                 .into()
+            }
+            SignalTy::Array(n, sig_ty) => {
+                let group =
+                    Group::new(iter::repeat(sig_ty).take(n as usize).map(|sig_ty| {
+                        self.make_input_with_sig_ty(
+                            (*sig_ty).clone(),
+                            module_id,
+                            is_dummy,
+                        )
+                    }));
+
+                self.group_list.add_group(group).into()
             }
             SignalTy::Group(sig_ty) => {
                 let group = Group::new(sig_ty.iter().map(|sig_ty| {

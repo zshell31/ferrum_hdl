@@ -8,13 +8,19 @@ use crate::{net_kind::NetKind, net_list::NodeOutId, symbol::Symbol};
 #[derive(Debug, Clone)]
 pub struct Splitter {
     pub input: NodeOutId,
-    pub start: u8,
-    pub width: u8,
+    pub start: u128,
+    pub width: u128,
     pub output: NodeOutput,
 }
 
 impl Splitter {
-    pub fn new(ty: PrimTy, input: NodeOutId, start: u8, width: u8, sym: Symbol) -> Self {
+    pub fn new(
+        ty: PrimTy,
+        input: NodeOutId,
+        start: u128,
+        width: u128,
+        sym: Symbol,
+    ) -> Self {
         assert!(width > 0);
         // TODO: check that start + width < input.width()
         assert_eq!(ty.width(), width);

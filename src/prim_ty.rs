@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimTy {
     Bool,
     Bit,
@@ -14,12 +14,12 @@ impl PrimTy {
         matches!(self, PrimTy::Bool)
     }
 
-    pub fn width(&self) -> u8 {
+    pub fn width(&self) -> u128 {
         match self {
             Self::Bool => 1,
             Self::Bit => 1,
             Self::U128 => 128,
-            Self::Unsigned(n) => *n,
+            Self::Unsigned(n) => *n as u128,
             Self::Clock => 1,
         }
     }
@@ -29,9 +29,10 @@ pub trait IsPrimTy {
     const PRIM_TY: PrimTy;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SignalTy {
     Prim(PrimTy),
+    Array(u8, Rc<SignalTy>),
     Group(Rc<Vec<SignalTy>>),
 }
 
@@ -49,7 +50,7 @@ impl SignalTy {
     pub fn prim_ty(&self) -> PrimTy {
         match self {
             Self::Prim(prim_ty) => *prim_ty,
-            Self::Group(_) => panic!("expected prim type"),
+            _ => panic!("expected prim type"),
         }
     }
 }

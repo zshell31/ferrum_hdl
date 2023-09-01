@@ -39,7 +39,7 @@ impl Idents {
                 Symbol::new(&format!("{}_{}", ident, count))
             }
             None => {
-                self.idents.insert(ident.to_string(), 1);
+                self.idents.insert(ident.to_string(), 0);
                 Symbol::new(ident)
             }
         }

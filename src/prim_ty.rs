@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 #[derive(Debug, Clone, Copy)]
 pub enum PrimTy {
     Bool,
@@ -23,5 +25,31 @@ impl PrimTy {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct DummyTy;
+pub trait IsPrimTy {
+    const PRIM_TY: PrimTy;
+}
+
+#[derive(Debug, Clone)]
+pub enum SignalTy {
+    Prim(PrimTy),
+    Group(Rc<Vec<SignalTy>>),
+}
+
+impl From<PrimTy> for SignalTy {
+    fn from(prim_ty: PrimTy) -> Self {
+        Self::Prim(prim_ty)
+    }
+}
+
+impl SignalTy {
+    pub fn group(group: impl IntoIterator<Item = SignalTy>) -> Self {
+        Self::Group(Rc::new(group.into_iter().collect()))
+    }
+
+    pub fn prim_ty(&self) -> PrimTy {
+        match self {
+            Self::Prim(prim_ty) => *prim_ty,
+            Self::Group(_) => panic!("expected prim type"),
+        }
+    }
+}

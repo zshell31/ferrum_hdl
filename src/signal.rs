@@ -1,19 +1,20 @@
-use std::{
-    fmt::{Debug, Display},
-    marker::PhantomData,
-    rc::Rc,
-};
+use std::{fmt::Debug, marker::PhantomData, rc::Rc};
 
 use derive_where::derive_where;
-use ferrum_macros::blackbox;
 
 use super::domain::ClockDomain;
+use crate::prim_ty::{IsPrimTy, PrimTy};
 
 pub trait SignalValue: Debug + Clone {}
 
 impl SignalValue for bool {}
 
+impl IsPrimTy for bool {
+    const PRIM_TY: PrimTy = PrimTy::Bool;
+}
+
 impl<T1: SignalValue, T2: SignalValue> SignalValue for (T1, T2) {}
+impl<T1: SignalValue, T2: SignalValue, T3: SignalValue> SignalValue for (T1, T2, T3) {}
 
 pub trait Signal<D: ClockDomain>: Sized {
     type Value: SignalValue;
@@ -166,7 +167,6 @@ impl<D: ClockDomain> Clock<D> {
     }
 }
 
-#[blackbox(Register, Clone)]
 #[derive_where(Clone)]
 pub struct Register<D: ClockDomain, V: SignalValue> {
     value: V,
@@ -186,9 +186,8 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
     }
 }
 
-#[blackbox(RegisterFn)]
 #[inline(always)]
-pub fn reg<D: ClockDomain, V: SignalValue>(
+pub fn reg<D: ClockDomain, V: SignalValue + IsPrimTy>(
     clock: Clock<D>,
     reset_value: impl Into<V>,
     comb_fn: impl Fn(V) -> V + 'static,
@@ -196,7 +195,7 @@ pub fn reg<D: ClockDomain, V: SignalValue>(
     Register::new(clock, reset_value.into(), comb_fn)
 }
 
-impl<D: ClockDomain, V: SignalValue + Display> Signal<D> for Register<D, V> {
+impl<D: ClockDomain, V: SignalValue> Signal<D> for Register<D, V> {
     type Value = V;
 
     fn next(&mut self) -> Self::Value {

@@ -58,6 +58,8 @@ pub enum SpanErrorKind {
     ExpectedCall,
     #[error("expected method call")]
     ExpectedMethodCall,
+    #[error("expected closure")]
+    ExpectedClosure,
     #[error("expected identifier")]
     ExpectedIdentifier,
     #[error("expected expression")]
@@ -80,6 +82,8 @@ pub enum SpanErrorKind {
     #[error("unsupported generic")]
     UnsupportedGeneric,
 
+    #[error("not synthesizable type")]
+    NotSynthTy,
     #[error("not synthesizable expression")]
     NotSynthExpr,
     #[error("not synthesizable call")]

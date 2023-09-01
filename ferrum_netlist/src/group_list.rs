@@ -73,6 +73,10 @@ impl Group {
     pub fn item_ids(&self) -> Rc<Vec<ItemId>> {
         self.groups.clone()
     }
+
+    fn item_id_iter(&self) -> impl Iterator<Item = ItemId> + '_ {
+        self.groups.iter().copied()
+    }
 }
 
 #[derive(Debug)]
@@ -113,24 +117,91 @@ impl GroupList {
         group_id
     }
 
-    pub fn deep_iter<E, F: FnMut(NodeId) -> Result<(), E>>(
+    pub fn len(&self, item_ids: &[ItemId]) -> usize {
+        item_ids
+            .iter()
+            .map(|&item_id| self.len_inner(item_id))
+            .sum()
+    }
+
+    fn len_inner(&self, item_id: ItemId) -> usize {
+        match item_id {
+            ItemId::Node(_) => 1,
+            ItemId::Group(group_id) => {
+                let group = &self[group_id];
+                group
+                    .item_id_iter()
+                    .map(|item_id| self.len_inner(item_id))
+                    .sum()
+            }
+        }
+    }
+
+    pub fn deep_iter<E, F: FnMut(usize, NodeId) -> Result<(), E>>(
+        &self,
+        item_ids: &[ItemId],
+        f: &mut F,
+    ) -> Result<(), E> {
+        let mut ind = 0;
+
+        #[allow(clippy::explicit_counter_loop)]
+        for item_id in item_ids {
+            self.deep_iter_inner(*item_id, &mut ind, f)?;
+        }
+
+        Ok(())
+    }
+
+    fn deep_iter_inner<E, F: FnMut(usize, NodeId) -> Result<(), E>>(
         &self,
         item_id: ItemId,
+        ind: &mut usize,
         f: &mut F,
     ) -> Result<(), E> {
         match item_id {
             ItemId::Node(node_id) => {
-                f(node_id)?;
+                f(*ind, node_id)?;
+                *ind += 1;
             }
             ItemId::Group(group_id) => {
                 let group = &self[group_id];
 
                 for item_id in group.groups.iter().copied() {
-                    self.deep_iter(item_id, &mut *f)?;
+                    self.deep_iter_inner(item_id, ind, &mut *f)?;
                 }
             }
         }
 
         Ok(())
+    }
+
+    pub fn combine<F: FnMut(NodeId, NodeId) -> NodeId>(
+        &mut self,
+        item_id1: ItemId,
+        item_id2: ItemId,
+        f: &mut F,
+    ) -> Option<ItemId> {
+        match (item_id1, item_id2) {
+            (ItemId::Node(node_id1), ItemId::Node(node_id2)) => {
+                Some(f(node_id1, node_id2).into())
+            }
+            (ItemId::Group(group_id1), ItemId::Group(group_id2)) => {
+                let item_ids1 = self[group_id1].item_ids();
+                let item_ids2 = self[group_id2].item_ids();
+
+                if item_ids1.len() != item_ids2.len() {
+                    return None;
+                }
+
+                let group = item_ids1
+                    .iter()
+                    .zip(item_ids2.iter())
+                    .map(|(item_id1, item_id2)| self.combine(*item_id1, *item_id2, f))
+                    .collect::<Option<Vec<ItemId>>>()?;
+
+                Some(self.add_group(Group::new(group)).into())
+            }
+            _ => None,
+        }
     }
 }

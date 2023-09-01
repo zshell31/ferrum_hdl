@@ -7,6 +7,7 @@ use crate::{
     bit::Bit,
     bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
+    prim_ty::{IsPrimTy, PrimTy},
     signal::SignalValue,
 };
 
@@ -60,6 +61,13 @@ where
 }
 
 impl<const N: u8> SignalValue for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
+
+impl<const N: u8> IsPrimTy for Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    const PRIM_TY: PrimTy = PrimTy::Unsigned(N);
+}
 
 impl<const N: u8> Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
 

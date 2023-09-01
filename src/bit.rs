@@ -5,7 +5,10 @@ use std::{
 
 use ferrum_macros::blackbox;
 
-use crate::signal::SignalValue;
+use crate::{
+    prim_ty::{IsPrimTy, PrimTy},
+    signal::SignalValue,
+};
 
 #[blackbox(Bit)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -25,6 +28,10 @@ impl Display for Bit {
 }
 
 impl SignalValue for Bit {}
+
+impl IsPrimTy for Bit {
+    const PRIM_TY: PrimTy = PrimTy::Bit;
+}
 
 impl Bit {
     pub const H: Bit = Bit(true);

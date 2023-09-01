@@ -1,10 +1,14 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    collections::HashMap,
+    ops::{Index, IndexMut},
+};
 
 use fnv::FnvBuildHasher;
 use indexmap::IndexSet;
 
 use crate::{
-    node::{InputNode, IsNode, Node, NodeOutput, PassNode},
+    group_list::ItemId,
+    node::{InputNode, IsNode, Node, NodeOutput},
     params::{Inputs, Outputs},
     symbol::Symbol,
 };
@@ -37,6 +41,7 @@ impl NodeOutId {
 }
 
 type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
+type FnvHashMap<K, V> = HashMap<K, V, FnvBuildHasher>;
 
 #[derive(Debug)]
 pub struct Module {
@@ -159,6 +164,7 @@ impl Module {
 #[derive(Debug, Default)]
 pub struct NetList {
     modules: Vec<Module>,
+    dummy_inputs: FnvHashMap<ItemId, Vec<NodeId>>,
 }
 
 impl Index<ModuleId> for NetList {
@@ -284,30 +290,60 @@ impl NetList {
         }
     }
 
+    pub fn add_dummy_inputs(
+        &mut self,
+        item_id: ItemId,
+        dummy_inputs: impl IntoIterator<Item = NodeId>,
+    ) {
+        self.dummy_inputs
+            .insert(item_id, dummy_inputs.into_iter().collect());
+    }
+
+    pub fn dummy_inputs_len(&self, item_id: ItemId) -> Option<usize> {
+        self.dummy_inputs
+            .get(&item_id)
+            .map(|dummy_inputs| dummy_inputs.len())
+    }
+
+    pub fn dummy_input(&mut self, item_id: ItemId, ind: usize) -> Option<NodeId> {
+        self.dummy_inputs
+            .get(&item_id)
+            .and_then(|dummy_inputs| dummy_inputs.get(ind))
+            .copied()
+    }
+
     pub fn find_dummy_inputs(&self, node_id: NodeId) -> Vec<NodeId> {
         self.find_node(node_id, |node| node.is_dummy_input())
     }
 
-    pub fn link_dummy_input(
-        &mut self,
-        with_dummy: NodeId,
-        to_link: &[NodeOutId],
-        ignore: bool,
-    ) {
-        let dummy = self.find_dummy_inputs(with_dummy);
-        if !ignore {
-            assert_eq!(dummy.len(), to_link.len());
-        }
+    // pub fn link(
+    //     &mut self,
+    //     from: NodeOutId,
+    //     to: NodeId
+    // ) {
 
-        if dummy.len() == to_link.len() {
-            for (dummy, to_link) in dummy.into_iter().zip(to_link.iter().copied()) {
-                let to_link_node = &self[to_link.node_id()];
-                let to_link_out = to_link_node.outputs().only_one().out;
-                let dummy_out = &self[dummy].outputs().only_one().out;
+    // }
 
-                let pass = PassNode::new(to_link_out.ty, to_link, dummy_out.sym);
-                self.replace(dummy, pass);
-            }
-        }
-    }
+    // pub fn link_dummy_input(
+    //     &mut self,
+    //     with_dummy: NodeId,
+    //     to_link: &[NodeOutId],
+    //     ignore: bool,
+    // ) {
+    //     let dummy = self.find_dummy_inputs(with_dummy);
+    //     if !ignore {
+    //         assert_eq!(dummy.len(), to_link.len());
+    //     }
+
+    //     if dummy.len() == to_link.len() {
+    //         for (dummy, to_link) in dummy.into_iter().zip(to_link.iter().copied()) {
+    //             let to_link_node = &self[to_link.node_id()];
+    //             let to_link_out = to_link_node.outputs().only_one().out;
+    //             let dummy_out = &self[dummy].outputs().only_one().out;
+
+    //             let pass = PassNode::new(to_link_out.ty, to_link, dummy_out.sym);
+    //             self.replace(dummy, pass);
+    //         }
+    //     }
+    // }
 }

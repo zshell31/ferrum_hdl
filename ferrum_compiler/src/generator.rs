@@ -1,6 +1,6 @@
 use std::{env, fs, path::Path as StdPath};
 
-use ferrum::prim_ty::PrimTy;
+use ferrum::prim_ty::{PrimTy, SignalTy};
 use ferrum_netlist::{
     backend::Verilog,
     group_list::{Group, GroupList, ItemId},
@@ -335,7 +335,7 @@ pub struct Generator<'tcx> {
     tcx: TyCtxt<'tcx>,
     top_module: HirItemId,
     blackbox: FxHashMap<Key<'tcx>, Option<Blackbox>>,
-    prim_ty: FxHashMap<Key<'tcx>, Option<PrimTy>>,
+    sig_ty: FxHashMap<Key<'tcx>, Option<SignalTy>>,
     pub net_list: NetList,
     pub group_list: GroupList,
     pub idents: Idents,
@@ -347,7 +347,7 @@ impl<'tcx> Generator<'tcx> {
             tcx,
             top_module,
             blackbox: FxHashMap::default(),
-            prim_ty: FxHashMap::default(),
+            sig_ty: FxHashMap::default(),
             net_list: NetList::default(),
             group_list: GroupList::default(),
             idents: Idents::new(),
@@ -457,41 +457,51 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn find_prim_ty<K: AsKey<'tcx>>(
+    pub fn find_sig_ty<K: AsKey<'tcx>>(
         &mut self,
         key: &K,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
-    ) -> Result<PrimTy, Error> {
+    ) -> Result<SignalTy, Error> {
         let key = key.as_key(self.tcx, generics);
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
-        if !self.prim_ty.contains_key(&key) {
-            let mut prim_ty = None;
+        if !self.sig_ty.contains_key(&key) {
+            let mut sig_ty = None;
 
             if let TyOrDefId::Ty(ty) = key.ty_or_def_id {
                 match ty.kind() {
                     TyKind::Bool => {
-                        prim_ty = Some(PrimTy::Bool);
+                        sig_ty = Some(PrimTy::Bool.into());
                     }
                     TyKind::Uint(UintTy::U128) => {
-                        prim_ty = Some(PrimTy::U128);
+                        sig_ty = Some(PrimTy::U128.into());
+                    }
+                    TyKind::Tuple(ty) => {
+                        sig_ty = Some(SignalTy::group(
+                            ty.iter()
+                                .map(|ty| self.find_sig_ty(&ty, generics, span))
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ));
                     }
                     _ => {}
                 }
             }
 
-            if let Some(def_id) = key.def_id() {
-                let def_path = self.tcx.def_path(def_id);
-                prim_ty = blackbox::find_prim_ty(&key, &def_path);
+            if sig_ty.is_none() {
+                if let Some(def_id) = key.def_id() {
+                    let def_path = self.tcx.def_path(def_id);
+                    sig_ty = blackbox::find_prim_ty(&key, &def_path).map(Into::into);
+                }
             }
 
-            self.prim_ty.insert(key, prim_ty);
+            self.sig_ty.insert(key, sig_ty);
         }
 
-        self.prim_ty
+        self.sig_ty
             .get(&key)
+            .cloned()
             .unwrap()
             .ok_or_else(|| {
                 SpanError::new(
@@ -574,16 +584,12 @@ impl<'tcx> Generator<'tcx> {
                                 .ok_or_else(|| make_err(span))?;
 
                             let ty = arg.bindings[0].ty();
-                            match ty.kind {
-                                HirTyKind::Path(QPath::Resolved(_, path)) => {
-                                    let prim_ty = self.find_prim_ty(path, None, span)?;
-                                    let key = def_id.as_key(self.tcx, None);
-                                    self.prim_ty.insert(key, Some(prim_ty));
+                            let sig_ty = self.find_sig_ty_for_hir(ty, None)?;
+                            let key = def_id.as_key(self.tcx, None);
+                            self.sig_ty.insert(key, Some(sig_ty));
 
-                                    found_signal = true;
-                                }
-                                _ => return Err(make_err(span)),
-                            }
+                            found_signal = true;
+
                             break;
                         }
                     }
@@ -608,6 +614,24 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
+    fn find_sig_ty_for_hir(
+        &mut self,
+        ty: &HirTy<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+    ) -> Result<SignalTy, Error> {
+        match ty.kind {
+            HirTyKind::Path(QPath::Resolved(_, path)) => {
+                self.find_sig_ty(path, generics, ty.span)
+            }
+            HirTyKind::Tup(ty) => Ok(SignalTy::group(
+                ty.iter()
+                    .map(|ty| self.find_sig_ty_for_hir(ty, generics))
+                    .collect::<Result<Vec<_>, _>>()?,
+            )),
+            _ => Err(SpanError::new(SpanErrorKind::NotSynthTy, ty.span).into()), // HirTyKind::Tup()
+        }
+    }
+
     fn evaluate_fn(
         &mut self,
         name: Ident,
@@ -624,7 +648,7 @@ impl<'tcx> Generator<'tcx> {
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
         let ctx = EvalContext::new(generics, module_id);
 
-        self.evaluate_inputs(inputs, ctx, false)?;
+        self.evaluate_inputs(inputs, ctx, false, &mut |_| {})?;
         let item_id = self.evaluate_expr(body.value, ctx)?;
         self.evaluate_outputs(item_id)?;
 
@@ -633,19 +657,21 @@ impl<'tcx> Generator<'tcx> {
         Ok(module_id)
     }
 
-    fn evaluate_inputs<'a>(
+    fn evaluate_inputs<'a, F: FnMut(ItemId)>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
         ctx: EvalContext<'tcx>,
         is_dummy: bool,
+        f: &mut F,
     ) -> Result<(), Error>
     where
         'tcx: 'a,
     {
         for (input, param) in inputs {
             let item_id = self.make_input(input, ctx, is_dummy)?;
-
             self.pattern_match(param.pat, item_id)?;
+
+            f(item_id);
         }
 
         Ok(())
@@ -703,7 +729,9 @@ impl<'tcx> Generator<'tcx> {
                     }
                 }
             }
+            PatKind::Wild => {}
             _ => {
+                println!("{:#?}", pat);
                 return Err(
                     SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span).into()
                 );
@@ -721,18 +749,18 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         match input.kind {
             HirTyKind::Infer => {
-                let prim_ty = self.find_prim_ty(
+                let sig_ty = self.find_sig_ty(
                     &self.node_type(input.hir_id),
                     ctx.generics,
                     input.span,
                 )?;
 
-                Ok(self.make_input_with_prim_ty(prim_ty, ctx.module_id, is_dummy))
+                Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
-                let prim_ty = self.find_prim_ty(path, ctx.generics, path.span)?;
+                let sig_ty = self.find_sig_ty(path, ctx.generics, path.span)?;
 
-                Ok(self.make_input_with_prim_ty(prim_ty, ctx.module_id, is_dummy))
+                Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }
             HirTyKind::Tup(ty) => {
                 let group = ty
@@ -749,26 +777,34 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn make_input_with_prim_ty(
+    fn make_input_with_sig_ty(
         &mut self,
-        prim_ty: PrimTy,
+        sig_ty: SignalTy,
         module_id: ModuleId,
         is_dummy: bool,
     ) -> ItemId {
-        let sym = self.idents.tmp();
-        let input = InputNode::new(prim_ty, sym);
-
-        (if is_dummy {
-            self.net_list.add_dummy_node(module_id, input)
-        } else {
-            self.net_list.add_node(module_id, input)
-        })
-        .into()
+        match sig_ty {
+            SignalTy::Prim(prim_ty) => {
+                let input = InputNode::new(prim_ty, self.idents.tmp());
+                (if is_dummy {
+                    self.net_list.add_dummy_node(module_id, input)
+                } else {
+                    self.net_list.add_node(module_id, input)
+                })
+                .into()
+            }
+            SignalTy::Group(sig_ty) => {
+                let group = Group::new(sig_ty.iter().map(|sig_ty| {
+                    self.make_input_with_sig_ty(sig_ty.clone(), module_id, is_dummy)
+                }));
+                self.group_list.add_group(group).into()
+            }
+        }
     }
 
     fn evaluate_outputs(&mut self, item_id: ItemId) -> Result<(), Error> {
         self.group_list
-            .deep_iter::<Error, _>(item_id, &mut |node_id| {
+            .deep_iter::<Error, _>(&[item_id], &mut |_, node_id| {
                 Self::make_output(&mut self.net_list, &mut self.idents, node_id);
 
                 Ok(())
@@ -810,7 +846,7 @@ impl<'tcx> Generator<'tcx> {
             }
             ExprKind::Binary(bin_op, lhs, rhs) => {
                 println!("binary");
-                let prim_ty = self.find_prim_ty(&ty, ctx.generics, expr.span)?;
+                let prim_ty = self.find_sig_ty(&ty, ctx.generics, expr.span)?.prim_ty();
 
                 let bin_op = match bin_op.node {
                     BinOpKind::BitAnd => BinOp::BitAnd,
@@ -972,7 +1008,7 @@ impl<'tcx> Generator<'tcx> {
                                             module_id: ctx.module_id,
                                         })?;
 
-                                    let mut evaluate = |node_id: NodeId| {
+                                    let mut evaluate = |_, node_id: NodeId| {
                                         for out in
                                             self.net_list[node_id].outputs().items()
                                         {
@@ -982,7 +1018,8 @@ impl<'tcx> Generator<'tcx> {
                                         Result::<(), Error>::Ok(())
                                     };
 
-                                    self.group_list.deep_iter(item_id, &mut evaluate)?;
+                                    self.group_list
+                                        .deep_iter(&[item_id], &mut evaluate)?;
                                 }
 
                                 let outputs = self.net_list[module_id]
@@ -1036,8 +1073,27 @@ impl<'tcx> Generator<'tcx> {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
 
-                self.evaluate_inputs(inputs, ctx, true)?;
-                self.evaluate_expr(body.value, ctx)
+                // TODO: how to avoid allocating vec
+                let mut item_ids = vec![];
+                self.evaluate_inputs(inputs, ctx, true, &mut |item_id| {
+                    item_ids.push(item_id);
+                })?;
+
+                let mut dummy_inputs = vec![];
+                self.group_list
+                    .deep_iter::<Error, _>(&item_ids, &mut |_, node_id| {
+                        if self.net_list[node_id].is_dummy_input() {
+                            dummy_inputs.push(node_id);
+                        }
+
+                        Ok(())
+                    })?;
+
+                let closure = self.evaluate_expr(body.value, ctx)?;
+
+                self.net_list.add_dummy_inputs(closure, dummy_inputs);
+
+                Ok(closure)
             }
             ExprKind::DropTemps(inner) => self.evaluate_expr(inner, ctx),
             ExprKind::Field(expr, ident) => {
@@ -1052,7 +1108,7 @@ impl<'tcx> Generator<'tcx> {
             }
             ExprKind::If(cond, if_block, else_block) => {
                 println!("if");
-                let prim_ty = self.find_prim_ty(&ty, ctx.generics, expr.span)?;
+                let prim_ty = self.find_sig_ty(&ty, ctx.generics, expr.span)?.prim_ty();
 
                 let else_block = else_block.ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
@@ -1082,7 +1138,7 @@ impl<'tcx> Generator<'tcx> {
             }
             ExprKind::Lit(lit) => {
                 println!("lit");
-                let prim_ty = self.find_prim_ty(&ty, ctx.generics, lit.span)?;
+                let prim_ty = self.find_sig_ty(&ty, ctx.generics, lit.span)?.prim_ty();
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;
 
                 Ok(self
@@ -1123,7 +1179,7 @@ impl<'tcx> Generator<'tcx> {
                 println!("unary");
 
                 let comb = self.evaluate_expr(inner, ctx)?.node_id();
-                let prim_ty = self.find_prim_ty(&ty, ctx.generics, expr.span)?;
+                let prim_ty = self.find_sig_ty(&ty, ctx.generics, expr.span)?.prim_ty();
                 let sym = self.idents.tmp();
 
                 let comb = self.net_list.only_one_node_out_id(comb);
@@ -1142,5 +1198,41 @@ impl<'tcx> Generator<'tcx> {
                 Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
             }
         }
+    }
+
+    pub fn link_dummy_inputs(
+        &mut self,
+        inputs: &[ItemId],
+        closure: ItemId,
+        span: Span,
+    ) -> Result<(), Error> {
+        let inputs_len = self.group_list.len(inputs);
+        let dummy_inputs_len = self
+            .net_list
+            .dummy_inputs_len(closure)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
+
+        assert_eq!(inputs_len, dummy_inputs_len);
+
+        self.group_list
+            .deep_iter::<Error, _>(inputs, &mut |ind, node_id| {
+                let dummy_input =
+                    self.net_list.dummy_input(closure, ind).ok_or_else(|| {
+                        SpanError::new(SpanErrorKind::ExpectedClosure, span)
+                    })?;
+
+                let node_out = self.net_list[node_id].outputs().only_one();
+                let dummy_out = self.net_list[dummy_input].outputs().only_one();
+
+                let pass = PassNode::new(
+                    node_out.out.ty,
+                    node_out.node_out_id(node_id),
+                    dummy_out.out.sym,
+                );
+
+                self.net_list.replace(dummy_input, pass);
+
+                Ok(())
+            })
     }
 }

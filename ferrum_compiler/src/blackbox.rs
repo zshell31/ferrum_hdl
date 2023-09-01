@@ -169,14 +169,19 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
 
         let ty = generator.node_type(rec.hir_id);
 
-        let signal_val_ty = generator
-            .generic_type(&ty, 1)
-            .and_then(|ty| generator.find_prim_ty(&ty, ctx.generics, rec.span).ok());
+        let signal_val_ty = generator.generic_type(&ty, 1).and_then(|ty| {
+            generator
+                .find_sig_ty(&ty, ctx.generics, rec.span)
+                .ok()
+                .map(|sig_ty| sig_ty.prim_ty())
+        });
 
         let gen = generator
             .generic_type(&ty, 1)
             .ok_or_else(|| Self::make_err(rec.span))?;
-        let prim_ty = generator.find_prim_ty(&gen, ctx.generics, rec.span)?;
+        let prim_ty = generator
+            .find_sig_ty(&gen, ctx.generics, rec.span)?
+            .prim_ty();
 
         let clk = generator.evaluate_expr(&args[0], ctx)?.node_id();
         let rst_value = generator.evaluate_expr(&args[1], ctx)?.node_id();
@@ -201,9 +206,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
             ),
         );
 
-        let dff_out = generator.net_list.only_one_node_out_id(dff);
-
-        generator.net_list.link_dummy_input(comb, &[dff_out], true);
+        generator.link_dummy_inputs(&[dff.into()], comb.into(), rec.span)?;
 
         Ok(dff.into())
     }
@@ -219,14 +222,14 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        let span = rec.span;
 
-        let rec = generator.evaluate_expr(rec, ctx)?.node_id();
-        let comb = generator.evaluate_expr(&args[0], ctx)?.node_id();
+        let rec = generator.evaluate_expr(rec, ctx)?;
+        let comb = generator.evaluate_expr(&args[0], ctx)?;
 
-        let rec = generator.net_list.only_one_node_out_id(rec);
-        generator.net_list.link_dummy_input(comb, &[rec], false);
+        generator.link_dummy_inputs(&[rec], comb, span)?;
 
-        Ok(comb.into())
+        Ok(comb)
     }
 }
 
@@ -239,19 +242,15 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
         expr: &Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, args) = utils::expected_call(expr)?;
+        let (rec, args) = utils::expected_call(expr)?;
 
-        let arg1 = generator.evaluate_expr(&args[0], ctx)?.node_id();
-        let arg2 = generator.evaluate_expr(&args[1], ctx)?.node_id();
-        let comb = generator.evaluate_expr(&args[2], ctx)?.node_id();
+        let arg1 = generator.evaluate_expr(&args[0], ctx)?;
+        let arg2 = generator.evaluate_expr(&args[1], ctx)?;
+        let comb = generator.evaluate_expr(&args[2], ctx)?;
 
-        let arg1 = generator.net_list.only_one_node_out_id(arg1);
-        let arg2 = generator.net_list.only_one_node_out_id(arg2);
-        generator
-            .net_list
-            .link_dummy_input(comb, &[arg1, arg2], false);
+        generator.link_dummy_inputs(&[arg1, arg2], comb, rec.span)?;
 
-        Ok(comb.into())
+        Ok(comb)
     }
 }
 
@@ -337,18 +336,21 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
     ) -> Result<ItemId, Error> {
         match expr.kind {
             ExprKind::Call(rec, args) => {
-                let from = generator.find_prim_ty(
-                    &generator.node_type(args[0].hir_id),
-                    ctx.generics,
-                    args[0].span,
-                )?;
+                let from = generator
+                    .find_sig_ty(
+                        &generator.node_type(args[0].hir_id),
+                        ctx.generics,
+                        args[0].span,
+                    )?
+                    .prim_ty();
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator
-                        .find_prim_ty(
+                        .find_sig_ty(
                             &generator.node_type(ty.hir_id),
                             ctx.generics,
                             rec.span,
-                        )?,
+                        )?
+                        .prim_ty(),
                     _ => {
                         return Err(Self::make_err(rec.span));
                     }
@@ -357,16 +359,16 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
                 Self::convert(from, target, generator, &args[0], ctx)
             }
             ExprKind::MethodCall(_, rec, _, span) => {
-                let from = generator.find_prim_ty(
-                    &generator.node_type(rec.hir_id),
-                    ctx.generics,
-                    rec.span,
-                )?;
-                let target = generator.find_prim_ty(
-                    &generator.node_type(expr.hir_id),
-                    ctx.generics,
-                    span,
-                )?;
+                let from = generator
+                    .find_sig_ty(
+                        &generator.node_type(rec.hir_id),
+                        ctx.generics,
+                        rec.span,
+                    )?
+                    .prim_ty();
+                let target = generator
+                    .find_sig_ty(&generator.node_type(expr.hir_id), ctx.generics, span)?
+                    .prim_ty();
 
                 Self::convert(from, target, generator, rec, ctx)
             }

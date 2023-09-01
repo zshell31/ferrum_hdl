@@ -1,17 +1,14 @@
 use std::{
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     ops::{BitAnd, BitOr, Not},
 };
-
-use ferrum_macros::blackbox;
 
 use crate::{
     prim_ty::{IsPrimTy, PrimTy},
     signal::SignalValue,
 };
 
-#[blackbox(Bit)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bit(bool);
 
 pub fn bit_value(value: bool) -> u128 {
@@ -23,7 +20,16 @@ pub fn bit_value(value: bool) -> u128 {
 
 impl Display for Bit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+        write!(f, "{}", match self.0 {
+            true => "H",
+            false => "L",
+        })
+    }
+}
+
+impl Debug for Bit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
 
@@ -34,13 +40,13 @@ impl IsPrimTy for Bit {
 }
 
 impl Bit {
-    pub const H: Bit = Bit(true);
-    pub const L: Bit = Bit(false);
-
     pub(crate) fn from_u128(value: u128) -> Self {
         Self::from(value > 0)
     }
 }
+
+pub const H: Bit = Bit(true);
+pub const L: Bit = Bit(false);
 
 impl From<bool> for Bit {
     fn from(value: bool) -> Bit {

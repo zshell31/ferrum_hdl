@@ -124,15 +124,15 @@ where
     }
 }
 
-pub trait SignalIterExt: Iterator + Sized {
-    fn into_signal(self) -> IterSignal<Self> {
-        IterSignal(self)
+pub trait SignalIterExt: IntoIterator + Sized {
+    fn into_signal(self) -> IterSignal<Self::IntoIter> {
+        IterSignal(self.into_iter())
     }
 }
 
 impl<I> SignalIterExt for I
 where
-    I: Iterator,
+    I: IntoIterator,
     I::Item: SignalValue,
 {
 }

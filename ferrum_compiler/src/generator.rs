@@ -18,11 +18,13 @@ use rustc_const_eval::interpret::{ConstValue, Scalar};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
-    def::Res, def_id::DefId, AnonConst, BinOpKind, BodyId, ConstArg, Expr, ExprKind,
-    FnDecl, FnSig, GenericArg as HirGenArg, Generics as HirGenerics, HirId, Item,
-    ItemId as HirItemId, ItemKind, Param, Pat, PatKind, Path, QPath, StmtKind,
+    def::Res,
+    def_id::{DefId, LocalDefId},
+    BinOpKind, BodyId, Expr, ExprKind, FnDecl, FnSig, Generics as HirGenerics, HirId,
+    Item, ItemId as HirItemId, ItemKind, Param, Pat, PatKind, Path, QPath, StmtKind,
     Ty as HirTy, TyKind as HirTyKind, UnOp, WherePredicate,
 };
+use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::ty::{
     EarlyBinder, GenericArg, List, ScalarInt, Ty, TyCtxt, UnevaluatedConst,
@@ -173,44 +175,6 @@ impl Generic {
         Self::eval_const_val(value)
     }
 
-    fn from_hir_gen_arg<'tcx>(
-        arg: &HirGenArg<'tcx>,
-        generator: &mut Generator<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> Result<Self, Error> {
-        match arg {
-            HirGenArg::Type(ty) => {
-                let sig_ty = generator.find_sig_ty_for_hir(ty, generics)?;
-
-                Ok(Generic::Ty(sig_ty))
-            }
-            HirGenArg::Const(ConstArg {
-                value: AnonConst { def_id, .. },
-                ..
-            }) => {
-                let tcx = generator.tcx;
-                let cons_val = match generics.as_ref() {
-                    Some(generics) => {
-                        let unevaluated =
-                            UnevaluatedConst::new(def_id.to_def_id(), generics);
-                        Self::resolve_const(unevaluated, tcx)
-                    }
-                    None => tcx
-                        .const_eval_poly(def_id.to_def_id())
-                        .ok()
-                        .and_then(|value| Self::eval_const_val(value)),
-                };
-
-                cons_val
-                    .ok_or_else(|| {
-                        SpanError::new(SpanErrorKind::NotSynthGenParam, arg.span()).into()
-                    })
-                    .map(Generic::Const)
-            }
-            _ => Err(SpanError::new(SpanErrorKind::NotSynthGenParam, arg.span()).into()),
-        }
-    }
-
     fn from_gen_arg<'tcx>(
         arg: &GenericArg<'tcx>,
         generator: &mut Generator<'tcx>,
@@ -259,7 +223,11 @@ impl Generics {
         };
 
         match ty.kind() {
-            TyKind::Adt(_, generics) if !generics.is_empty() => {
+            TyKind::Adt(adt, generics) if !generics.is_empty() => {
+                if generator.tcx.def_path(adt.did()) == ItemPath(&["signal", "Clock"]) {
+                    return Ok(None);
+                }
+
                 Ok(Some(Self(unsafe {
                     with_arena().alloc_from_res_iter(generics.iter().map(|generic| {
                         Generic::from_gen_arg(&generic, generator, span)
@@ -296,42 +264,6 @@ pub trait AsKey<'tcx> {
     ) -> Result<Key<'tcx>, Error>;
 }
 
-impl<'tcx> AsKey<'tcx> for Path<'tcx> {
-    fn as_key(
-        &self,
-        generator: &mut Generator<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
-        _: Span,
-    ) -> Result<Key<'tcx>, Error> {
-        let def_id = self.res.def_id();
-        let is_clock = generator.tcx.def_path(def_id) == ItemPath(&["signal", "Clock"]);
-
-        let generics = if is_clock {
-            None
-        } else {
-            self.segments
-                .last()
-                .map(|segment| segment.args())
-                .map(|generics| generics.args)
-                .filter(|args| !args.is_empty())
-                .map(|args| {
-                    (unsafe {
-                        with_arena().alloc_from_res_iter(args.iter().map(|arg| {
-                            Generic::from_hir_gen_arg(arg, generator, generics)
-                        }))
-                    })
-                    .map(|generics| Generics(generics))
-                })
-                .transpose()?
-        };
-
-        Ok(Key {
-            ty_or_def_id: def_id.into(),
-            generics,
-        })
-    }
-}
-
 impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
     fn as_key(
         &self,
@@ -339,10 +271,17 @@ impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
         generics: Option<&List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<Key<'tcx>, Error> {
-        let generics = Generics::from_ty(self, generator, generics, span)?;
+        let ty = match generics {
+            Some(generics) => {
+                EarlyBinder::bind(*self).instantiate(generator.tcx, generics)
+            }
+            None => *self,
+        };
+
+        let generics = Generics::from_ty(&ty, generator, generics, span)?;
 
         Ok(Key {
-            ty_or_def_id: (*self).into(),
+            ty_or_def_id: ty.into(),
             generics,
         })
     }
@@ -585,8 +524,9 @@ impl<'tcx> Generator<'tcx> {
         is_top_module: bool,
     ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, hir_generics, body_id) = item.kind {
+            let fn_id = item.hir_id().owner.def_id;
             // ignore unsupported generics if current item is not top module
-            self.evaluate_generics(hir_generics, !is_top_module)?;
+            self.evaluate_generics(fn_id, hir_generics, generics, !is_top_module)?;
 
             return self
                 .evaluate_fn(item.ident, decl, body_id, generics)
@@ -598,19 +538,21 @@ impl<'tcx> Generator<'tcx> {
 
     fn evaluate_generics(
         &mut self,
-        generics: &HirGenerics<'tcx>,
+        fn_id: LocalDefId,
+        hir_generics: &HirGenerics<'tcx>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         ignore: bool,
     ) -> Result<(), Error> {
         let make_err =
             |span| Error::from(SpanError::new(SpanErrorKind::UnsupportedGeneric, span));
 
-        let mut params: FxHashMap<DefId, Span> = generics
+        let mut params: FxHashMap<DefId, Span> = hir_generics
             .params
             .iter()
             .map(|param| (param.def_id.to_def_id(), param.span))
             .collect();
 
-        for predicate in generics.predicates {
+        for predicate in hir_generics.predicates {
             match predicate {
                 WherePredicate::BoundPredicate(predicate) => {
                     let def_id = match predicate.bounded_ty.as_generic_param() {
@@ -652,7 +594,8 @@ impl<'tcx> Generator<'tcx> {
                                 .ok_or_else(|| make_err(span))?;
 
                             let ty = arg.bindings[0].ty();
-                            let sig_ty = self.find_sig_ty_for_hir(ty, None)?;
+                            let sig_ty =
+                                self.find_sig_ty_for_hir_ty(fn_id, ty, generics, span)?;
                             let key = def_id.as_key(self, None, span)?;
                             self.sig_ty.insert(key, Some(sig_ty));
 
@@ -682,22 +625,16 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
-    fn find_sig_ty_for_hir(
+    fn find_sig_ty_for_hir_ty(
         &mut self,
+        fn_id: LocalDefId,
         ty: &HirTy<'tcx>,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        span: Span,
     ) -> Result<SignalTy, Error> {
-        match ty.kind {
-            HirTyKind::Path(QPath::Resolved(_, path)) => {
-                self.find_sig_ty(path, generics, ty.span)
-            }
-            HirTyKind::Tup(ty) => Ok(SignalTy::group(
-                ty.iter()
-                    .map(|ty| self.find_sig_ty_for_hir(ty, generics))
-                    .collect::<Result<Vec<_>, _>>()?,
-            )),
-            _ => Err(SpanError::new(SpanErrorKind::NotSynthTy, ty.span).into()), // HirTyKind::Tup()
-        }
+        let item_ctx = &ItemCtxt::new(self.tcx, fn_id) as &dyn AstConv<'tcx>;
+        let ty = item_ctx.ast_ty_to_ty(ty);
+        self.find_sig_ty(&ty, generics, span)
     }
 
     fn evaluate_fn(
@@ -825,8 +762,10 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }
-            HirTyKind::Path(QPath::Resolved(_, path)) => {
-                let sig_ty = self.find_sig_ty(path, ctx.generics, path.span)?;
+            HirTyKind::Path(_) => {
+                let fn_id = input.hir_id.owner.def_id;
+                let sig_ty =
+                    self.find_sig_ty_for_hir_ty(fn_id, input, ctx.generics, input.span)?;
 
                 Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }

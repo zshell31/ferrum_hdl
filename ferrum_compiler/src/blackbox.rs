@@ -130,7 +130,6 @@ pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
     if def_path == &ItemPath(&["array", "Array"]) {
         #[allow(unused_imports)]
         use ferrum::array::Array;
-        println!("{:?}", key.generics);
 
         let n = key
             .generics

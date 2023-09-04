@@ -13,7 +13,6 @@ pub mod blackbox;
 pub mod const_asserts;
 pub mod const_functions;
 pub mod domain;
-pub mod prim_ty;
 pub mod signal;
 pub mod traits;
 pub mod unsigned;

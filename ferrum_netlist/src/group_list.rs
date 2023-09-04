@@ -1,9 +1,6 @@
-use std::{
-    ops::{Index, IndexMut},
-    rc::Rc,
-};
+use std::ops::{Index, IndexMut};
 
-use crate::net_list::NodeId;
+use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupId(usize);
@@ -42,40 +39,57 @@ impl From<GroupId> for ItemId {
     }
 }
 
-#[derive(Debug)]
-pub struct Group {
-    // TODO: use arena to store vec of ids
-    groups: Rc<Vec<ItemId>>,
+#[derive(Debug, Clone, Copy)]
+pub enum GroupKind {
+    Prim,
+    Group,
+    Array,
 }
 
-impl Group {
-    pub fn new(groups: impl IntoIterator<Item = ItemId>) -> Self {
-        Self {
-            groups: Rc::new(groups.into_iter().collect()),
+impl From<SignalTy> for GroupKind {
+    fn from(sig_ty: SignalTy) -> Self {
+        match sig_ty {
+            SignalTy::Prim(_) => Self::Prim,
+            SignalTy::Group(_) => Self::Group,
+            SignalTy::Array(..) => Self::Array,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Group {
+    pub kind: GroupKind,
+    pub item_ids: &'static [ItemId],
+}
+
+impl !Sync for Group {}
+impl !Send for Group {}
+
+impl Group {
+    pub fn new(kind: GroupKind, iter: impl IntoIterator<Item = ItemId>) -> Self {
+        Self {
+            kind,
+            item_ids: unsafe { with_arena().alloc_from_iter(iter) },
+        }
+    }
+
+    pub fn new_with_item_ids(kind: GroupKind, item_ids: &'static [ItemId]) -> Self {
+        Self { kind, item_ids }
     }
 
     pub fn by_field(&self, field: &str) -> Option<ItemId> {
         match field.parse::<usize>() {
-            Ok(ind) => self.groups.get(ind).copied(),
+            Ok(ind) => self.item_ids.get(ind).copied(),
             Err(_) => None,
         }
     }
 
     pub fn len(&self) -> usize {
-        self.groups.len()
+        self.item_ids.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.groups.is_empty()
-    }
-
-    pub fn item_ids(&self) -> Rc<Vec<ItemId>> {
-        self.groups.clone()
-    }
-
-    fn item_id_iter(&self) -> impl Iterator<Item = ItemId> + '_ {
-        self.groups.iter().copied()
+        self.item_ids.is_empty()
     }
 }
 
@@ -83,6 +97,9 @@ impl Group {
 pub struct GroupList {
     groups: Vec<Group>,
 }
+
+impl !Sync for GroupList {}
+impl !Send for GroupList {}
 
 impl Index<GroupId> for GroupList {
     type Output = Group;
@@ -130,8 +147,9 @@ impl GroupList {
             ItemId::Group(group_id) => {
                 let group = &self[group_id];
                 group
-                    .item_id_iter()
-                    .map(|item_id| self.len_inner(item_id))
+                    .item_ids
+                    .iter()
+                    .map(|&item_id| self.len_inner(item_id))
                     .sum()
             }
         }
@@ -166,7 +184,7 @@ impl GroupList {
             ItemId::Group(group_id) => {
                 let group = &self[group_id];
 
-                for item_id in group.groups.iter().copied() {
+                for item_id in group.item_ids.iter().copied() {
                     self.deep_iter_inner(item_id, ind, &mut *f)?;
                 }
             }
@@ -175,33 +193,33 @@ impl GroupList {
         Ok(())
     }
 
-    pub fn combine<F: FnMut(NodeId, NodeId) -> NodeId>(
-        &mut self,
-        item_id1: ItemId,
-        item_id2: ItemId,
-        f: &mut F,
-    ) -> Option<ItemId> {
-        match (item_id1, item_id2) {
-            (ItemId::Node(node_id1), ItemId::Node(node_id2)) => {
-                Some(f(node_id1, node_id2).into())
-            }
-            (ItemId::Group(group_id1), ItemId::Group(group_id2)) => {
-                let item_ids1 = self[group_id1].item_ids();
-                let item_ids2 = self[group_id2].item_ids();
+    // pub fn combine<F: FnMut(NodeId, NodeId) -> NodeId>(
+    //     &mut self,
+    //     item_id1: ItemId,
+    //     item_id2: ItemId,
+    //     f: &mut F,
+    // ) -> Option<ItemId> {
+    //     match (item_id1, item_id2) {
+    //         (ItemId::Node(node_id1), ItemId::Node(node_id2)) => {
+    //             Some(f(node_id1, node_id2).into())
+    //         }
+    //         (ItemId::Group(group_id1), ItemId::Group(group_id2)) => {
+    //             let item_ids1 = self[group_id1].item_ids;
+    //             let item_ids2 = self[group_id2].item_ids;
 
-                if item_ids1.len() != item_ids2.len() {
-                    return None;
-                }
+    //             if item_ids1.len() != item_ids2.len() {
+    //                 return None;
+    //             }
 
-                let group = item_ids1
-                    .iter()
-                    .zip(item_ids2.iter())
-                    .map(|(item_id1, item_id2)| self.combine(*item_id1, *item_id2, f))
-                    .collect::<Option<Vec<ItemId>>>()?;
+    //             let group = item_ids1
+    //                 .iter()
+    //                 .zip(item_ids2.iter())
+    //                 .map(|(item_id1, item_id2)| self.combine(*item_id1, *item_id2, f))
+    //                 .collect::<Option<Vec<ItemId>>>()?;
 
-                Some(self.add_group(Group::new(group)).into())
-            }
-            _ => None,
-        }
-    }
+    //             Some(self.add_group(Group::new(group)).into())
+    //         }
+    //         _ => None,
+    //     }
+    // }
 }

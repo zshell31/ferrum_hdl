@@ -1,9 +1,7 @@
 use std::fmt::Debug;
 
-use ferrum::prim_ty::PrimTy;
-
 use super::{IsNode, Node, NodeOutput};
-use crate::{net_kind::NetKind, symbol::Symbol};
+use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct InputNode {

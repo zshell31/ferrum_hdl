@@ -1,14 +1,12 @@
-use std::rc::Rc;
-
 use ferrum::{
     bit::{bit_value, Bit},
-    prim_ty::{PrimTy, SignalTy},
     unsigned::{unsigned_value, Unsigned},
 };
 use ferrum_netlist::{
     group_list::ItemId,
     node::{DFFNode, IsNode, Node, Splitter},
     params::Outputs,
+    sig_ty::{PrimTy, SignalTy},
 };
 use rustc_ast::LitKind;
 use rustc_hir::{
@@ -138,8 +136,7 @@ pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
             .generics
             .as_ref()
             .and_then(|generics| generics.get(0))
-            .and_then(|generic| generic.as_const())
-            .and_then(|val| val.try_into().ok())?;
+            .and_then(|generic| generic.as_const())?;
 
         let ty = key
             .generics
@@ -147,7 +144,7 @@ pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
             .and_then(|generics| generics.get(1))
             .and_then(|generic| generic.as_ty())?;
 
-        return Some(SignalTy::Array(n, Rc::new(ty.clone())));
+        return Some(SignalTy::array(n, *ty));
     }
 
     None
@@ -438,7 +435,7 @@ pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
                 .map_err(|_| SpanError::new(SpanErrorKind::NotSynthExpr, lit.span))?,
         ),
         PrimTy::Unsigned(n) => evaluate_unsigned_lit(lit, n),
-        PrimTy::Clock => Err(SpanError::new(
+        PrimTy::Clock | PrimTy::ClockDomain => Err(SpanError::new(
             SpanErrorKind::PrimTyWithoutValue(PrimTy::Clock),
             lit.span,
         )

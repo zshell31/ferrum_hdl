@@ -185,7 +185,7 @@ impl<'n> Visitor for Verilog<'n> {
                 assert_eq!(inputs.len(), module.inputs_len());
                 assert_eq!(outputs.len(), module.outputs_len());
 
-                for output in outputs {
+                for output in outputs.iter() {
                     self.write_local(output, None);
                 }
 

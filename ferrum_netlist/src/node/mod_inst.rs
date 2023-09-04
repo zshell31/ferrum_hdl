@@ -1,18 +1,18 @@
-use ferrum::prim_ty::PrimTy;
-
 use super::{IsNode, Node, NodeOutput};
 use crate::{
+    arena::with_arena,
     net_kind::NetKind,
     net_list::{ModuleId, NodeOutId},
+    sig_ty::PrimTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ModInst {
     pub name: Symbol,
     pub module_id: ModuleId,
-    pub inputs: Vec<NodeOutId>,
-    pub outputs: Vec<NodeOutput>,
+    pub inputs: &'static [NodeOutId],
+    pub outputs: &'static mut [NodeOutput],
 }
 
 impl ModInst {
@@ -25,15 +25,16 @@ impl ModInst {
         Self {
             name,
             module_id,
-            inputs: inputs.into_iter().collect(),
-            outputs: outputs
-                .into_iter()
-                .map(|(ty, sym)| NodeOutput {
-                    ty,
-                    sym,
-                    kind: NetKind::Wire,
-                })
-                .collect(),
+            inputs: unsafe { with_arena().alloc_from_iter(inputs) },
+            outputs: unsafe {
+                with_arena().alloc_from_iter(outputs.into_iter().map(|(ty, sym)| {
+                    NodeOutput {
+                        ty,
+                        sym,
+                        kind: NetKind::Wire,
+                    }
+                }))
+            },
         }
     }
 }
@@ -45,18 +46,18 @@ impl From<ModInst> for Node {
 }
 
 impl IsNode for ModInst {
-    type Inputs = Vec<NodeOutId>;
-    type Outputs = Vec<NodeOutput>;
+    type Inputs = [NodeOutId];
+    type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
+        self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        &self.outputs
+        self.outputs
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        &mut self.outputs
+        self.outputs
     }
 }

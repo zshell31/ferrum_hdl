@@ -1,17 +1,13 @@
 use std::{fmt::Debug, marker::PhantomData, rc::Rc};
 
 use derive_where::derive_where;
+use ferrum_netlist::sig_ty::IsPrimTy;
 
 use super::domain::ClockDomain;
-use crate::prim_ty::{IsPrimTy, PrimTy};
 
 pub trait SignalValue: Debug + Clone {}
 
 impl SignalValue for bool {}
-
-impl IsPrimTy for bool {
-    const PRIM_TY: PrimTy = PrimTy::Bool;
-}
 
 impl<T1: SignalValue, T2: SignalValue> SignalValue for (T1, T2) {}
 impl<T1: SignalValue, T2: SignalValue, T3: SignalValue> SignalValue for (T1, T2, T3) {}

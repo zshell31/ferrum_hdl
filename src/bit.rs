@@ -3,10 +3,9 @@ use std::{
     ops::{BitAnd, BitOr, Not},
 };
 
-use crate::{
-    prim_ty::{IsPrimTy, PrimTy},
-    signal::SignalValue,
-};
+use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
+
+use crate::signal::SignalValue;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Bit(bool);

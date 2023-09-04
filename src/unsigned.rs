@@ -3,11 +3,12 @@ use std::{
     ops::{Add, Div, Mul, Sub},
 };
 
+use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
+
 use crate::{
     bit::Bit,
     bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
-    prim_ty::{IsPrimTy, PrimTy},
     signal::SignalValue,
 };
 

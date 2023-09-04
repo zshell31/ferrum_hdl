@@ -3,7 +3,7 @@ use std::{
     io,
 };
 
-use ferrum::prim_ty::PrimTy;
+use ferrum_netlist::sig_ty::PrimTy;
 use rustc_hir::BinOpKind;
 use rustc_span::{symbol::Ident, Span};
 

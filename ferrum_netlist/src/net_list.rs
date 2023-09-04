@@ -167,6 +167,9 @@ pub struct NetList {
     dummy_inputs: FnvHashMap<ItemId, Vec<NodeId>>,
 }
 
+impl !Sync for NetList {}
+impl !Send for NetList {}
+
 impl Index<ModuleId> for NetList {
     type Output = Module;
 

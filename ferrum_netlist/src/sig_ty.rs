@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use crate::arena::with_arena;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimTy {
@@ -7,6 +7,7 @@ pub enum PrimTy {
     U128,
     Unsigned(u8),
     Clock,
+    ClockDomain,
 }
 
 impl PrimTy {
@@ -21,6 +22,7 @@ impl PrimTy {
             Self::U128 => 128,
             Self::Unsigned(n) => *n as u128,
             Self::Clock => 1,
+            Self::ClockDomain => 1,
         }
     }
 }
@@ -29,12 +31,19 @@ pub trait IsPrimTy {
     const PRIM_TY: PrimTy;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+impl IsPrimTy for bool {
+    const PRIM_TY: PrimTy = PrimTy::Bool;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignalTy {
     Prim(PrimTy),
-    Array(u8, Rc<SignalTy>),
-    Group(Rc<Vec<SignalTy>>),
+    Array(u128, &'static SignalTy),
+    Group(&'static [SignalTy]),
 }
+
+impl !Sync for SignalTy {}
+impl !Send for SignalTy {}
 
 impl From<PrimTy> for SignalTy {
     fn from(prim_ty: PrimTy) -> Self {
@@ -43,8 +52,12 @@ impl From<PrimTy> for SignalTy {
 }
 
 impl SignalTy {
-    pub fn group(group: impl IntoIterator<Item = SignalTy>) -> Self {
-        Self::Group(Rc::new(group.into_iter().collect()))
+    pub fn group(iter: impl IntoIterator<Item = SignalTy>) -> Self {
+        Self::Group(unsafe { with_arena().alloc_from_iter(iter) })
+    }
+
+    pub fn array(n: u128, sig_ty: SignalTy) -> Self {
+        Self::Array(n, unsafe { with_arena().alloc(sig_ty) })
     }
 
     pub fn prim_ty(&self) -> PrimTy {

@@ -1,9 +1,9 @@
-use std::{env, fs, iter, path::Path as StdPath};
+use std::{env, fmt::Debug, fs, iter, path::Path as StdPath};
 
-use ferrum::prim_ty::{PrimTy, SignalTy};
 use ferrum_netlist::{
+    arena::with_arena,
     backend::Verilog,
-    group_list::{Group, GroupList, ItemId},
+    group_list::{Group, GroupKind, GroupList, ItemId},
     inject_pass::InjectPass,
     net_list::{ModuleId, NetList, NodeId},
     node::{
@@ -11,6 +11,7 @@ use ferrum_netlist::{
         Node, NotNode, PassNode,
     },
     params::Outputs,
+    sig_ty::{PrimTy, SignalTy},
 };
 use rustc_ast::{BorrowKind, Mutability};
 use rustc_const_eval::interpret::{ConstValue, Scalar};
@@ -122,7 +123,7 @@ impl<'tcx> TyOrDefId<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generic {
     Ty(SignalTy),
     Const(u128),
@@ -237,7 +238,7 @@ impl Generic {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Generics(pub Vec<Generic>);
+pub struct Generics(&'static [Generic]);
 
 impl Generics {
     pub fn get(&self, ind: usize) -> Option<&Generic> {
@@ -258,12 +259,13 @@ impl Generics {
         };
 
         match ty.kind() {
-            TyKind::Adt(_, generics) if !generics.is_empty() => Ok(Some(Self(
-                generics
-                    .iter()
-                    .map(|generic| Generic::from_gen_arg(&generic, generator, span))
-                    .collect::<Result<Vec<_>, _>>()?,
-            ))),
+            TyKind::Adt(_, generics) if !generics.is_empty() => {
+                Ok(Some(Self(unsafe {
+                    with_arena().alloc_from_res_iter(generics.iter().map(|generic| {
+                        Generic::from_gen_arg(&generic, generator, span)
+                    }))?
+                })))
+            }
             _ => Ok(None),
         }
     }
@@ -302,20 +304,26 @@ impl<'tcx> AsKey<'tcx> for Path<'tcx> {
         _: Span,
     ) -> Result<Key<'tcx>, Error> {
         let def_id = self.res.def_id();
+        let is_clock = generator.tcx.def_path(def_id) == ItemPath(&["signal", "Clock"]);
 
-        let generics = self
-            .segments
-            .last()
-            .map(|segment| segment.args())
-            .map(|generics| generics.args)
-            .filter(|args| !args.is_empty())
-            .map(|args| {
-                args.iter()
-                    .map(|arg| Generic::from_hir_gen_arg(arg, generator, generics))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(Generics)
-            })
-            .transpose()?;
+        let generics = if is_clock {
+            None
+        } else {
+            self.segments
+                .last()
+                .map(|segment| segment.args())
+                .map(|generics| generics.args)
+                .filter(|args| !args.is_empty())
+                .map(|args| {
+                    (unsafe {
+                        with_arena().alloc_from_res_iter(args.iter().map(|arg| {
+                            Generic::from_hir_gen_arg(arg, generator, generics)
+                        }))
+                    })
+                    .map(|generics| Generics(generics))
+                })
+                .transpose()?
+        };
 
         Ok(Key {
             ty_or_def_id: def_id.into(),
@@ -343,23 +351,21 @@ impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
 impl<'tcx> AsKey<'tcx> for DefId {
     fn as_key(
         &self,
-        generator: &mut Generator<'tcx>,
-        generics: Option<&List<GenericArg<'tcx>>>,
-        span: Span,
+        _: &mut Generator<'tcx>,
+        _: Option<&List<GenericArg<'tcx>>>,
+        _: Span,
     ) -> Result<Key<'tcx>, Error> {
-        let tcx = generator.tcx;
-        let ty = tcx.type_of(*self);
+        // let tcx = generator.tcx;
+        // let ty = tcx.type_of(*self).instantiate_identity();
 
-        let ty = match generics {
-            Some(generics) => ty.instantiate(tcx, generics),
-            None => ty.instantiate_identity(),
-        };
-
-        let generics = Generics::from_ty(&ty, generator, None, span)?;
+        // let ty = match generics {
+        //     Some(generics) => ty.instantiate(tcx, generics),
+        //     None => ty.instantiate_identity(),
+        // };
 
         Ok(Key {
             ty_or_def_id: (*self).into(),
-            generics,
+            generics: None,
         })
     }
 }
@@ -388,6 +394,9 @@ pub struct Generator<'tcx> {
     pub group_list: GroupList,
     pub idents: Idents,
 }
+
+impl<'tcx> !Sync for Generator<'tcx> {}
+impl<'tcx> !Send for Generator<'tcx> {}
 
 impl<'tcx> Generator<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId) -> Self {
@@ -505,7 +514,7 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn find_sig_ty<K: AsKey<'tcx>>(
+    pub fn find_sig_ty<K: AsKey<'tcx> + Debug>(
         &mut self,
         key: &K,
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
@@ -604,24 +613,35 @@ impl<'tcx> Generator<'tcx> {
         for predicate in generics.predicates {
             match predicate {
                 WherePredicate::BoundPredicate(predicate) => {
-                    let (def_id, _) = predicate
-                        .bounded_ty
-                        .as_generic_param()
-                        .ok_or_else(|| make_err(predicate.span))?;
+                    let def_id = match predicate.bounded_ty.as_generic_param() {
+                        Some((def_id, _)) => def_id,
+                        None => {
+                            continue;
+                        }
+                    };
 
-                    let (_, span) = params
-                        .remove_entry(&def_id)
-                        .ok_or_else(|| make_err(predicate.span))?;
+                    let span = match params.remove_entry(&def_id) {
+                        Some((_, span)) => span,
+                        None => {
+                            continue;
+                        }
+                    };
 
                     let mut found_signal = false;
                     for bound in predicate.bounds {
-                        let trait_ref =
-                            bound.trait_ref().ok_or_else(|| make_err(span))?;
-                        let trait_def_id = trait_ref
-                            .path
-                            .res
-                            .opt_def_id()
-                            .ok_or_else(|| make_err(span))?;
+                        let trait_ref = match bound.trait_ref() {
+                            Some(trait_ref) => trait_ref,
+                            None => {
+                                continue;
+                            }
+                        };
+
+                        let trait_def_id = match trait_ref.path.res.opt_def_id() {
+                            Some(def_id) => def_id,
+                            None => {
+                                continue;
+                            }
+                        };
 
                         // TODO: move into blackbox
                         if self.tcx.def_path(trait_def_id)
@@ -735,7 +755,7 @@ impl<'tcx> Generator<'tcx> {
                         self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
                     }
                     ItemId::Group(group_id) => {
-                        let item_ids = self.group_list[group_id].item_ids();
+                        let item_ids = self.group_list[group_id].item_ids;
                         for item_id in item_ids.iter() {
                             self.pattern_match(pat, *item_id)?;
                         }
@@ -752,7 +772,7 @@ impl<'tcx> Generator<'tcx> {
                         let len = group.len();
                         assert!(pats.len() < len);
 
-                        let item_ids = group.item_ids();
+                        let item_ids = group.item_ids;
                         for (pat, item_id) in
                             pats[0 .. pos].iter().zip(item_ids[0 .. pos].iter())
                         {
@@ -770,7 +790,7 @@ impl<'tcx> Generator<'tcx> {
                         let group = &self.group_list[group_id];
                         assert_eq!(pats.len(), group.len());
 
-                        let item_ids = group.item_ids();
+                        let item_ids = group.item_ids;
                         for (pat, item_id) in pats.iter().zip(item_ids.iter()) {
                             self.pattern_match(pat, *item_id)?;
                         }
@@ -816,7 +836,10 @@ impl<'tcx> Generator<'tcx> {
                     .map(|ty| self.make_input(ty, ctx, is_dummy))
                     .collect::<Result<Vec<_>, _>>()?;
 
-                Ok(self.group_list.add_group(Group::new(group)).into())
+                Ok(self
+                    .group_list
+                    .add_group(Group::new(GroupKind::Group, group))
+                    .into())
             }
             _ => {
                 println!("input: {:#?}", input);
@@ -841,22 +864,23 @@ impl<'tcx> Generator<'tcx> {
                 })
                 .into()
             }
-            SignalTy::Array(n, sig_ty) => {
-                let group =
-                    Group::new(iter::repeat(sig_ty).take(n as usize).map(|sig_ty| {
-                        self.make_input_with_sig_ty(
-                            (*sig_ty).clone(),
-                            module_id,
-                            is_dummy,
-                        )
-                    }));
+            SignalTy::Array(n, ty) => {
+                let group = Group::new(
+                    sig_ty.into(),
+                    iter::repeat(ty).take(n as usize).map(|sig_ty| {
+                        self.make_input_with_sig_ty(*sig_ty, module_id, is_dummy)
+                    }),
+                );
 
                 self.group_list.add_group(group).into()
             }
-            SignalTy::Group(sig_ty) => {
-                let group = Group::new(sig_ty.iter().map(|sig_ty| {
-                    self.make_input_with_sig_ty(sig_ty.clone(), module_id, is_dummy)
-                }));
+            SignalTy::Group(ty) => {
+                let group = Group::new(
+                    sig_ty.into(),
+                    ty.iter().map(|sig_ty| {
+                        self.make_input_with_sig_ty(*sig_ty, module_id, is_dummy)
+                    }),
+                );
                 self.group_list.add_group(group).into()
             }
         }
@@ -989,7 +1013,10 @@ impl<'tcx> Generator<'tcx> {
                                             .collect::<Vec<_>>();
 
                                         self.group_list
-                                            .add_group(Group::new(group))
+                                            .add_group(Group::new(
+                                                GroupKind::Group,
+                                                group,
+                                            ))
                                             .into()
                                     } else {
                                         item_id
@@ -1228,12 +1255,16 @@ impl<'tcx> Generator<'tcx> {
                 self.item_id_for_ident(segments[0].ident)
             }
             ExprKind::Tup(exprs) => {
-                let groups = exprs
-                    .iter()
-                    .map(|expr| self.evaluate_expr(expr, ctx))
-                    .collect::<Result<Vec<_>, _>>()?;
+                let groups = unsafe {
+                    with_arena().alloc_from_res_iter(
+                        exprs.iter().map(|expr| self.evaluate_expr(expr, ctx)),
+                    )?
+                };
 
-                Ok(self.group_list.add_group(Group::new(groups)).into())
+                Ok(self
+                    .group_list
+                    .add_group(Group::new_with_item_ids(GroupKind::Group, groups))
+                    .into())
             }
             ExprKind::Unary(UnOp::Not, inner) => {
                 println!("unary");

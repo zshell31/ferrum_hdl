@@ -12,7 +12,6 @@ mod splitter;
 use std::mem;
 
 use auto_enums::auto_enum;
-use ferrum::prim_ty::PrimTy;
 
 pub use self::{
     bin_op::{BinOp, BinOpNode},
@@ -30,10 +29,11 @@ use crate::{
     net_kind::NetKind,
     net_list::{NodeOutId, OutId},
     params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
+    sig_ty::PrimTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct NodeOutput {
     pub ty: PrimTy,
     pub sym: Symbol,
@@ -41,8 +41,8 @@ pub struct NodeOutput {
 }
 
 pub trait IsNode: Into<Node> {
-    type Inputs: Inputs;
-    type Outputs: Outputs;
+    type Inputs: Inputs + ?Sized;
+    type Outputs: Outputs + ?Sized;
 
     fn inputs(&self) -> &Self::Inputs;
 
@@ -162,6 +162,9 @@ macro_rules! define_nodes {
 
     };
 }
+
+impl !Sync for Node {}
+impl !Send for Node {}
 
 define_nodes!(
     DummyInput => InputNode,

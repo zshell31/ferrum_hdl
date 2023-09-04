@@ -50,7 +50,7 @@ impl Inputs for (NodeOutId, NodeOutId, NodeOutId) {
     }
 }
 
-impl Inputs for Vec<NodeOutId> {
+impl Inputs for [NodeOutId] {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         self.iter().copied()
     }
@@ -157,7 +157,7 @@ impl Outputs for NodeOutput {
     }
 }
 
-impl Outputs for Vec<NodeOutput> {
+impl Outputs for [NodeOutput] {
     fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
         self.iter().enumerate().map(move |(id, out)| NodeOutWithId {
             out,

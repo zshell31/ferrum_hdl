@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+#![feature(negative_impls)]
 
 mod blackbox;
 mod error;

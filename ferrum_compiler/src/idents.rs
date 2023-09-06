@@ -1,4 +1,4 @@
-use ferrum_netlist::{group_list::ItemId, symbol::Symbol};
+use ferrum_netlist::{group_list::ItemId, net_list::ModuleId, symbol::Symbol};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_span::symbol::Ident;
 
@@ -6,16 +6,12 @@ use rustc_span::symbol::Ident;
 pub struct LocalScope(FxHashMap<Ident, ItemId>);
 
 #[derive(Debug, Default)]
-pub struct Idents {
+pub struct ModuleIdents {
     scopes: Vec<LocalScope>,
     idents: FxHashMap<String, usize>,
 }
 
-impl Idents {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
+impl ModuleIdents {
     pub fn push_scope(&mut self) {
         self.scopes.push(LocalScope::default());
     }
@@ -24,7 +20,7 @@ impl Idents {
         self.scopes.pop();
     }
 
-    fn ident_inner(&mut self, ident: &str) -> Symbol {
+    pub fn ident_inner(&mut self, ident: &str) -> Symbol {
         // TODO: check if ident is keyword
         let ident = match ident {
             "input" => "input$",
@@ -61,10 +57,6 @@ impl Idents {
         self.ident_inner(&format!("__{}", module))
     }
 
-    pub fn module(&self, ident: Ident) -> Symbol {
-        Symbol::new(ident.as_str())
-    }
-
     pub fn add_local_ident(&mut self, ident: Ident, item_id: ItemId) {
         if let Some(scope) = self.scopes.last_mut() {
             scope.0.insert(ident, item_id);
@@ -79,5 +71,25 @@ impl Idents {
         }
 
         None
+    }
+}
+
+#[derive(Default)]
+pub struct Idents {
+    modules: FxHashMap<ModuleId, ModuleIdents>,
+}
+
+impl Idents {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn module(&self, ident: Ident) -> Symbol {
+        Symbol::new(ident.as_str())
+    }
+
+    pub fn for_module(&mut self, module_id: ModuleId) -> &mut ModuleIdents {
+        let module = self.modules.entry(module_id).or_default();
+        module
     }
 }

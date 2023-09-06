@@ -508,8 +508,13 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    pub fn item_id_for_ident(&mut self, ident: Ident) -> Result<ItemId, Error> {
+    pub fn item_id_for_ident(
+        &mut self,
+        module_id: ModuleId,
+        ident: Ident,
+    ) -> Result<ItemId, Error> {
         self.idents
+            .for_module(module_id)
             .item_id(ident)
             .ok_or_else(|| {
                 SpanError::new(SpanErrorKind::MissingNodeForIdent(ident), ident.span)
@@ -647,7 +652,7 @@ impl<'tcx> Generator<'tcx> {
         let module_sym = self.idents.module(name);
         let module_id = self.net_list.add_module(module_sym);
 
-        self.idents.push_scope();
+        self.idents.for_module(module_id).push_scope();
 
         let body = self.tcx.hir().body(body_id);
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
@@ -657,7 +662,7 @@ impl<'tcx> Generator<'tcx> {
         let item_id = self.evaluate_expr(body.value, ctx)?;
         self.evaluate_outputs(item_id)?;
 
-        self.idents.pop_scope();
+        self.idents.for_module(module_id).pop_scope();
 
         Ok(module_id)
     }
@@ -674,7 +679,7 @@ impl<'tcx> Generator<'tcx> {
     {
         for (input, param) in inputs {
             let item_id = self.make_input(input, ctx, is_dummy)?;
-            self.pattern_match(param.pat, item_id)?;
+            self.pattern_match(param.pat, item_id, ctx.module_id)?;
 
             f(item_id);
         }
@@ -682,24 +687,31 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
-    fn pattern_match(&mut self, pat: &Pat<'tcx>, item_id: ItemId) -> Result<(), Error> {
+    fn pattern_match(
+        &mut self,
+        pat: &Pat<'tcx>,
+        item_id: ItemId,
+        module_id: ModuleId,
+    ) -> Result<(), Error> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
                 match item_id {
                     ItemId::Node(node_id) => {
-                        let sym = self.idents.ident(ident);
+                        let sym = self.idents.for_module(module_id).ident(ident);
                         self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
                     }
                     ItemId::Group(group_id) => {
                         let item_ids = self.group_list[group_id].item_ids;
                         for item_id in item_ids.iter() {
-                            self.pattern_match(pat, *item_id)?;
+                            self.pattern_match(pat, *item_id, module_id)?;
                         }
                     }
                 }
 
-                self.idents.add_local_ident(ident, item_id);
+                self.idents
+                    .for_module(module_id)
+                    .add_local_ident(ident, item_id);
             }
             PatKind::Tuple(pats, dot_dot_pos) => {
                 let group_id = item_id.group_id();
@@ -713,14 +725,14 @@ impl<'tcx> Generator<'tcx> {
                         for (pat, item_id) in
                             pats[0 .. pos].iter().zip(item_ids[0 .. pos].iter())
                         {
-                            self.pattern_match(pat, *item_id)?;
+                            self.pattern_match(pat, *item_id, module_id)?;
                         }
 
                         for (pat, item_id) in pats[pos ..]
                             .iter()
                             .zip(item_ids[(len - (pats.len() - pos)) ..].iter())
                         {
-                            self.pattern_match(pat, *item_id)?;
+                            self.pattern_match(pat, *item_id, module_id)?;
                         }
                     }
                     None => {
@@ -729,7 +741,7 @@ impl<'tcx> Generator<'tcx> {
 
                         let item_ids = group.item_ids;
                         for (pat, item_id) in pats.iter().zip(item_ids.iter()) {
-                            self.pattern_match(pat, *item_id)?;
+                            self.pattern_match(pat, *item_id, module_id)?;
                         }
                     }
                 }
@@ -795,7 +807,8 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         match sig_ty {
             SignalTy::Prim(prim_ty) => {
-                let input = InputNode::new(prim_ty, self.idents.tmp());
+                let input =
+                    InputNode::new(prim_ty, self.idents.for_module(module_id).tmp());
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
                 } else {
@@ -835,11 +848,15 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {
+        let module_id = node_id.module_id();
         let node = &net_list[node_id];
         let node_id = if node.is_input() || node.is_pass() {
             let out = node.outputs().only_one();
-            let mut pass =
-                PassNode::new(out.out.ty, out.node_out_id(node_id), idents.tmp());
+            let mut pass = PassNode::new(
+                out.out.ty,
+                out.node_out_id(node_id),
+                idents.for_module(module_id).tmp(),
+            );
             pass.inject = Some(false);
 
             net_list.add_node(node_id.module_id(), pass)
@@ -849,7 +866,7 @@ impl<'tcx> Generator<'tcx> {
 
         let node = &mut net_list[node_id];
         for out in node.outputs_mut().items_mut() {
-            let sym = idents.out();
+            let sym = idents.for_module(module_id).out();
             out.out.sym = sym;
         }
 
@@ -907,13 +924,19 @@ impl<'tcx> Generator<'tcx> {
                     .net_list
                     .add_node(
                         ctx.module_id,
-                        BinOpNode::new(prim_ty, bin_op, lhs, rhs, self.idents.tmp()),
+                        BinOpNode::new(
+                            prim_ty,
+                            bin_op,
+                            lhs,
+                            rhs,
+                            self.idents.for_module(ctx.module_id).tmp(),
+                        ),
                     )
                     .into())
             }
             ExprKind::Block(block, _) => {
                 println!("block");
-                self.idents.push_scope();
+                self.idents.for_module(ctx.module_id).push_scope();
 
                 for stmt in block.stmts {
                     match stmt.kind {
@@ -937,7 +960,9 @@ impl<'tcx> Generator<'tcx> {
                                                 PassNode::new(
                                                     out.out.ty,
                                                     out.node_out_id(node_id),
-                                                    self.idents.tmp(),
+                                                    self.idents
+                                                        .for_module(ctx.module_id)
+                                                        .tmp(),
                                                 )
                                             })
                                             .collect::<Vec<_>>();
@@ -974,7 +999,9 @@ impl<'tcx> Generator<'tcx> {
                                             PassNode::new(
                                                 out.out.ty,
                                                 out.node_out_id(node_id),
-                                                self.idents.tmp(),
+                                                self.idents
+                                                    .for_module(ctx.module_id)
+                                                    .tmp(),
                                             ),
                                         )
                                         .into()
@@ -982,7 +1009,7 @@ impl<'tcx> Generator<'tcx> {
                                 ItemId::Group(_) => item_id,
                             };
 
-                            self.pattern_match(local.pat, item_id)?;
+                            self.pattern_match(local.pat, item_id, ctx.module_id)?;
                         }
                         _ => {
                             return Err(SpanError::new(
@@ -1007,7 +1034,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let item_id = self.evaluate_expr(expr, ctx)?;
 
-                self.idents.pop_scope();
+                self.idents.for_module(ctx.module_id).pop_scope();
 
                 Ok(item_id)
             }
@@ -1051,12 +1078,17 @@ impl<'tcx> Generator<'tcx> {
                                 let outputs = self.net_list[module_id]
                                     .outputs()
                                     .map(|node_out_id| {
-                                        (self.net_list[node_out_id].ty, self.idents.tmp())
+                                        (
+                                            self.net_list[node_out_id].ty,
+                                            self.idents.for_module(ctx.module_id).tmp(),
+                                        )
                                     })
                                     .collect::<Vec<_>>();
 
-                                let inst_sym =
-                                    self.idents.inst(self.net_list[module_id].name);
+                                let inst_sym = self
+                                    .idents
+                                    .for_module(ctx.module_id)
+                                    .inst(self.net_list[module_id].name);
 
                                 Ok(self
                                     .net_list
@@ -1157,7 +1189,7 @@ impl<'tcx> Generator<'tcx> {
                             cond,
                             if_block,
                             else_block,
-                            self.idents.tmp(),
+                            self.idents.for_module(ctx.module_id).tmp(),
                         ),
                     )
                     .into())
@@ -1171,7 +1203,11 @@ impl<'tcx> Generator<'tcx> {
                     .net_list
                     .add_node(
                         ctx.module_id,
-                        ConstNode::new(prim_ty, value, self.idents.tmp()),
+                        ConstNode::new(
+                            prim_ty,
+                            value,
+                            self.idents.for_module(ctx.module_id).tmp(),
+                        ),
                     )
                     .into())
             }
@@ -1191,7 +1227,7 @@ impl<'tcx> Generator<'tcx> {
             )) if segments.len() == 1 => {
                 println!("path");
 
-                self.item_id_for_ident(segments[0].ident)
+                self.item_id_for_ident(ctx.module_id, segments[0].ident)
             }
             ExprKind::Tup(exprs) => {
                 let groups = unsafe {
@@ -1210,7 +1246,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let comb = self.evaluate_expr(inner, ctx)?.node_id();
                 let prim_ty = self.find_sig_ty(&ty, ctx.generics, expr.span)?.prim_ty();
-                let sym = self.idents.tmp();
+                let sym = self.idents.for_module(ctx.module_id).tmp();
 
                 let comb = self.net_list.only_one_node_out_id(comb);
 

@@ -232,7 +232,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
                 generator.net_list.only_one_node_out_id(clk),
                 generator.net_list.only_one_node_out_id(rst_value),
                 generator.net_list.only_one_node_out_id(comb),
-                generator.idents.tmp(),
+                generator.idents.for_module(ctx.module_id).tmp(),
             ),
         );
 
@@ -302,7 +302,13 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
 
         let split = generator.net_list.add_node(
             ctx.module_id,
-            Splitter::new(PrimTy::Bit, rec, start, 1, generator.idents.tmp()),
+            Splitter::new(
+                PrimTy::Bit,
+                rec,
+                start,
+                1,
+                generator.idents.for_module(ctx.module_id).tmp(),
+            ),
         );
 
         Ok(split.into())

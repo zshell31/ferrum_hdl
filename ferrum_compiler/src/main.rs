@@ -1,6 +1,7 @@
 #![feature(rustc_private)]
 #![feature(negative_impls)]
 
+mod bitvec;
 mod blackbox;
 mod error;
 mod generator;

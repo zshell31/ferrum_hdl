@@ -1,8 +1,10 @@
 mod bin_op;
 mod bit_not;
+mod bit_vec_trans;
 mod consta;
 mod dff;
 mod input;
+mod merger;
 mod mod_inst;
 mod mux2;
 mod not;
@@ -16,9 +18,11 @@ use auto_enums::auto_enum;
 pub use self::{
     bin_op::{BinOp, BinOpNode},
     bit_not::BitNotNode,
+    bit_vec_trans::BitVecTrans,
     consta::ConstNode,
     dff::DFFNode,
     input::InputNode,
+    merger::Merger,
     mod_inst::ModInst,
     mux2::Mux2Node,
     not::NotNode,
@@ -173,6 +177,8 @@ define_nodes!(
     Pass => PassNode,
     Const => ConstNode,
     Splitter => Splitter,
+    Merger => Merger,
+    BitVecTrans => BitVecTrans,
     BinOp => BinOpNode,
     BitNot => BitNotNode,
     Not => NotNode,

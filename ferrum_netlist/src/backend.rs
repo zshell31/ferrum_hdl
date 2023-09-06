@@ -5,8 +5,8 @@ use crate::{
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, ConstNode, DFFNode, IsNode, ModInst, Mux2Node, Node,
-        NodeOutput, NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, BitVecTrans, ConstNode, DFFNode, IsNode, Merger, ModInst,
+        Mux2Node, Node, NodeOutput, NotNode, PassNode, Splitter,
     },
     params::Outputs,
     symbol::Symbol,
@@ -36,18 +36,6 @@ impl<'n> Verilog<'n> {
         self.buffer.buffer
     }
 
-    fn write_out(&mut self, out: &NodeOutput) {
-        match out.kind {
-            NetKind::Wire => self.buffer.write_str("wire"),
-            NetKind::Reg => self.buffer.write_str("reg"),
-        };
-
-        if out.ty.width() > 1 {
-            self.buffer
-                .write_fmt(format_args!(" [{}:0]", out.ty.width() - 1));
-        }
-    }
-
     fn write_value(&mut self, out: &NodeOutput, value: u128) {
         let width = out.ty.width();
 
@@ -58,7 +46,7 @@ impl<'n> Verilog<'n> {
         if !self.locals.contains(&out.sym) {
             // TODO: don't write if node is output
             self.buffer.write_tab();
-            self.write_out(out);
+            write_out(&mut self.buffer, out);
             self.buffer.write_fmt(format_args!(" {}", out.sym));
             self.buffer.write_str(";\n");
 
@@ -100,6 +88,35 @@ impl<'n> Verilog<'n> {
 
 impl<'n> Backend for Verilog<'n> {}
 
+fn write_param(
+    net_list: &NetList,
+    buffer: &mut Buffer,
+    param: NodeOutId,
+    kind: ParamKind,
+) {
+    let out = &net_list[param];
+
+    buffer.write_str(match kind {
+        ParamKind::Input => "input ",
+        ParamKind::Output => "output ",
+    });
+    write_out(buffer, out);
+    buffer.write_fmt(format_args!(" {}", out.sym));
+}
+
+fn write_out(buffer: &mut Buffer, out: &NodeOutput) {
+    match out.kind {
+        NetKind::Wire => buffer.write_str("wire"),
+        NetKind::Reg => buffer.write_str("reg"),
+    };
+
+    if out.ty.width() > 1 {
+        buffer.write_fmt(format_args!(" [{}:0]", out.ty.width() - 1));
+    }
+}
+
+const SEP: &str = ",\n";
+
 impl<'n> Visitor for Verilog<'n> {
     fn visit_modules(&mut self) {
         for module_id in self.net_list.modules() {
@@ -114,60 +131,58 @@ impl<'n> Visitor for Verilog<'n> {
 
         self.buffer
             .write_fmt(format_args!("module {}\n(\n", module.name));
-        self.buffer.push_tab();
 
         let mut inputs = module.inputs().peekable();
+        let mut has_inputs = false;
+        self.buffer.push_tab();
         if inputs.peek().is_some() {
+            has_inputs = true;
             self.buffer.write_tab();
             self.buffer.write_str("// Inputs\n");
 
-            for input in inputs {
+            let net_list = &self.net_list;
+            self.buffer.intersperse(SEP, inputs, |buffer, input| {
                 let node = &module[input];
-                for node_out_id in node.outputs().items() {
-                    self.buffer.write_tab();
-                    self.visit_param(node_out_id.node_out_id(input), ParamKind::Input);
-                    self.buffer.write_str(",\n");
-                }
-            }
+                buffer.intersperse(SEP, node.outputs().items(), |buffer, node_out_id| {
+                    buffer.write_tab();
+                    write_param(
+                        net_list,
+                        buffer,
+                        node_out_id.node_out_id(input),
+                        ParamKind::Input,
+                    );
+                });
+            });
         }
+        self.buffer.pop_tab();
 
         let mut outputs = module.outputs().peekable();
+        self.buffer.push_tab();
         if outputs.peek().is_some() {
+            if has_inputs {
+                self.buffer.write_str(SEP);
+            }
             self.buffer.write_tab();
             self.buffer.write_str("// Outputs\n");
 
-            for output in outputs {
-                self.buffer.write_tab();
-                self.visit_param(output, ParamKind::Output);
-                self.buffer.write_str(",\n");
-            }
+            let net_list = &self.net_list;
+            self.buffer.intersperse(SEP, outputs, |buffer, output| {
+                buffer.write_tab();
+                write_param(net_list, buffer, output, ParamKind::Output);
+            });
         }
-
-        self.buffer.pop(2);
         self.buffer.pop_tab();
-        self.buffer.write_str("\n);\n");
 
-        self.buffer.push_tab();
+        self.buffer.write_str("\n);\n");
         self.buffer.write_eol();
 
+        self.buffer.push_tab();
         for node in module.nodes() {
             self.visit_node(node);
         }
-
         self.buffer.pop_tab();
 
         self.buffer.write_str("endmodule\n\n");
-    }
-
-    fn visit_param(&mut self, param: NodeOutId, kind: ParamKind) {
-        let out = &self.net_list[param];
-
-        self.buffer.write_str(match kind {
-            ParamKind::Input => "input ",
-            ParamKind::Output => "output ",
-        });
-        self.write_out(out);
-        self.buffer.write_fmt(format_args!(" {}", out.sym));
     }
 
     fn visit_node(&mut self, node_id: NodeId) {
@@ -210,15 +225,18 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_str("// Outputs\n");
 
-                for (output, mod_output) in outputs.iter().zip(module.outputs()) {
-                    let output_sym = output.sym;
-                    let mod_output_sym = module[mod_output].sym;
+                self.buffer.intersperse(
+                    SEP,
+                    outputs.iter().zip(module.outputs()),
+                    |buffer, (output, mod_output)| {
+                        let output_sym = output.sym;
+                        let mod_output_sym = module[mod_output].sym;
 
-                    self.buffer.write_tab();
-                    self.buffer
-                        .write_fmt(format_args!(".{mod_output_sym}({output_sym}),\n"));
-                }
-                self.buffer.pop(2);
+                        buffer.write_tab();
+                        buffer.write_fmt(format_args!(".{mod_output_sym}({output_sym})"));
+                    },
+                );
+
                 self.buffer.write_eol();
 
                 self.buffer.pop_tab();
@@ -254,30 +272,62 @@ impl<'n> Visitor for Verilog<'n> {
             }
             Node::Splitter(Splitter {
                 input,
+                outputs,
                 start,
-                width,
+            }) => {
+                let input = self.net_list[*input].sym;
+                let mut start = start.unwrap_or_default();
+                for output in outputs.iter() {
+                    self.write_local(output, None);
+
+                    let width = output.ty.width();
+                    let output = output.sym;
+
+                    self.buffer.write_tab();
+                    if width == 1 {
+                        self.buffer.write_fmt(format_args!(
+                            "assign {output} = {input}[{start}];\n\n"
+                        ));
+                    } else {
+                        self.buffer.write_fmt(format_args!(
+                            "assign {output} = {input}[{start} +: {width}];\n\n"
+                        ));
+                    }
+                    start += width;
+                }
+            }
+            Node::Merger(Merger { inputs, output }) => {
+                self.write_local(output, None);
+                let output = output.sym;
+
+                self.buffer.write_tab();
+                self.buffer
+                    .write_fmt(format_args!("assign {output} = {{\n"));
+
+                let net_list = &self.net_list;
+                self.buffer.push_tab();
+                self.buffer
+                    .intersperse(SEP, inputs.iter().rev(), |buffer, input| {
+                        let input = net_list[*input].sym;
+                        buffer.write_tab();
+                        buffer.write_fmt(format_args!("{}", input));
+                    });
+                self.buffer.pop_tab();
+
+                self.buffer.write_eol();
+                self.buffer.write_tab();
+                self.buffer.write_str("};\n\n");
+            }
+            Node::BitVecTrans(BitVecTrans {
+                input,
                 output,
+                trans,
             }) => {
                 self.write_local(output, None);
                 let input = self.net_list[*input].sym;
                 let output = output.sym;
 
-                self.buffer.write_tab();
-                self.buffer
-                    .write_fmt(format_args!("assign {output} = {input}"));
-
-                let width = *width;
-                let start = *start;
-                if width == 1 {
-                    self.buffer.write_fmt(format_args!("[{}]", start));
-                } else {
-                    self.buffer.write_fmt(format_args!(
-                        "[{}:{}]",
-                        start + width - 1,
-                        start
-                    ));
-                }
-                self.buffer.write_str(";\n\n");
+                trans(&mut self.buffer, input, output);
             }
             Node::BitNot(BitNotNode { input, output }) => {
                 self.write_local(output, None);

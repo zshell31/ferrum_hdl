@@ -65,10 +65,18 @@ impl Buffer {
         self.write_eol();
     }
 
-    // TODO: use other approach
-    pub fn pop(&mut self, symbols: usize) {
-        for _ in 0 .. symbols {
-            self.buffer.pop();
+    pub fn intersperse<T>(
+        &mut self,
+        sep: &str,
+        iter: impl Iterator<Item = T>,
+        f: impl Fn(&mut Self, T),
+    ) {
+        let mut peekable = iter.peekable();
+        while let Some(item) = peekable.next() {
+            f(self, item);
+            if peekable.peek().is_some() {
+                self.write_str(sep);
+            }
         }
     }
 }

@@ -4,7 +4,7 @@ use ferrum::{
 };
 use ferrum_netlist::{
     group_list::ItemId,
-    node::{DFFNode, IsNode, Node, Splitter},
+    node::{BitVecTrans, DFFNode, IsNode, Node, Splitter},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
@@ -16,6 +16,7 @@ use rustc_hir::{
 use rustc_span::Span;
 
 use crate::{
+    bitvec::ArrayDesc,
     error::{Error, SpanError, SpanErrorKind},
     generator::{EvalContext, Generator, Key},
     utils,
@@ -33,7 +34,9 @@ impl PartialEq<ItemPath> for DefPath {
                 .zip(other.0.iter())
                 .all(|(def_path, &block_path)| match def_path.data.name() {
                     DefPathDataName::Named(name) => name.as_str() == block_path,
-                    _ => false,
+                    DefPathDataName::Anon { namespace } => {
+                        namespace.as_str() == block_path
+                    }
                 })
         }
     }
@@ -45,7 +48,7 @@ pub enum Blackbox {
     SignalMap,
     SignalApply2,
     BitPackMsb,
-    // ArrayReverse,
+    ArrayReverse,
     StdConversion,
     StdClone,
 }
@@ -79,11 +82,11 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::BitPackMsb);
     }
 
-    // if def_path == &ItemPath(&["array", "Array", "reverse"]) {
-    //     #[allow(unused_imports)]
-    //     use ferrum::array::Array;
-    //     return Some(Blackbox::ArrayReverse);
-    // }
+    if def_path == &ItemPath(&["array", "impl", "reverse"]) {
+        #[allow(unused_imports)]
+        use ferrum::array::Array;
+        return Some(Blackbox::ArrayReverse);
+    }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
         return Some(Blackbox::StdConversion);
@@ -170,6 +173,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::SignalMap => SignalMap.evaluate_expr(generator, expr, ctx),
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
+            Self::ArrayReverse => ArrayReverse.evaluate_expr(generator, expr, ctx),
             Self::StdConversion => StdConversion.evaluate_expr(generator, expr, ctx),
             Self::StdClone => StdClone.evaluate_expr(generator, expr, ctx),
         }
@@ -303,15 +307,68 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         let split = generator.net_list.add_node(
             ctx.module_id,
             Splitter::new(
-                PrimTy::Bit,
                 rec,
-                start,
-                1,
-                generator.idents.for_module(ctx.module_id).tmp(),
+                [(
+                    PrimTy::Bit,
+                    generator.idents.for_module(ctx.module_id).tmp(),
+                )],
+                Some(start),
             ),
         );
 
         Ok(split.into())
+    }
+}
+
+struct ArrayReverse;
+
+impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+
+        let sig_ty = generator.find_sig_ty(
+            &generator.node_type(rec.hir_id),
+            ctx.generics,
+            rec.span,
+        )?;
+        let rec = generator.evaluate_expr(rec, ctx)?;
+
+        let to = generator.to_bitvec(ctx.module_id, rec);
+
+        let ArrayDesc { count, width } = generator.array_desc(rec);
+
+        let trans = generator.net_list.add_node(
+            ctx.module_id,
+            BitVecTrans::new(
+                generator.net_list[to].ty.width(),
+                to,
+                generator.idents.for_module(ctx.module_id).tmp(),
+                move |buffer, input, output| {
+                    buffer.write_template(format_args!(
+                        r#"
+genvar i;
+generate
+for (i = 0; i < {count}; i = i + 1) begin
+    assign {output}[({count} - 1 - i)*{width} +: {width}] = {input}[i*{width} +: {width}];
+end
+endgenerate"#
+                    ));
+                },
+            ),
+        );
+        let trans = generator.net_list[trans]
+            .outputs()
+            .only_one()
+            .node_out_id(trans);
+
+        let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
+
+        Ok(from)
     }
 }
 
@@ -440,7 +497,7 @@ pub fn evaluate_lit(prim_ty: PrimTy, lit: &Lit) -> Result<u128, Error> {
                 .map_err(|_| SpanError::new(SpanErrorKind::NotSynthExpr, lit.span))?,
         ),
         PrimTy::Unsigned(n) => evaluate_unsigned_lit(lit, n),
-        PrimTy::Clock | PrimTy::ClockDomain => Err(SpanError::new(
+        PrimTy::BitVec(_) | PrimTy::Clock | PrimTy::ClockDomain => Err(SpanError::new(
             SpanErrorKind::PrimTyWithoutValue(PrimTy::Clock),
             lit.span,
         )

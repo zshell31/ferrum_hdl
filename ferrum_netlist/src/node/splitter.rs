@@ -1,36 +1,36 @@
 use std::fmt::Debug;
 
 use super::{IsNode, Node, NodeOutput};
-use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{
+    arena::with_arena, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
+    symbol::Symbol,
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Splitter {
     pub input: NodeOutId,
-    pub start: u128,
-    pub width: u128,
-    pub output: NodeOutput,
+    pub outputs: &'static mut [NodeOutput],
+    pub start: Option<u128>,
 }
 
 impl Splitter {
     pub fn new(
-        ty: PrimTy,
         input: NodeOutId,
-        start: u128,
-        width: u128,
-        sym: Symbol,
+        outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
+        start: Option<u128>,
     ) -> Self {
-        assert!(width > 0);
-        // TODO: check that start + width < input.width()
-        assert_eq!(ty.width(), width);
         Self {
             input,
-            start,
-            width,
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
+            outputs: unsafe {
+                with_arena().alloc_from_iter(outputs.into_iter().map(|(ty, sym)| {
+                    NodeOutput {
+                        ty,
+                        sym,
+                        kind: NetKind::Wire,
+                    }
+                }))
             },
+            start,
         }
     }
 }
@@ -43,17 +43,17 @@ impl From<Splitter> for Node {
 
 impl IsNode for Splitter {
     type Inputs = NodeOutId;
-    type Outputs = NodeOutput;
+    type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
         &self.input
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        &self.output
+        self.outputs
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        &mut self.output
+        self.outputs
     }
 }

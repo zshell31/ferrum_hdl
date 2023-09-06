@@ -6,6 +6,7 @@ pub enum PrimTy {
     Bit,
     U128,
     Unsigned(u8),
+    BitVec(u128),
     Clock,
     ClockDomain,
 }
@@ -21,6 +22,7 @@ impl PrimTy {
             Self::Bit => 1,
             Self::U128 => 128,
             Self::Unsigned(n) => *n as u128,
+            Self::BitVec(n) => *n,
             Self::Clock => 1,
             Self::ClockDomain => 1,
         }
@@ -64,6 +66,14 @@ impl SignalTy {
         match self {
             Self::Prim(prim_ty) => *prim_ty,
             _ => panic!("expected prim type"),
+        }
+    }
+
+    pub fn width(&self) -> u128 {
+        match self {
+            Self::Prim(prim_ty) => prim_ty.width(),
+            Self::Array(n, ty) => n * ty.width(),
+            Self::Group(ty) => ty.iter().map(|ty| ty.width()).sum(),
         }
     }
 }

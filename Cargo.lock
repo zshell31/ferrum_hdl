@@ -22,9 +22,9 @@ checksum = "a3e2c3daef883ecc1b5d58c15adae93470a91d425f3532ba1695849656af3fc1"
 
 [[package]]
 name = "derive-where"
-version = "1.2.2"
+version = "1.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bfdb377063755aaead8eab28e1e6738bf8154b0a6741a88b71f17fffe1c7b0b"
+checksum = "146398d62142a0f35248a608f17edf0dde57338354966d6e41d0eb2d16980ccb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -84,6 +84,7 @@ version = "0.1.0"
 dependencies = [
  "auto_enums",
  "bumpalo",
+ "derive-where",
  "fnv",
  "indexmap",
  "smallvec",

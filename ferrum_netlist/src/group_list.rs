@@ -41,7 +41,6 @@ impl From<GroupId> for ItemId {
 
 #[derive(Debug, Clone, Copy)]
 pub enum GroupKind {
-    Prim,
     Group,
     Array,
 }
@@ -49,9 +48,9 @@ pub enum GroupKind {
 impl From<SignalTy> for GroupKind {
     fn from(sig_ty: SignalTy) -> Self {
         match sig_ty {
-            SignalTy::Prim(_) => Self::Prim,
             SignalTy::Group(_) => Self::Group,
             SignalTy::Array(..) => Self::Array,
+            SignalTy::Prim(_) => panic!("expected non-primtive type"),
         }
     }
 }

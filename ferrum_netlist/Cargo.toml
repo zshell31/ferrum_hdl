@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 auto_enums = "0.8.2"
 bumpalo = "3.13.0"
+derive-where = "1.2.5"
 indexmap = "2.0.0"
 fnv = "1.0.7"
 smallvec = "1.11.0"

@@ -1,7 +1,7 @@
 use crate::{
-    net_list::{ModuleId, NetList, NodeId, NodeOutId},
+    net_list::{ModuleId, NetList, NodeId},
     node::{Node, PassNode},
-    visitor::{ParamKind, Visitor},
+    visitor::Visitor,
 };
 
 pub struct InjectPass<'n> {
@@ -31,10 +31,6 @@ impl<'n> Visitor for InjectPass<'n> {
         for node in module.nodes() {
             self.visit_node(node);
         }
-    }
-
-    fn visit_param(&mut self, _: NodeOutId, _: ParamKind) {
-        unreachable!()
     }
 
     fn visit_node(&mut self, node_id: NodeId) {

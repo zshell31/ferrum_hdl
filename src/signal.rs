@@ -185,10 +185,10 @@ impl<D: ClockDomain, V: SignalValue> Register<D, V> {
 #[inline(always)]
 pub fn reg<D: ClockDomain, V: SignalValue + IsPrimTy>(
     clock: Clock<D>,
-    reset_value: impl Into<V>,
+    reset_value: V,
     comb_fn: impl Fn(V) -> V + 'static,
 ) -> Register<D, V> {
-    Register::new(clock, reset_value.into(), comb_fn)
+    Register::new(clock, reset_value, comb_fn)
 }
 
 impl<D: ClockDomain, V: SignalValue> Signal<D> for Register<D, V> {

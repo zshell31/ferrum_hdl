@@ -19,12 +19,16 @@ pub const fn blinking_count<D: ClockDomain>() -> u8 {
     clog2(second_periods::<D>()) as u8
 }
 
-pub fn blinking<D: ClockDomain>(clk: Clock<D>) -> impl Signal<D, Value = Bit>
+pub fn blinking<D: ClockDomain>(
+    clk: Clock<D>,
+) -> impl Signal<D, Value = (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
     Assert<{ is_unsigned(blinking_count::<D>()) }>: IsTrue,
 {
-    reg::<D, _>(clk, 0, |r: Unsigned<{ blinking_count::<D>() }>| r + 1)
-        .smap(|value| value.msb())
+    reg::<D, _>(clk, 0.into(), |r: Unsigned<{ blinking_count::<D>() }>| {
+        r + 1
+    })
+    .smap(|value| (value.msb(), value))
 }
 
 pub struct ZynqMiniDom;
@@ -34,7 +38,12 @@ impl ClockDomain for ZynqMiniDom {
 }
 
 #[cfg(not(test))]
-pub fn top_module(clk: Clock<ZynqMiniDom>) -> impl Signal<ZynqMiniDom, Value = Bit> {
+const BL_COUNT: u8 = blinking_count::<ZynqMiniDom>();
+
+#[cfg(not(test))]
+pub fn top_module(
+    clk: Clock<ZynqMiniDom>,
+) -> impl Signal<ZynqMiniDom, Value = (Bit, Unsigned<BL_COUNT>)> {
     blinking(clk)
 }
 
@@ -48,7 +57,11 @@ mod tests {
         const FREQ: usize = 4;
     }
 
-    fn top_module(clk: Clock<TestSystem>) -> impl Signal<TestSystem, Value = Bit> {
+    const BL_COUNT: u8 = blinking_count::<TestSystem>();
+
+    fn top_module(
+        clk: Clock<TestSystem>,
+    ) -> impl Signal<TestSystem, Value = (Bit, Unsigned<BL_COUNT>)> {
         blinking(clk)
     }
 
@@ -58,9 +71,18 @@ mod tests {
             top_module(Default::default())
                 .iter()
                 .take(8)
-                .map(bool::from)
+                .map(|(led, count)| (bool::from(led), u128::from(count)))
                 .collect::<Vec<_>>(),
-            &[false, false, true, true, false, false, true, true]
+            &[
+                (false, 0b00),
+                (false, 0b01),
+                (true, 0b10),
+                (true, 0b11),
+                (false, 0b00),
+                (false, 0b01),
+                (true, 0b10),
+                (true, 0b11)
+            ]
         );
     }
 }

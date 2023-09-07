@@ -94,6 +94,15 @@ where
     }
 }
 
+impl<const N: u8> From<Unsigned<N>> for u128
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn from(value: Unsigned<N>) -> Self {
+        value.0
+    }
+}
+
 impl<const N: u8> Add for Unsigned<N>
 where
     Assert<{ is_unsigned(N) }>: IsTrue,

@@ -3,6 +3,7 @@
 #![feature(adt_const_params)]
 #![feature(return_position_impl_trait_in_trait)]
 #![feature(register_tool)]
+#![feature(type_alias_impl_trait)]
 #![register_tool(ferrum_tool)]
 
 pub mod array;

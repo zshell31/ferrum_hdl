@@ -4,6 +4,7 @@ use ferrum::{
 };
 use ferrum_netlist::{
     group_list::ItemId,
+    net_list::{NodeId, NodeOutId},
     node::{BitVecTrans, DFFNode, IsNode, Node, Splitter},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
@@ -49,6 +50,8 @@ pub enum Blackbox {
     SignalApply2,
     BitPackMsb,
     ArrayReverse,
+    Unbundle,
+    Bundle,
     StdConversion,
     StdClone,
 }
@@ -86,6 +89,14 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         #[allow(unused_imports)]
         use ferrum::array::Array;
         return Some(Blackbox::ArrayReverse);
+    }
+
+    if def_path == &ItemPath(&["signal", "Unbundle", "unbundle"]) {
+        return Some(Blackbox::Unbundle);
+    }
+
+    if def_path == &ItemPath(&["signal", "Bundle", "bundle"]) {
+        return Some(Blackbox::Bundle);
     }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
@@ -174,6 +185,8 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
             Self::ArrayReverse => ArrayReverse.evaluate_expr(generator, expr, ctx),
+            Self::Unbundle => Unbundle.evaluate_expr(generator, expr, ctx),
+            Self::Bundle => Bundle.evaluate_expr(generator, expr, ctx),
             Self::StdConversion => StdConversion.evaluate_expr(generator, expr, ctx),
             Self::StdClone => StdClone.evaluate_expr(generator, expr, ctx),
         }
@@ -288,6 +301,38 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
     }
 }
 
+fn bit_vec_trans<'tcx>(
+    generator: &mut Generator<'tcx>,
+    rec: &Expr<'tcx>,
+    ctx: EvalContext<'tcx>,
+    trans: impl FnOnce(
+        &mut Generator<'tcx>,
+        &EvalContext<'tcx>,
+        SignalTy,
+        ItemId,
+        NodeOutId,
+    ) -> (NodeId, SignalTy),
+) -> Result<ItemId, Error> {
+    let sig_ty = generator.find_sig_ty(
+        &generator.node_type(rec.hir_id),
+        ctx.generics,
+        rec.span,
+    )?;
+    let rec = generator.evaluate_expr(rec, ctx)?;
+
+    let to = generator.to_bitvec(ctx.module_id, rec);
+
+    let (trans, sig_ty) = trans(generator, &ctx, sig_ty, rec, to);
+    let trans = generator.net_list[trans]
+        .outputs()
+        .only_one()
+        .node_out_id(trans);
+
+    let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
+
+    Ok(from)
+}
+
 struct BitPackMsb;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
@@ -299,24 +344,22 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        let rec = generator.evaluate_expr(rec, ctx)?.node_id();
+        bit_vec_trans(generator, rec, ctx, |generator, ctx, _, _, bit_vec| {
+            let start = generator.net_list[bit_vec].ty.width() - 1;
+            let ty = PrimTy::Bit;
 
-        let start = generator.net_list[rec].outputs().only_one().out.ty.width() - 1;
-        let rec = generator.net_list.only_one_node_out_id(rec);
-
-        let split = generator.net_list.add_node(
-            ctx.module_id,
-            Splitter::new(
-                rec,
-                [(
-                    PrimTy::Bit,
-                    generator.idents.for_module(ctx.module_id).tmp(),
-                )],
-                Some(start),
-            ),
-        );
-
-        Ok(split.into())
+            (
+                generator.net_list.add_node(
+                    ctx.module_id,
+                    Splitter::new(
+                        bit_vec,
+                        [(ty, generator.idents.for_module(ctx.module_id).tmp())],
+                        Some(start),
+                    ),
+                ),
+                ty.into(),
+            )
+        })
     }
 }
 
@@ -331,44 +374,67 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        let sig_ty = generator.find_sig_ty(
-            &generator.node_type(rec.hir_id),
-            ctx.generics,
-            rec.span,
-        )?;
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        bit_vec_trans(
+            generator,
+            rec,
+            ctx,
+            |generator, ctx, sig_ty, rec, bit_vec| {
+                let ArrayDesc { count, width } = generator.array_desc(rec);
 
-        let to = generator.to_bitvec(ctx.module_id, rec);
-
-        let ArrayDesc { count, width } = generator.array_desc(rec);
-
-        let trans = generator.net_list.add_node(
-            ctx.module_id,
-            BitVecTrans::new(
-                generator.net_list[to].ty.width(),
-                to,
-                generator.idents.for_module(ctx.module_id).tmp(),
-                move |buffer, input, output| {
-                    buffer.write_template(format_args!(
-                        r#"
+                (
+                    generator.net_list.add_node(
+                        ctx.module_id,
+                        BitVecTrans::new(
+                            generator.net_list[bit_vec].ty.width(),
+                            bit_vec,
+                            generator.idents.for_module(ctx.module_id).tmp(),
+                            move |buffer, input, output| {
+                                buffer.write_template(format_args!(
+                                    r#"
 genvar i;
 generate
 for (i = 0; i < {count}; i = i + 1) begin
     assign {output}[({count} - 1 - i)*{width} +: {width}] = {input}[i*{width} +: {width}];
 end
 endgenerate"#
-                    ));
-                },
-            ),
-        );
-        let trans = generator.net_list[trans]
-            .outputs()
-            .only_one()
-            .node_out_id(trans);
+                                ));
+                            },
+                        ),
+                    ),
+                    sig_ty,
+                )
+            },
+        )
+    }
+}
 
-        let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
+struct Unbundle;
 
-        Ok(from)
+impl<'tcx> EvaluateExpr<'tcx> for Unbundle {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, args) = utils::expected_call(expr)?;
+
+        generator.evaluate_expr(&args[0], ctx)
+    }
+}
+
+struct Bundle;
+
+impl<'tcx> EvaluateExpr<'tcx> for Bundle {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, args) = utils::expected_call(expr)?;
+
+        generator.evaluate_expr(&args[0], ctx)
     }
 }
 

@@ -601,7 +601,13 @@ impl<'tcx> Generator<'tcx> {
                             let ty = arg.bindings[0].ty();
                             let sig_ty =
                                 self.find_sig_ty_for_hir_ty(fn_id, ty, generics, span)?;
-                            let key = def_id.as_key(self, None, span)?;
+
+                            let key = def_id.as_key(self, generics, span)?;
+                            self.sig_ty.insert(key, Some(sig_ty));
+
+                            let key = self
+                                .ast_ty_to_ty(fn_id, predicate.bounded_ty)
+                                .as_key(self, generics, span)?;
                             self.sig_ty.insert(key, Some(sig_ty));
 
                             found_signal = true;
@@ -630,6 +636,11 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
+    fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {
+        let item_ctx = &ItemCtxt::new(self.tcx, fn_id) as &dyn AstConv<'tcx>;
+        item_ctx.ast_ty_to_ty(ty)
+    }
+
     fn find_sig_ty_for_hir_ty(
         &mut self,
         fn_id: LocalDefId,
@@ -637,8 +648,7 @@ impl<'tcx> Generator<'tcx> {
         generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<SignalTy, Error> {
-        let item_ctx = &ItemCtxt::new(self.tcx, fn_id) as &dyn AstConv<'tcx>;
-        let ty = item_ctx.ast_ty_to_ty(ty);
+        let ty = self.ast_ty_to_ty(fn_id, ty);
         self.find_sig_ty(&ty, generics, span)
     }
 
@@ -774,10 +784,18 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }
-            HirTyKind::Path(_) => {
+            HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
-                let sig_ty =
-                    self.find_sig_ty_for_hir_ty(fn_id, input, ctx.generics, input.span)?;
+                let sig_ty = self
+                    .find_sig_ty(&path.res.def_id(), ctx.generics, input.span)
+                    .or_else(|_| {
+                        self.find_sig_ty_for_hir_ty(
+                            fn_id,
+                            input,
+                            ctx.generics,
+                            input.span,
+                        )
+                    })?;
 
                 Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
             }
@@ -1105,7 +1123,7 @@ impl<'tcx> Generator<'tcx> {
                                 blackbox.evaluate_expr(self, expr, ctx)
                             }
                         }
-                        QPath::TypeRelative(ty, _) => {
+                        QPath::TypeRelative(_, _) => {
                             let res = self
                                 .tcx
                                 .typeck(rec.hir_id.owner)
@@ -1113,7 +1131,7 @@ impl<'tcx> Generator<'tcx> {
                             let def_id = res.def_id();
 
                             let blackbox =
-                                self.find_blackbox(&def_id, ctx.generics, ty.span)?;
+                                self.find_blackbox(&def_id, ctx.generics, rec.span)?;
                             blackbox.evaluate_expr(self, expr, ctx)
                         }
                         _ => {

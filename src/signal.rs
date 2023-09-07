@@ -121,8 +121,8 @@ where
 }
 
 pub trait SignalIterExt: IntoIterator + Sized {
-    fn into_signal(self) -> IterSignal<Self::IntoIter> {
-        IterSignal(self.into_iter())
+    fn into_signal<D>(self) -> IterSignal<D, Self::IntoIter> {
+        IterSignal(self.into_iter(), PhantomData)
     }
 }
 
@@ -133,16 +133,24 @@ where
 {
 }
 
-pub struct IterSignal<I>(I);
+pub struct IterSignal<D, I>(I, PhantomData<D>);
 
-impl<D: ClockDomain, I: Iterator> Signal<D> for IterSignal<I>
+impl<D, I: Clone> Clone for IterSignal<D, I> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone(), PhantomData)
+    }
+}
+
+impl<D: ClockDomain, I: Iterator> Signal<D> for IterSignal<D, I>
 where
     I::Item: SignalValue,
 {
     type Value = I::Item;
 
     fn next(&mut self) -> Self::Value {
-        Iterator::next(&mut self.0).expect("No values")
+        let next = Iterator::next(&mut self.0);
+        println!("{:?}", next);
+        next.expect("No values")
     }
 }
 
@@ -200,4 +208,32 @@ impl<D: ClockDomain, V: SignalValue> Signal<D> for Register<D, V> {
 
         self.value.clone()
     }
+}
+
+pub trait Unbundle<D: ClockDomain, T: SignalValue> {
+    type Bundled: SignalValue;
+    type Unbundled: SignalValue;
+
+    type UnbundledSig<S>
+    where
+        S: Signal<D, Value = Self::Bundled> + Clone;
+
+    fn unbundle<S>(signal: S) -> Self::UnbundledSig<S>
+    where
+        S: Signal<D, Value = Self::Bundled> + Clone;
+}
+
+pub trait Bundle<D: ClockDomain, T: SignalValue> {
+    type Bundled: SignalValue;
+    type Unbundled: SignalValue;
+
+    type UnbundledSig<S>
+    where
+        S: Signal<D, Value = Self::Unbundled>;
+
+    fn bundle<S>(
+        unbundled: Self::UnbundledSig<S>,
+    ) -> impl Signal<D, Value = Self::Bundled>
+    where
+        S: Signal<D, Value = Self::Unbundled>;
 }

@@ -45,10 +45,23 @@ impl<'tcx> Generator<'tcx> {
     #[allow(clippy::wrong_self_convention)]
     pub fn to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
         match item_id {
-            ItemId::Node(node_id) => self.net_list[node_id]
-                .outputs()
-                .only_one()
-                .node_out_id(node_id),
+            ItemId::Node(node_id) => {
+                let node_out = self.net_list[node_id].outputs().only_one();
+                let width = node_out.out.ty.width();
+                let node_out_id = node_out.node_out_id(node_id);
+
+                let pass = PassNode::new(
+                    PrimTy::BitVec(width),
+                    node_out_id,
+                    self.idents.for_module(module_id).tmp(),
+                );
+                let node_id = self.net_list.add_node(module_id, pass);
+
+                self.net_list[node_id]
+                    .outputs()
+                    .only_one()
+                    .node_out_id(node_id)
+            }
             ItemId::Group(group_id) => {
                 let group = &self.group_list[group_id];
 

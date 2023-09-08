@@ -1,19 +1,20 @@
 use std::{env, fmt::Debug, fs, iter, path::Path as StdPath};
 
+use either::Either;
 use ferrum_netlist::{
     arena::with_arena,
     backend::Verilog,
     group_list::{Group, GroupKind, GroupList, ItemId},
     inject_pass::InjectPass,
-    net_list::{ModuleId, NetList, NodeId},
+    net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
         BinOp, BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node,
-        Node, NotNode, PassNode,
+        Node, NotNode, PassNode, Splitter,
     },
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
-use rustc_ast::{BorrowKind, Mutability};
+use rustc_ast::{BorrowKind, LitKind, Mutability};
 use rustc_const_eval::interpret::{ConstValue, Scalar};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -30,7 +31,7 @@ use rustc_middle::ty::{
     EarlyBinder, GenericArg, List, ScalarInt, Ty, TyCtxt, UnevaluatedConst,
 };
 use rustc_session::EarlyErrorHandler;
-use rustc_span::{symbol::Ident, Span};
+use rustc_span::{source_map::Spanned, symbol::Ident, Span};
 use rustc_type_ir::{
     ConstKind,
     TyKind::{self},
@@ -38,7 +39,8 @@ use rustc_type_ir::{
 };
 
 use crate::{
-    blackbox::{self, Blackbox, EvaluateExpr, ItemPath},
+    bitvec::ArrayDesc,
+    blackbox::{self, bit_vec_trans, BitVecTransArgs, Blackbox, EvaluateExpr, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
     utils,
@@ -131,6 +133,18 @@ pub enum Generic {
     Const(u128),
 }
 
+impl From<SignalTy> for Generic {
+    fn from(sig_ty: SignalTy) -> Self {
+        Self::Ty(sig_ty)
+    }
+}
+
+impl From<u128> for Generic {
+    fn from(cons: u128) -> Self {
+        Self::Const(cons)
+    }
+}
+
 impl Generic {
     pub fn as_ty(&self) -> Option<&SignalTy> {
         match self {
@@ -139,9 +153,9 @@ impl Generic {
         }
     }
 
-    pub fn as_const(&self) -> Option<u128> {
+    pub fn as_const<T: TryFrom<u128>>(&self) -> Option<T> {
         match self {
-            Self::Const(val) => Some(*val),
+            Self::Const(val) => T::try_from(*val).ok(),
             _ => None,
         }
     }
@@ -209,10 +223,18 @@ impl Generics {
         self.0.get(ind)
     }
 
+    pub fn as_ty(&self, ind: usize) -> Option<SignalTy> {
+        self.get(ind).and_then(|generic| generic.as_ty()).copied()
+    }
+
+    pub fn as_const<T: TryFrom<u128>>(&self, ind: usize) -> Option<T> {
+        self.get(ind).and_then(|generic| generic.as_const())
+    }
+
     fn from_ty<'tcx>(
         ty: &Ty<'tcx>,
         generator: &mut Generator<'tcx>,
-        generics: Option<&List<GenericArg<'tcx>>>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<Option<Self>, Error> {
         let tcx = generator.tcx;
@@ -223,13 +245,34 @@ impl Generics {
         };
 
         match ty.kind() {
+            TyKind::Array(ty, cons) => {
+                let sig_ty: Generic = generator.find_sig_ty(ty, generics, span)?.into();
+                let cons: Generic = cons
+                    .try_to_scalar_int()
+                    .and_then(Generic::eval_scalar_int)
+                    .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span))?
+                    .into();
+
+                Ok(Some(Self(unsafe {
+                    with_arena().alloc_slice(&[sig_ty, cons])
+                })))
+            }
             TyKind::Adt(adt, generics) if !generics.is_empty() => {
-                if generator.tcx.def_path(adt.did()) == ItemPath(&["signal", "Clock"]) {
+                // TODO: refactor
+                if generator.tcx.def_path(adt.did()) == ItemPath(&["domain", "Clock"]) {
                     return Ok(None);
                 }
 
+                let generics = if generator.tcx.def_path(adt.did())
+                    == ItemPath(&["signal", "Signal"])
+                {
+                    Either::Left(generics.iter().skip(1)) // the first generic argument is ClockDomain
+                } else {
+                    Either::Right(generics.iter())
+                };
+
                 Ok(Some(Self(unsafe {
-                    with_arena().alloc_from_res_iter(generics.iter().map(|generic| {
+                    with_arena().alloc_from_res_iter(generics.map(|generic| {
                         Generic::from_gen_arg(&generic, generator, span)
                     }))?
                 })))
@@ -253,6 +296,18 @@ impl<'tcx> Key<'tcx> {
     fn as_string(&self, tcx: TyCtxt<'tcx>) -> String {
         self.ty_or_def_id.as_string(tcx)
     }
+
+    pub fn generic_ty(&self, ind: usize) -> Option<SignalTy> {
+        self.generics
+            .as_ref()
+            .and_then(|generics| generics.as_ty(ind))
+    }
+
+    pub fn generic_const<T: TryFrom<u128>>(&self, ind: usize) -> Option<T> {
+        self.generics
+            .as_ref()
+            .and_then(|generics| generics.as_const(ind))
+    }
 }
 
 pub trait AsKey<'tcx> {
@@ -268,7 +323,7 @@ impl<'tcx> AsKey<'tcx> for Ty<'tcx> {
     fn as_key(
         &self,
         generator: &mut Generator<'tcx>,
-        generics: Option<&List<GenericArg<'tcx>>>,
+        generics: Option<&'tcx List<GenericArg<'tcx>>>,
         span: Span,
     ) -> Result<Key<'tcx>, Error> {
         let ty = match generics {
@@ -468,6 +523,13 @@ impl<'tcx> Generator<'tcx> {
 
             if let TyOrDefId::Ty(ty) = key.ty_or_def_id {
                 match ty.kind() {
+                    TyKind::Array(..) => {
+                        let ty =
+                            unsafe { with_arena().alloc(key.generic_ty(0).unwrap()) };
+                        let cons = key.generic_const(1).unwrap();
+
+                        sig_ty = Some(SignalTy::Array(cons, ty));
+                    }
                     TyKind::Bool => {
                         sig_ty = Some(PrimTy::Bool.into());
                     }
@@ -723,6 +785,24 @@ impl<'tcx> Generator<'tcx> {
                     .for_module(module_id)
                     .add_local_ident(ident, item_id);
             }
+            PatKind::Slice(before, wild, after) => {
+                let ArrayDesc { count, width } =
+                    self.opt_array_desc(item_id).ok_or_else(|| {
+                        SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
+                    })?;
+
+                let sig_ty =
+                    self.item_ty(self.group_list[item_id.group_id()].item_ids[0]);
+
+                let to = self.to_bitvec(module_id, item_id);
+
+                self.slice_pattern_match(to, width, sig_ty, before, None)?;
+
+                if wild.is_some() {
+                    let start = ((count - after.len()) as u128) * width;
+                    self.slice_pattern_match(to, width, sig_ty, after, Some(start))?;
+                }
+            }
             PatKind::Tuple(pats, dot_dot_pos) => {
                 let group_id = item_id.group_id();
                 match dot_dot_pos.as_opt_usize() {
@@ -763,6 +843,43 @@ impl<'tcx> Generator<'tcx> {
                     SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span).into()
                 );
             }
+        }
+
+        Ok(())
+    }
+
+    fn slice_pattern_match(
+        &mut self,
+        node_out_id: NodeOutId,
+        width: u128,
+        sig_ty: SignalTy,
+        pat: &[Pat<'tcx>],
+        start: Option<u128>,
+    ) -> Result<(), Error> {
+        let module_id = node_out_id.node_id().module_id();
+        let splitter = Splitter::new(
+            node_out_id,
+            (0 .. pat.len()).map(|_| {
+                (
+                    PrimTy::BitVec(width),
+                    self.idents.for_module(module_id).tmp(),
+                )
+            }),
+            start,
+        );
+        let node_id = self.net_list.add_node(module_id, splitter);
+
+        let outputs = self.net_list[node_id].outputs();
+        assert_eq!(outputs.len(), pat.len());
+
+        let node_out_ids = outputs
+            .items()
+            .map(|out| out.node_out_id(node_id))
+            .collect::<Vec<_>>();
+
+        for (node_out_id, before_pat) in node_out_ids.into_iter().zip(pat) {
+            let from = self.from_bitvec(module_id, node_out_id, sig_ty);
+            self.pattern_match(before_pat, from, module_id)?;
         }
 
         Ok(())
@@ -901,6 +1018,16 @@ impl<'tcx> Generator<'tcx> {
         match expr.kind {
             ExprKind::AddrOf(BorrowKind::Ref, Mutability::Not, expr) => {
                 self.evaluate_expr(expr, ctx)
+            }
+            ExprKind::Array(items) => {
+                let item_ids = unsafe {
+                    with_arena().alloc_from_res_iter(
+                        items.iter().map(|item| self.evaluate_expr(item, ctx)),
+                    )?
+                };
+                let group = Group::new_with_item_ids(GroupKind::Array, item_ids);
+
+                Ok(self.group_list.add_group(group).into())
             }
             ExprKind::Binary(bin_op, lhs, rhs) => {
                 println!("binary");
@@ -1212,6 +1339,42 @@ impl<'tcx> Generator<'tcx> {
                     )
                     .into())
             }
+            ExprKind::Index(
+                expr,
+                Expr {
+                    kind:
+                        ExprKind::Lit(Spanned {
+                            node: LitKind::Int(ind, ..),
+                            ..
+                        }),
+                    ..
+                },
+                span,
+            ) => bit_vec_trans(
+                self,
+                expr,
+                ctx,
+                |generator, ctx, BitVecTransArgs { rec, bit_vec, .. }| {
+                    let ArrayDesc { width, .. } =
+                        generator.opt_array_desc(rec).ok_or_else(|| {
+                            SpanError::new(SpanErrorKind::ExpectedArray, span)
+                        })?;
+
+                    let ty = PrimTy::BitVec(width);
+                    let start = ind * width;
+                    Ok((
+                        generator.net_list.add_node(
+                            ctx.module_id,
+                            Splitter::new(
+                                bit_vec,
+                                [(ty, generator.idents.for_module(ctx.module_id).tmp())],
+                                Some(start),
+                            ),
+                        ),
+                        ty.into(),
+                    ))
+                },
+            ),
             ExprKind::Lit(lit) => {
                 println!("lit");
                 let prim_ty = self.find_sig_ty(&ty, ctx.generics, lit.span)?.prim_ty();

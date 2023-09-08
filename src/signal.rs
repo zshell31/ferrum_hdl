@@ -1,239 +1,252 @@
-use std::{fmt::Debug, marker::PhantomData, rc::Rc};
+use std::{
+    fmt::Debug,
+    marker::PhantomData,
+    ops::{Add, BitAnd, BitOr, Not, Sub},
+};
 
-use derive_where::derive_where;
+use dyn_clone::{clone_trait_object, DynClone};
 use ferrum_netlist::sig_ty::IsPrimTy;
 
-use super::domain::ClockDomain;
+use crate::domain::{Clock, ClockDomain};
 
-pub trait SignalValue: Debug + Clone {}
+pub trait SignalValue: Debug + Clone + 'static {}
 
 impl SignalValue for bool {}
 
-impl<T1: SignalValue, T2: SignalValue> SignalValue for (T1, T2) {}
-impl<T1: SignalValue, T2: SignalValue, T3: SignalValue> SignalValue for (T1, T2, T3) {}
+macro_rules! impl_signal_value_for_tuples {
+    (
+        $( $t:ident ),+
+    ) => {
+       impl<$( $t: SignalValue, )+> SignalValue for ($( $t, )+) {}
+    };
+}
 
-pub trait Signal<D: ClockDomain>: Sized {
-    type Value: SignalValue;
+impl_signal_value_for_tuples!(T1);
+impl_signal_value_for_tuples!(T1, T2);
+impl_signal_value_for_tuples!(T1, T2, T3);
+impl_signal_value_for_tuples!(T1, T2, T3, T4);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
+impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
-    fn name(&self) -> Option<&'static str> {
-        None
-    }
+pub(crate) trait SignalFn<T: SignalValue>:
+    DynClone + FnMut() -> T + 'static
+{
+}
 
-    fn next(&mut self) -> Self::Value;
+impl<T: SignalValue, F> SignalFn<T> for F where F: FnMut() -> T + Clone + 'static {}
 
-    fn smap<O, F>(self, f: F) -> MapSignal<Self, F>
-    where
-        Self: Sized,
-        F: Fn(Self::Value) -> O,
-    {
-        MapSignal::new(self, f)
-    }
+clone_trait_object!(<T> SignalFn<T> where T: SignalValue);
 
-    fn iter(self) -> impl Iterator<Item = Self::Value> {
-        SignalIter {
+pub struct Signal<D: ClockDomain, T: SignalValue> {
+    _dom: PhantomData<D>,
+    next: Box<dyn SignalFn<T>>,
+}
+
+impl<D: ClockDomain, T: SignalValue> Clone for Signal<D, T> {
+    fn clone(&self) -> Self {
+        Self {
             _dom: PhantomData,
-            signal: self,
+            next: self.next.clone(),
         }
     }
 }
 
-impl<D: ClockDomain, S1: Signal<D>, S2: Signal<D>> Signal<D> for (S1, S2) {
-    type Value = (S1::Value, S2::Value);
+impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
+    pub(crate) fn new(f: impl SignalFn<T>) -> Self {
+        Self {
+            _dom: PhantomData,
+            next: Box::new(f),
+        }
+    }
 
-    fn next(&mut self) -> Self::Value {
-        (self.0.next(), self.1.next())
+    #[allow(clippy::should_implement_trait)]
+    pub fn next(&mut self) -> T {
+        (self.next)()
+    }
+
+    pub fn map<U: SignalValue, F>(self, f: F) -> Signal<D, U>
+    where
+        F: Fn(T) -> U + Clone + 'static,
+    {
+        let mut next = self.next;
+        Signal::new(move || {
+            let val = (next)();
+            (f)(val)
+        })
+    }
+
+    pub fn iter(self) -> impl Iterator<Item = T> {
+        SignalIter(self)
     }
 }
 
-pub struct SignalIter<D, S> {
-    _dom: PhantomData<D>,
-    signal: S,
-}
+pub struct SignalIter<S>(S);
 
-impl<D: ClockDomain, S: Signal<D>> Iterator for SignalIter<D, S> {
-    type Item = S::Value;
+impl<D: ClockDomain, T: SignalValue> Iterator for SignalIter<Signal<D, T>> {
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        Some(self.signal.next())
+        Some(self.0.next())
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct MapSignal<S, F> {
-    signal: S,
+pub fn apply2<D: ClockDomain, T: SignalValue, U: SignalValue, V: SignalValue, F>(
+    s1: Signal<D, T>,
+    s2: Signal<D, U>,
     f: F,
-}
-
-impl<S, F> MapSignal<S, F> {
-    fn new(signal: S, f: F) -> Self {
-        Self { signal, f }
-    }
-}
-
-impl<D, S, O, F> Signal<D> for MapSignal<S, F>
+) -> Signal<D, V>
 where
-    D: ClockDomain,
-    S: Signal<D>,
-    O: SignalValue,
-    F: Fn(S::Value) -> O,
+    F: Fn(T, U) -> V + Clone + 'static,
 {
-    type Value = O;
+    let mut s1 = s1.next;
+    let mut s2 = s2.next;
 
-    fn next(&mut self) -> Self::Value {
-        let value = self.signal.next();
-        (self.f)(value)
-    }
+    Signal::new(move || {
+        let s1 = (s1)();
+        let s2 = (s2)();
+        (f)(s1, s2)
+    })
 }
 
-#[derive(Clone)]
-pub struct Apply2<S1, S2, F> {
-    s1: S1,
-    s2: S2,
-    f: F,
-}
-
-pub fn apply2<D, S1, S2, O, F>(s1: S1, s2: S2, f: F) -> Apply2<S1, S2, F>
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> BitAnd<Signal<D, U>> for Signal<D, T>
 where
-    D: ClockDomain,
-    S1: Signal<D>,
-    S2: Signal<D>,
-    O: SignalValue,
-    F: Fn(S1::Value, S2::Value) -> O,
+    T: BitAnd<U>,
+    <T as BitAnd<U>>::Output: SignalValue,
 {
-    Apply2 { s1, s2, f }
+    type Output = Signal<D, <T as BitAnd<U>>::Output>;
+
+    fn bitand(self, rhs: Signal<D, U>) -> Self::Output {
+        apply2(self, rhs, |lhs, rhs| lhs.bitand(rhs))
+    }
 }
 
-impl<D, S1, S2, O, F> Signal<D> for Apply2<S1, S2, F>
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> BitOr<Signal<D, U>> for Signal<D, T>
 where
-    D: ClockDomain,
-    S1: Signal<D>,
-    S2: Signal<D>,
-    O: SignalValue,
-    F: Fn(S1::Value, S2::Value) -> O,
+    T: BitOr<U>,
+    <T as BitOr<U>>::Output: SignalValue,
 {
-    type Value = O;
+    type Output = Signal<D, <T as BitOr<U>>::Output>;
 
-    fn next(&mut self) -> Self::Value {
-        let s1 = self.s1.next();
-        let s2 = self.s2.next();
-        (self.f)(s1, s2)
+    fn bitor(self, rhs: Signal<D, U>) -> Self::Output {
+        apply2(self, rhs, |lhs, rhs| lhs.bitor(rhs))
     }
 }
 
-pub trait SignalIterExt: IntoIterator + Sized {
-    fn into_signal<D>(self) -> IterSignal<D, Self::IntoIter> {
-        IterSignal(self.into_iter(), PhantomData)
+impl<D: ClockDomain, T: SignalValue> Not for Signal<D, T>
+where
+    T: Not,
+    <T as Not>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as Not>::Output>;
+
+    fn not(self) -> Self::Output {
+        self.map(|val| val.not())
     }
+}
+
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> Add<Signal<D, U>> for Signal<D, T>
+where
+    T: Add<U>,
+    <T as Add<U>>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as Add<U>>::Output>;
+
+    fn add(self, rhs: Signal<D, U>) -> Self::Output {
+        apply2(self, rhs, |lhs, rhs| lhs.add(rhs))
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> Sub<Signal<D, U>> for Signal<D, T>
+where
+    T: Sub<U>,
+    <T as Sub<U>>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as Sub<U>>::Output>;
+
+    fn sub(self, rhs: Signal<D, U>) -> Self::Output {
+        apply2(self, rhs, |lhs, rhs| lhs.sub(rhs))
+    }
+}
+
+pub trait SignalIterExt: IntoIterator + Sized
+where
+    Self::Item: SignalValue,
+{
+    fn into_signal<D: ClockDomain>(self) -> Signal<D, Self::Item>;
 }
 
 impl<I> SignalIterExt for I
 where
-    I: IntoIterator,
+    I: IntoIterator + Sized,
+    I::IntoIter: Clone + 'static,
     I::Item: SignalValue,
 {
-}
-
-pub struct IterSignal<D, I>(I, PhantomData<D>);
-
-impl<D, I: Clone> Clone for IterSignal<D, I> {
-    fn clone(&self) -> Self {
-        Self(self.0.clone(), PhantomData)
-    }
-}
-
-impl<D: ClockDomain, I: Iterator> Signal<D> for IterSignal<D, I>
-where
-    I::Item: SignalValue,
-{
-    type Value = I::Item;
-
-    fn next(&mut self) -> Self::Value {
-        let next = Iterator::next(&mut self.0);
-        println!("{:?}", next);
-        next.expect("No values")
-    }
-}
-
-#[derive_where(Debug, Clone, Copy)]
-pub struct Clock<D: ClockDomain> {
-    _dom: PhantomData<D>,
-}
-
-impl<D: ClockDomain> Default for Clock<D> {
-    fn default() -> Self {
-        Self { _dom: PhantomData }
-    }
-}
-
-impl<D: ClockDomain> Clock<D> {
-    pub fn new() -> Self {
-        Self::default()
-    }
-}
-
-#[derive_where(Clone)]
-pub struct Register<D: ClockDomain, V: SignalValue> {
-    value: V,
-    next_value: V,
-    _clock: Clock<D>,
-    comb_fn: Rc<dyn Fn(V) -> V>,
-}
-
-impl<D: ClockDomain, V: SignalValue> Register<D, V> {
-    fn new(clock: Clock<D>, reset_value: V, comb_fn: impl Fn(V) -> V + 'static) -> Self {
-        Self {
-            value: reset_value.clone(),
-            next_value: reset_value,
-            _clock: clock,
-            comb_fn: Rc::new(comb_fn),
-        }
+    fn into_signal<D: ClockDomain>(self) -> Signal<D, Self::Item> {
+        let mut iter = self.into_iter();
+        Signal::new(move || iter.next().expect("No values"))
     }
 }
 
 #[inline(always)]
-pub fn reg<D: ClockDomain, V: SignalValue + IsPrimTy>(
-    clock: Clock<D>,
-    reset_value: V,
-    comb_fn: impl Fn(V) -> V + 'static,
-) -> Register<D, V> {
-    Register::new(clock, reset_value, comb_fn)
+pub fn reg<D: ClockDomain, T: SignalValue + IsPrimTy>(
+    _clock: Clock<D>,
+    reset_val: T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    let mut next_value = reset_val.clone();
+    Signal::new(move || {
+        let value = next_value.clone();
+        next_value = (comb_fn)(value.clone());
+
+        value
+    })
 }
 
-impl<D: ClockDomain, V: SignalValue> Signal<D> for Register<D, V> {
-    type Value = V;
+pub trait Bundle<D: ClockDomain, T: SignalValue>
+where
+    Self: SignalValue,
+{
+    type Unbundled;
 
-    fn next(&mut self) -> Self::Value {
-        self.value = self.next_value.clone();
-        self.next_value = (self.comb_fn)(self.value.clone());
+    fn bundle(signals: Self::Unbundled) -> Signal<D, Self>;
 
-        self.value.clone()
+    fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SignalIterExt, *};
+    use crate::unsigned::Unsigned;
+
+    struct TestSystem;
+
+    impl ClockDomain for TestSystem {
+        const FREQ: usize = 4;
     }
-}
 
-pub trait Unbundle<D: ClockDomain, T: SignalValue> {
-    type Bundled: SignalValue;
-    type Unbundled: SignalValue;
+    #[test]
+    fn test_iter() {
+        let s = [0, 4, 3, 1, 2]
+            .into_iter()
+            .map(Unsigned::<8>::from)
+            .into_signal::<TestSystem>();
 
-    type UnbundledSig<S>
-    where
-        S: Signal<D, Value = Self::Bundled> + Clone;
+        assert_eq!(s.iter().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
+    }
 
-    fn unbundle<S>(signal: S) -> Self::UnbundledSig<S>
-    where
-        S: Signal<D, Value = Self::Bundled> + Clone;
-}
+    #[test]
+    fn test_reg() {
+        let clk = Clock::<TestSystem>::default();
+        let r = reg::<TestSystem, Unsigned<3>>(clk, 0.into(), |val| val + 1);
 
-pub trait Bundle<D: ClockDomain, T: SignalValue> {
-    type Bundled: SignalValue;
-    type Unbundled: SignalValue;
-
-    type UnbundledSig<S>
-    where
-        S: Signal<D, Value = Self::Unbundled>;
-
-    fn bundle<S>(
-        unbundled: Self::UnbundledSig<S>,
-    ) -> impl Signal<D, Value = Self::Bundled>
-    where
-        S: Signal<D, Value = Self::Unbundled>;
+        assert_eq!(r.iter().take(16).collect::<Vec<_>>(), [
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+        ]);
+    }
 }

@@ -29,16 +29,45 @@ impl<'tcx> Generator<'tcx> {
         width
     }
 
-    pub fn array_desc(&self, item_id: ItemId) -> ArrayDesc {
-        let group_id = item_id.group_id();
-        let group = self.group_list[group_id];
-        match group.kind {
-            GroupKind::Array => {
-                let count = group.item_ids.len();
-                let width = self.item_width(group.item_ids[0]);
-                ArrayDesc { count, width }
+    pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
+        match item_id {
+            ItemId::Node(node_id) => {
+                self.net_list[node_id].outputs().only_one().out.ty.into()
             }
-            _ => panic!("expected array"),
+            ItemId::Group(group_id) => {
+                let group = self.group_list[group_id];
+                match group.kind {
+                    GroupKind::Group => SignalTy::group(
+                        group.item_ids.iter().map(|item_id| self.item_ty(*item_id)),
+                    ),
+                    GroupKind::Array => {
+                        let n = group.item_ids.len();
+                        let sig_ty = self.item_ty(group.item_ids[0]);
+                        SignalTy::array(n as u128, sig_ty)
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn array_desc(&self, item_id: ItemId) -> ArrayDesc {
+        self.opt_array_desc(item_id).expect("Expected array")
+    }
+
+    pub fn opt_array_desc(&self, item_id: ItemId) -> Option<ArrayDesc> {
+        match item_id {
+            ItemId::Node(_) => None,
+            ItemId::Group(group_id) => {
+                let group = self.group_list[group_id];
+                match group.kind {
+                    GroupKind::Array => {
+                        let count = group.item_ids.len();
+                        let width = self.item_width(group.item_ids[0]);
+                        Some(ArrayDesc { count, width })
+                    }
+                    _ => None,
+                }
+            }
         }
     }
 

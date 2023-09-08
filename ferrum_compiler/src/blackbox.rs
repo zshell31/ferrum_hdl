@@ -49,6 +49,7 @@ pub enum Blackbox {
     SignalMap,
     SignalApply2,
     BitPackMsb,
+    ArrayIntoInner,
     ArrayReverse,
     Unbundle,
     Bundle,
@@ -64,7 +65,7 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::RegisterFn);
     }
 
-    if def_path == &ItemPath(&["signal", "Signal", "smap"]) {
+    if def_path == &ItemPath(&["signal", "impl", "map"]) {
         #[allow(unused_imports)]
         use ferrum::signal::Signal;
         // TODO: check that map exists
@@ -85,18 +86,24 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::BitPackMsb);
     }
 
+    if def_path == &ItemPath(&["array", "impl", "into_inner"]) {
+        #[allow(unused_imports)]
+        use ferrum::array::Array;
+        return Some(Blackbox::ArrayIntoInner);
+    }
+
     if def_path == &ItemPath(&["array", "impl", "reverse"]) {
         #[allow(unused_imports)]
         use ferrum::array::Array;
         return Some(Blackbox::ArrayReverse);
     }
 
-    if def_path == &ItemPath(&["signal", "Unbundle", "unbundle"]) {
-        return Some(Blackbox::Unbundle);
-    }
-
     if def_path == &ItemPath(&["signal", "Bundle", "bundle"]) {
         return Some(Blackbox::Bundle);
+    }
+
+    if def_path == &ItemPath(&["signal", "Bundle", "unbundle"]) {
+        return Some(Blackbox::Unbundle);
     }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
@@ -111,20 +118,27 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::StdClone);
     }
 
+    println!("{:?}", def_path);
     None
 }
 
 pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
     // TODO: check crate
+    if def_path == &ItemPath(&["signal", "Signal"]) {
+        #[allow(unused_imports)]
+        use ferrum::signal::Signal;
+        return key.generic_ty(0);
+    }
+
     if def_path == &ItemPath(&["bit", "Bit"]) {
         #[allow(unused_imports)]
         use ferrum::bit::Bit;
         return Some(PrimTy::Bit.into());
     }
 
-    if def_path == &ItemPath(&["signal", "Clock"]) {
+    if def_path == &ItemPath(&["domain", "Clock"]) {
         #[allow(unused_imports)]
-        use ferrum::signal::Clock;
+        use ferrum::domain::Clock;
         return Some(PrimTy::Clock.into());
     }
 
@@ -132,33 +146,20 @@ pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
         #[allow(unused_imports)]
         use ferrum::unsigned::Unsigned;
 
-        return key
-            .generics
-            .as_ref()
-            .and_then(|generics| generics.get(0))
-            .and_then(|generic| generic.as_const())
-            .and_then(|val| val.try_into().ok())
-            .map(|val| PrimTy::Unsigned(val).into());
+        return key.generic_const(0).map(|val| PrimTy::Unsigned(val).into());
     }
 
     if def_path == &ItemPath(&["array", "Array"]) {
         #[allow(unused_imports)]
         use ferrum::array::Array;
 
-        let n = key
-            .generics
-            .as_ref()
-            .and_then(|generics| generics.get(0))
-            .and_then(|generic| generic.as_const())?;
+        let n = key.generic_const(0)?;
+        let ty = key.generic_ty(1)?;
 
-        let ty = key
-            .generics
-            .as_ref()
-            .and_then(|generics| generics.get(1))
-            .and_then(|generic| generic.as_ty())?;
-
-        return Some(SignalTy::array(n, *ty));
+        return Some(SignalTy::array(n, ty));
     }
+
+    println!("{:?}", def_path);
 
     None
 }
@@ -184,6 +185,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::SignalMap => SignalMap.evaluate_expr(generator, expr, ctx),
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
+            Self::ArrayIntoInner => ArrayIntoInner.evaluate_expr(generator, expr, ctx),
             Self::ArrayReverse => ArrayReverse.evaluate_expr(generator, expr, ctx),
             Self::Unbundle => Unbundle.evaluate_expr(generator, expr, ctx),
             Self::Bundle => Bundle.evaluate_expr(generator, expr, ctx),
@@ -301,17 +303,21 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
     }
 }
 
-fn bit_vec_trans<'tcx>(
+pub struct BitVecTransArgs {
+    pub sig_ty: SignalTy,
+    pub rec: ItemId,
+    pub bit_vec: NodeOutId,
+}
+
+pub fn bit_vec_trans<'tcx>(
     generator: &mut Generator<'tcx>,
     rec: &Expr<'tcx>,
     ctx: EvalContext<'tcx>,
     trans: impl FnOnce(
         &mut Generator<'tcx>,
         &EvalContext<'tcx>,
-        SignalTy,
-        ItemId,
-        NodeOutId,
-    ) -> (NodeId, SignalTy),
+        BitVecTransArgs,
+    ) -> Result<(NodeId, SignalTy), Error>,
 ) -> Result<ItemId, Error> {
     let sig_ty = generator.find_sig_ty(
         &generator.node_type(rec.hir_id),
@@ -322,7 +328,12 @@ fn bit_vec_trans<'tcx>(
 
     let to = generator.to_bitvec(ctx.module_id, rec);
 
-    let (trans, sig_ty) = trans(generator, &ctx, sig_ty, rec, to);
+    let args = BitVecTransArgs {
+        sig_ty,
+        rec,
+        bit_vec: to,
+    };
+    let (trans, sig_ty) = trans(generator, &ctx, args)?;
     let trans = generator.net_list[trans]
         .outputs()
         .only_one()
@@ -344,22 +355,41 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        bit_vec_trans(generator, rec, ctx, |generator, ctx, _, _, bit_vec| {
-            let start = generator.net_list[bit_vec].ty.width() - 1;
-            let ty = PrimTy::Bit;
+        bit_vec_trans(
+            generator,
+            rec,
+            ctx,
+            |generator, ctx, BitVecTransArgs { bit_vec, .. }| {
+                let start = generator.net_list[bit_vec].ty.width() - 1;
+                let ty = PrimTy::Bit;
 
-            (
-                generator.net_list.add_node(
-                    ctx.module_id,
-                    Splitter::new(
-                        bit_vec,
-                        [(ty, generator.idents.for_module(ctx.module_id).tmp())],
-                        Some(start),
+                Ok((
+                    generator.net_list.add_node(
+                        ctx.module_id,
+                        Splitter::new(
+                            bit_vec,
+                            [(ty, generator.idents.for_module(ctx.module_id).tmp())],
+                            Some(start),
+                        ),
                     ),
-                ),
-                ty.into(),
-            )
-        })
+                    ty.into(),
+                ))
+            },
+        )
+    }
+}
+
+struct ArrayIntoInner;
+
+impl<'tcx> EvaluateExpr<'tcx> for ArrayIntoInner {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        generator.evaluate_expr(rec, ctx)
     }
 }
 
@@ -378,10 +408,16 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
             generator,
             rec,
             ctx,
-            |generator, ctx, sig_ty, rec, bit_vec| {
+            |generator,
+             ctx,
+             BitVecTransArgs {
+                 sig_ty,
+                 rec,
+                 bit_vec,
+             }| {
                 let ArrayDesc { count, width } = generator.array_desc(rec);
 
-                (
+                Ok((
                     generator.net_list.add_node(
                         ctx.module_id,
                         BitVecTrans::new(
@@ -402,7 +438,7 @@ endgenerate"#
                         ),
                     ),
                     sig_ty,
-                )
+                ))
             },
         )
     }
@@ -450,22 +486,26 @@ impl StdConversion {
     }
 
     fn convert<'tcx>(
-        from: PrimTy,
-        target: PrimTy,
+        from: SignalTy,
+        target: SignalTy,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
+        if from == target {
+            return generator.evaluate_expr(expr, ctx);
+        }
+
         match (from, target) {
-            (PrimTy::Bool, PrimTy::Bit) => {
+            (SignalTy::Prim(PrimTy::Bool), SignalTy::Prim(PrimTy::Bit)) => {
                 assert_convert::<bool, Bit>();
                 generator.evaluate_expr(expr, ctx)
             }
-            (PrimTy::Bit, PrimTy::Bool) => {
+            (SignalTy::Prim(PrimTy::Bit), SignalTy::Prim(PrimTy::Bool)) => {
                 assert_convert::<Bit, bool>();
                 generator.evaluate_expr(expr, ctx)
             }
-            (PrimTy::U128, PrimTy::Unsigned(n)) => {
+            (SignalTy::Prim(PrimTy::U128), SignalTy::Prim(PrimTy::Unsigned(n))) => {
                 assert_convert::<u128, Unsigned<1>>();
                 let node_id = generator.evaluate_expr(expr, ctx)?;
 
@@ -477,9 +517,15 @@ impl StdConversion {
 
                 Ok(node_id)
             }
-            _ => Err(
-                SpanError::new(SpanErrorKind::UnsupportedConversion, expr.span).into(),
-            ),
+            _ => {
+                println!("from: {:?}", from);
+                println!("to: {:?}", target);
+
+                Err(
+                    SpanError::new(SpanErrorKind::UnsupportedConversion, expr.span)
+                        .into(),
+                )
+            }
         }
     }
 }
@@ -495,21 +541,17 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
     ) -> Result<ItemId, Error> {
         match expr.kind {
             ExprKind::Call(rec, args) => {
-                let from = generator
-                    .find_sig_ty(
-                        &generator.node_type(args[0].hir_id),
-                        ctx.generics,
-                        args[0].span,
-                    )?
-                    .prim_ty();
+                let from = generator.find_sig_ty(
+                    &generator.node_type(args[0].hir_id),
+                    ctx.generics,
+                    args[0].span,
+                )?;
                 let target = match rec.kind {
-                    ExprKind::Path(QPath::TypeRelative(ty, _)) => generator
-                        .find_sig_ty(
-                            &generator.node_type(ty.hir_id),
-                            ctx.generics,
-                            rec.span,
-                        )?
-                        .prim_ty(),
+                    ExprKind::Path(QPath::TypeRelative(ty, _)) => generator.find_sig_ty(
+                        &generator.node_type(ty.hir_id),
+                        ctx.generics,
+                        rec.span,
+                    )?,
                     _ => {
                         return Err(Self::make_err(rec.span));
                     }
@@ -518,16 +560,16 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
                 Self::convert(from, target, generator, &args[0], ctx)
             }
             ExprKind::MethodCall(_, rec, _, span) => {
-                let from = generator
-                    .find_sig_ty(
-                        &generator.node_type(rec.hir_id),
-                        ctx.generics,
-                        rec.span,
-                    )?
-                    .prim_ty();
-                let target = generator
-                    .find_sig_ty(&generator.node_type(expr.hir_id), ctx.generics, span)?
-                    .prim_ty();
+                let from = generator.find_sig_ty(
+                    &generator.node_type(rec.hir_id),
+                    ctx.generics,
+                    rec.span,
+                )?;
+                let target = generator.find_sig_ty(
+                    &generator.node_type(expr.hir_id),
+                    ctx.generics,
+                    span,
+                )?;
 
                 Self::convert(from, target, generator, rec, ctx)
             }

@@ -72,6 +72,26 @@ where
 
 impl<const N: u8> Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
 
+impl<const N: u8> PartialEq for Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<const N: u8> PartialEq<u128> for Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn eq(&self, other: &u128) -> bool {
+        self.0 == *other
+    }
+}
+
+impl<const N: u8> Eq for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
+
 impl<const N: u8> BitPack<N> for Unsigned<N>
 where
     Assert<{ is_unsigned(N) }>: IsTrue,

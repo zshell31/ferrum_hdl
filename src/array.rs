@@ -3,7 +3,7 @@ use std::{fmt::Debug, ops::Index};
 use crate::{
     const_asserts::{Assert, IsTrue},
     domain::ClockDomain,
-    signal::{Bundle, MapSignal, Signal, SignalValue, Unbundle},
+    signal::{Bundle, Signal, SignalValue},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -32,6 +32,10 @@ impl<const N: usize, T: PartialEq> PartialEq<[T; N]> for Array<N, T> {
 impl<const N: usize, T: Eq> Eq for Array<N, T> {}
 
 impl<const N: usize, T> Array<N, T> {
+    pub fn into_inner(self) -> [T; N] {
+        self.0
+    }
+
     pub fn at<const M: usize>(self) -> T
     where
         Assert<{ M < N }>: IsTrue,
@@ -74,121 +78,35 @@ impl<const N: usize, T> Index<usize> for Array<N, T> {
     }
 }
 
-pub type UnbundledMap<
-    const N: usize,
-    T: SignalValue,
-    D: ClockDomain,
-    S: Signal<D, Value = Array<N, T>> + Clone,
-> = Array<N, MapSignal<S, impl Fn(Array<N, T>) -> T + Clone>>;
+impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T> {
+    type Unbundled = Array<N, Signal<D, T>>;
 
-impl<const N: usize, T, D> Unbundle<D, T> for Array<N, T>
-where
-    T: SignalValue,
-    D: ClockDomain,
-{
-    type Bundled = Array<N, T>;
-    type Unbundled = T;
+    fn bundle(mut signals: Self::Unbundled) -> Signal<D, Self> {
+        Signal::new(move || {
+            let values = signals
+                .0
+                .iter_mut()
+                .map(|signal| signal.next())
+                .collect::<Vec<T>>();
 
-    type UnbundledSig<S> = UnbundledMap<N, T, D, S>
-    where
-    S: Signal<D, Value = Self::Bundled> + Clone;
+            Array::from(match <[T; N]>::try_from(values) {
+                Ok(res) => res,
+                Err(_) => unreachable!(),
+            })
+        })
+    }
 
-    fn unbundle<S>(signal: S) -> Self::UnbundledSig<S>
-    where
-        S: Signal<D, Value = Self::Bundled> + Clone,
-    {
+    fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled {
         let signals = (0 .. N)
-            .map(|ind| signal.clone().smap(move |s| s[ind].clone()))
+            .map(|ind| signal.clone().map(move |s| s[ind].clone()))
             .collect::<Vec<_>>();
 
-        Array::from(match <[_; N]>::try_from(signals) {
+        Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
             Ok(res) => res,
             Err(_) => unreachable!(),
         })
     }
 }
-
-impl<const N: usize, T, D> Bundle<D, T> for Array<N, T>
-where
-    T: SignalValue,
-    D: ClockDomain,
-{
-    type Bundled = Array<N, T>;
-    type Unbundled = T;
-
-    type UnbundledSig<S> = Array<N, S>
-        where
-            S: Signal<D, Value = Self::Unbundled>;
-
-    fn bundle<S>(
-        unbundled: Self::UnbundledSig<S>,
-    ) -> impl Signal<D, Value = Self::Bundled>
-    where
-        S: Signal<D, Value = Self::Unbundled>,
-    {
-        unbundled
-    }
-}
-
-impl<const N: usize, T: SignalValue, D: ClockDomain, S: Signal<D, Value = T>> Signal<D>
-    for Array<N, S>
-{
-    type Value = Array<N, T>;
-
-    fn next(&mut self) -> Self::Value {
-        let values = self.0.iter_mut().map(|sig| sig.next()).collect::<Vec<_>>();
-        Array::from(match <[_; N]>::try_from(values) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        })
-    }
-}
-
-// impl<const N: usize, T, D> Bundle<D, T> for Array<N, T>
-// where
-//     T: SignalValue,
-//     D: ClockDomain,
-// {
-//     type Unbundled<S> = Array<N, S>
-//     where
-//         S: Signal<D, Value = T> + Clone;
-
-//     fn bundle<S>(unbundled: Self::Unbundled<S>) -> S
-//     where
-//         S: Signal<D, Value = T> + Clone,
-//     {
-//         todo!()
-//     }
-// }
-
-// impl<const N: usize, T> Array<N, T> {
-//     pub fn unbundle<D, S>(
-//         signal: S,
-//     ) -> Array<N, MapSignal<S, impl Fn(Array<N, T>) -> T + Clone>>
-//     where
-//         T: SignalValue,
-//         D: ClockDomain,
-//         S: Signal<D, Value = Array<N, T>> + Clone,
-//     {
-//         let signals = (0 .. N)
-//             .map(|ind| signal.clone().smap(move |s| s[ind].clone()))
-//             .collect::<Vec<_>>();
-
-//         Array::from(match <[_; N]>::try_from(signals) {
-//             Ok(res) => res,
-//             Err(_) => unreachable!(),
-//         })
-//     }
-// }
-
-// impl<const N: usize, T, D, S> Array<N, S>
-// where
-//     T: SignalValue,
-//     D: ClockDomain,
-//     S: Signal<D, Value = T> + Clone,
-// {
-//     pub fn bundle(self) -> impl Signal<D, Value = Array<N, S>> {}
-// }
 
 #[cfg(test)]
 mod tests {

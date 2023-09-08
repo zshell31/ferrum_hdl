@@ -43,6 +43,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "dyn-clone"
+version = "1.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfc4744c1b8f2a09adc0e55242f60b1af195d88596bd8700be74418c056c555"
+
+[[package]]
+name = "either"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
+
+[[package]]
 name = "equivalent"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -53,6 +65,7 @@ name = "ferrum"
 version = "0.1.0"
 dependencies = [
  "derive-where",
+ "dyn-clone",
  "ferrum_macros",
  "ferrum_netlist",
  "strum",
@@ -64,6 +77,7 @@ version = "0.1.0"
 dependencies = [
  "auto_enums",
  "bumpalo",
+ "either",
  "ferrum",
  "ferrum_netlist",
  "thiserror",

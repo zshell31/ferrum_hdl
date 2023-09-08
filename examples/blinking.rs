@@ -6,8 +6,8 @@ use ferrum::{
     bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
     const_functions::clog2,
-    domain::ClockDomain,
-    signal::{reg, Clock, Signal},
+    domain::{Clock, ClockDomain},
+    signal::{reg, Signal},
     unsigned::{is_unsigned, Unsigned},
 };
 
@@ -21,14 +21,14 @@ pub const fn blinking_count<D: ClockDomain>() -> u8 {
 
 pub fn blinking<D: ClockDomain>(
     clk: Clock<D>,
-) -> impl Signal<D, Value = (Bit, Unsigned<{ blinking_count::<D>() }>)>
+) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
     Assert<{ is_unsigned(blinking_count::<D>()) }>: IsTrue,
 {
     reg::<D, _>(clk, 0.into(), |r: Unsigned<{ blinking_count::<D>() }>| {
         r + 1
     })
-    .smap(|value| (value.msb(), value))
+    .map(|value| (value.msb(), value))
 }
 
 pub struct ZynqMiniDom;
@@ -43,7 +43,7 @@ const BL_COUNT: u8 = blinking_count::<ZynqMiniDom>();
 #[cfg(not(test))]
 pub fn top_module(
     clk: Clock<ZynqMiniDom>,
-) -> impl Signal<ZynqMiniDom, Value = (Bit, Unsigned<BL_COUNT>)> {
+) -> Signal<ZynqMiniDom, (Bit, Unsigned<BL_COUNT>)> {
     blinking(clk)
 }
 
@@ -61,7 +61,7 @@ mod tests {
 
     fn top_module(
         clk: Clock<TestSystem>,
-    ) -> impl Signal<TestSystem, Value = (Bit, Unsigned<BL_COUNT>)> {
+    ) -> Signal<TestSystem, (Bit, Unsigned<BL_COUNT>)> {
         blinking(clk)
     }
 

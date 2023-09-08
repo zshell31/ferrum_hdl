@@ -21,6 +21,7 @@ crate-type = ["staticlib"]
 
 [dependencies]
 derive-where = "1.2.2"
+dyn-clone = "1.0.13"
 ferrum_macros = { path = "ferrum_macros" }
 ferrum_netlist = { path = "ferrum_netlist" }
 strum = { version = "0.25.0", features = ["derive"] }

@@ -70,6 +70,8 @@ pub enum SpanErrorKind {
     ExpectedLetBind,
     #[error("expected if-else expression")]
     ExpectedIfElseExpr,
+    #[error("expected Array type")]
+    ExpectedArray,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(PrimTy),

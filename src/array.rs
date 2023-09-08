@@ -1,13 +1,40 @@
-use std::{fmt::Debug, ops::Index};
+use std::{fmt::Debug, mem, ops::Index};
 
 use crate::{
     const_asserts::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue},
+    Cast,
 };
 
 #[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
 pub struct Array<const N: usize, T>([T; N]);
+
+impl<const N: usize, T, U: Copy> Cast<[U; N]> for Array<N, T>
+where
+    T: Cast<U>,
+{
+    fn cast(self) -> [U; N] {
+        unsafe {
+            let res = mem::transmute::<*const T, *const U>(self.0.as_ptr());
+            *(res as *const [U; N])
+        }
+    }
+}
+
+impl<const N: usize, T: Copy, U> Cast<Array<N, T>> for [U; N]
+where
+    U: Cast<T>,
+{
+    fn cast(self) -> Array<N, T> {
+        unsafe {
+            let res = mem::transmute::<*const U, *const T>(self.as_ptr());
+            *(res as *const [T; N])
+        }
+        .into()
+    }
+}
 
 impl<const N: usize, T: SignalValue> SignalValue for Array<N, T> {}
 
@@ -23,8 +50,8 @@ impl<const N: usize, T: PartialEq> PartialEq<Array<N, T>> for Array<N, T> {
     }
 }
 
-impl<const N: usize, T: PartialEq> PartialEq<[T; N]> for Array<N, T> {
-    fn eq(&self, other: &[T; N]) -> bool {
+impl<const N: usize, U, T: PartialEq<U>> PartialEq<[U; N]> for Array<N, T> {
+    fn eq(&self, other: &[U; N]) -> bool {
         self.0 == *other
     }
 }
@@ -66,8 +93,6 @@ impl<const N: usize, T> Array<N, T> {
         }
         values.into()
     }
-
-    // pub fn map()
 }
 
 impl<const N: usize, T> Index<usize> for Array<N, T> {

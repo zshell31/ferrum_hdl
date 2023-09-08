@@ -856,6 +856,10 @@ impl<'tcx> Generator<'tcx> {
         pat: &[Pat<'tcx>],
         start: Option<u128>,
     ) -> Result<(), Error> {
+        if pat.is_empty() {
+            return Ok(());
+        }
+
         let module_id = node_out_id.node_id().module_id();
         let splitter = Splitter::new(
             node_out_id,

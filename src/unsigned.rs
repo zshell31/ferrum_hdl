@@ -1,5 +1,6 @@
 use std::{
     fmt::{self, Binary, Display, LowerHex},
+    mem,
     ops::{Add, Div, Mul, Sub},
 };
 
@@ -10,6 +11,7 @@ use crate::{
     bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
     signal::SignalValue,
+    Cast,
 };
 
 pub const fn is_unsigned(n: u8) -> bool {
@@ -29,17 +31,61 @@ const fn msb_mask(n: u8) -> u128 {
     1 << (n - 1)
 }
 
+#[inline(always)]
+pub fn unsigned_value(value: u128, width: u8) -> u128 {
+    value & bit_mask(width)
+}
+
+pub fn u<const N: u8>(n: u128) -> Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    n.into()
+}
+
 #[derive(Debug, Clone, Copy)]
+#[repr(transparent)]
 pub struct Unsigned<const N: u8>(u128)
 where
     Assert<{ is_unsigned(N) }>: IsTrue;
+
+impl<const N: u8> Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    pub(crate) fn new(n: u128) -> Self {
+        Self(unsigned_value(n, N))
+    }
+
+    pub(crate) fn inner(self) -> u128 {
+        unsigned_value(self.0, N)
+    }
+}
+
+impl<const N: u8> Cast<u128> for Unsigned<N>
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn cast(self) -> u128 {
+        unsafe { mem::transmute::<Unsigned<N>, u128>(self) }
+    }
+}
+
+impl<const N: u8> Cast<Unsigned<N>> for u128
+where
+    Assert<{ is_unsigned(N) }>: IsTrue,
+{
+    fn cast(self) -> Unsigned<N> {
+        unsafe { mem::transmute::<u128, Unsigned<N>>(self) }
+    }
+}
 
 impl<const N: u8> Display for Unsigned<N>
 where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.0, f)
+        Display::fmt(&self.inner(), f)
     }
 }
 
@@ -48,7 +94,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Binary::fmt(&self.0, f)
+        Binary::fmt(&self.inner(), f)
     }
 }
 
@@ -57,7 +103,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        LowerHex::fmt(&self.0, f)
+        LowerHex::fmt(&self.inner(), f)
     }
 }
 
@@ -77,7 +123,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.inner() == other.inner()
     }
 }
 
@@ -86,7 +132,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn eq(&self, other: &u128) -> bool {
-        self.0 == *other
+        self.inner() == *other
     }
 }
 
@@ -97,12 +143,8 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn msb(&self) -> Bit {
-        Bit::from_u128(self.0 & msb_mask(N))
+        Bit::from_u128(self.inner() & msb_mask(N))
     }
-}
-
-pub fn unsigned_value(value: u128, width: u8) -> u128 {
-    value & bit_mask(width)
 }
 
 impl<const N: u8> From<u128> for Unsigned<N>
@@ -110,7 +152,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn from(value: u128) -> Self {
-        Self(unsigned_value(value, N))
+        Self::new(value)
     }
 }
 
@@ -119,7 +161,7 @@ where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
     fn from(value: Unsigned<N>) -> Self {
-        value.0
+        value.inner()
     }
 }
 
@@ -130,7 +172,7 @@ where
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_add(rhs.0).into()
+        self.inner().wrapping_add(rhs.inner()).into()
     }
 }
 
@@ -152,7 +194,7 @@ where
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_sub(rhs.0).into()
+        self.inner().wrapping_sub(rhs.inner()).into()
     }
 }
 
@@ -174,7 +216,7 @@ where
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_mul(rhs.0).into()
+        self.inner().wrapping_mul(rhs.inner()).into()
     }
 }
 
@@ -196,7 +238,7 @@ where
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_div(rhs.0).into()
+        self.inner().wrapping_div(rhs.inner()).into()
     }
 }
 

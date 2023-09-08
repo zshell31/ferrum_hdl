@@ -15,5 +15,8 @@ pub mod const_asserts;
 pub mod const_functions;
 pub mod domain;
 pub mod signal;
-pub mod traits;
 pub mod unsigned;
+
+pub trait Cast<T: Sized>: Sized {
+    fn cast(self) -> T;
+}

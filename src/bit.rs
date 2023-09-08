@@ -1,14 +1,28 @@
 use std::{
     fmt::{self, Debug, Display},
+    mem,
     ops::{BitAnd, BitOr, Not},
 };
 
 use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
 
-use crate::signal::SignalValue;
+use crate::{signal::SignalValue, Cast};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(transparent)]
 pub struct Bit(bool);
+
+impl Cast<bool> for Bit {
+    fn cast(self) -> bool {
+        unsafe { mem::transmute::<Bit, bool>(self) }
+    }
+}
+
+impl Cast<Bit> for bool {
+    fn cast(self) -> Bit {
+        unsafe { mem::transmute::<bool, Bit>(self) }
+    }
+}
 
 pub fn bit_value(value: bool) -> u128 {
     match value {

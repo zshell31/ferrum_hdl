@@ -19,7 +19,7 @@ use rustc_span::Span;
 use crate::{
     bitvec::ArrayDesc,
     error::{Error, SpanError, SpanErrorKind},
-    generator::{EvalContext, Generator, Key},
+    generator::{key::Key, EvalContext, Generator},
     utils,
 };
 

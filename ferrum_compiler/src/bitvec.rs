@@ -1,7 +1,7 @@
 use std::iter;
 
 use ferrum_netlist::{
-    group_list::{Group, GroupKind, ItemId},
+    group_list::{GroupKind, ItemId, Named},
     net_list::{ModuleId, NodeOutId},
     node::{IsNode, Merger, PassNode, Splitter},
     params::Outputs,
@@ -37,12 +37,14 @@ impl<'tcx> Generator<'tcx> {
             ItemId::Group(group_id) => {
                 let group = self.group_list[group_id];
                 match group.kind {
-                    GroupKind::Group => SignalTy::group(
-                        group.item_ids.iter().map(|item_id| self.item_ty(*item_id)),
-                    ),
+                    GroupKind::Group => {
+                        SignalTy::group(group.item_ids.iter().map(|item_id| {
+                            Named::new(self.item_ty(item_id.inner), item_id.name)
+                        }))
+                    }
                     GroupKind::Array => {
                         let n = group.item_ids.len();
-                        let sig_ty = self.item_ty(group.item_ids[0]);
+                        let sig_ty = self.item_ty(group.item_ids[0].inner);
                         SignalTy::array(n as u128, sig_ty)
                     }
                 }
@@ -62,7 +64,7 @@ impl<'tcx> Generator<'tcx> {
                 match group.kind {
                     GroupKind::Array => {
                         let count = group.item_ids.len();
-                        let width = self.item_width(group.item_ids[0]);
+                        let width = self.item_width(group.item_ids[0].inner);
                         Some(ArrayDesc { count, width })
                     }
                     _ => None,
@@ -103,7 +105,7 @@ impl<'tcx> Generator<'tcx> {
                             group
                                 .item_ids
                                 .iter()
-                                .map(|item_id| self.to_bitvec(module_id, *item_id)),
+                                .map(|item_id| self.to_bitvec(module_id, item_id.inner)),
                             sym,
                         );
 
@@ -149,7 +151,7 @@ impl<'tcx> Generator<'tcx> {
             SignalTy::Group(ty) => self.to_bitvec_inner(
                 module_id,
                 node_out_id,
-                ty.iter().map(|ty| (ty.width(), *ty)),
+                ty.iter().map(|ty| (ty.inner.width(), ty.inner)),
             ),
         }
     }
@@ -182,13 +184,12 @@ impl<'tcx> Generator<'tcx> {
 
         assert_eq!(outputs.len(), n);
 
-        let group = Group::new(
-            GroupKind::Array,
-            sig_ty.zip(outputs).map(|((_, sig_ty), node_out_id)| {
-                self.from_bitvec(module_id, node_out_id, sig_ty)
-            }),
-        );
-
-        self.group_list.add_group(group).into()
+        self.make_array_group(
+            sig_ty.zip(outputs),
+            |generator, ((_, sig_ty), node_out_id)| {
+                Ok(generator.from_bitvec(module_id, node_out_id, sig_ty))
+            },
+        )
+        .unwrap()
     }
 }

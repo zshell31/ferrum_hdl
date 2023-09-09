@@ -23,6 +23,10 @@ impl Arena {
         self.0.alloc(val)
     }
 
+    pub fn alloc_str(&self, src: &str) -> &mut str {
+        self.0.alloc_str(src)
+    }
+
     pub fn alloc_slice<T: Copy>(&self, vals: &[T]) -> &mut [T] {
         assert_is_not_drop!(T);
         self.0.alloc_slice_copy(vals)

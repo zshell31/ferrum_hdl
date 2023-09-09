@@ -1,8 +1,8 @@
 pub mod expr;
 pub mod func;
 pub mod generic;
-pub mod key;
 pub mod struc;
+pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
@@ -28,7 +28,7 @@ use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
 use rustc_type_ir::TyKind::{self};
 
-use self::key::{AsKey, Key};
+use self::ty_or_def_id::TyOrDefIdWithGen;
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
@@ -93,8 +93,8 @@ impl<'tcx> EvalContext<'tcx> {
 pub struct Generator<'tcx> {
     tcx: TyCtxt<'tcx>,
     top_module: HirItemId,
-    blackbox: FxHashMap<Key<'tcx>, Option<Blackbox>>,
-    sig_ty: FxHashMap<Key<'tcx>, Option<SignalTy>>,
+    blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<Blackbox>>,
+    sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
     pub net_list: NetList,
     pub group_list: GroupList,
     pub idents: Idents,
@@ -134,7 +134,7 @@ impl<'tcx> Generator<'tcx> {
         path.set_extension("v");
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_item(item, None, true)?;
+        self.evaluate_fn_item(item, None, true)?;
 
         InjectPass::new(&mut self.net_list).inject();
 

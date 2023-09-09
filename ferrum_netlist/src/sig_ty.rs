@@ -1,4 +1,4 @@
-use crate::arena::with_arena;
+use crate::{arena::with_arena, group_list::Named};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimTy {
@@ -41,7 +41,7 @@ impl IsPrimTy for bool {
 pub enum SignalTy {
     Prim(PrimTy),
     Array(u128, &'static SignalTy),
-    Group(&'static [SignalTy]),
+    Group(&'static [Named<SignalTy>]),
 }
 
 impl !Sync for SignalTy {}
@@ -54,7 +54,7 @@ impl From<PrimTy> for SignalTy {
 }
 
 impl SignalTy {
-    pub fn group(iter: impl IntoIterator<Item = SignalTy>) -> Self {
+    pub fn group(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
         Self::Group(unsafe { with_arena().alloc_from_iter(iter) })
     }
 
@@ -73,7 +73,7 @@ impl SignalTy {
         match self {
             Self::Prim(prim_ty) => prim_ty.width(),
             Self::Array(n, ty) => n * ty.width(),
-            Self::Group(ty) => ty.iter().map(|ty| ty.width()).sum(),
+            Self::Group(ty) => ty.iter().map(|ty| ty.inner.width()).sum(),
         }
     }
 }

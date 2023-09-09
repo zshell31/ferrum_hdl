@@ -19,7 +19,7 @@ use rustc_span::Span;
 use crate::{
     bitvec::ArrayDesc,
     error::{Error, SpanError, SpanErrorKind},
-    generator::{key::Key, EvalContext, Generator},
+    generator::{ty_or_def_id::TyOrDefIdWithGen, EvalContext, Generator},
     utils,
 };
 
@@ -122,7 +122,15 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     None
 }
 
-pub fn find_sig_ty(key: &Key<'_>, def_path: &DefPath) -> Option<SignalTy> {
+pub fn ignore_ty(def_path: &DefPath) -> bool {
+    if def_path == &ItemPath(&["marker", "PhantomData"]) {
+        return true;
+    }
+
+    false
+}
+
+pub fn find_sig_ty(key: &TyOrDefIdWithGen<'_>, def_path: &DefPath) -> Option<SignalTy> {
     // TODO: check crate
     if def_path == &ItemPath(&["signal", "Signal"]) {
         #[allow(unused_imports)]
@@ -220,7 +228,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
 
         let signal_val_ty = generator.generic_type(&ty, 1).and_then(|ty| {
             generator
-                .find_sig_ty(&ty, ctx.generics, rec.span)
+                .find_sig_ty(ty, ctx.generics, rec.span)
                 .ok()
                 .map(|sig_ty| sig_ty.prim_ty())
         });
@@ -229,7 +237,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
             .generic_type(&ty, 1)
             .ok_or_else(|| Self::make_err(rec.span))?;
         let prim_ty = generator
-            .find_sig_ty(&gen, ctx.generics, rec.span)?
+            .find_sig_ty(gen, ctx.generics, rec.span)?
             .prim_ty();
 
         let clk = generator.evaluate_expr(&args[0], ctx)?.node_id();
@@ -319,11 +327,8 @@ pub fn bit_vec_trans<'tcx>(
         BitVecTransArgs,
     ) -> Result<(NodeId, SignalTy), Error>,
 ) -> Result<ItemId, Error> {
-    let sig_ty = generator.find_sig_ty(
-        &generator.node_type(rec.hir_id),
-        ctx.generics,
-        rec.span,
-    )?;
+    let sig_ty =
+        generator.find_sig_ty(generator.node_type(rec.hir_id), ctx.generics, rec.span)?;
     let rec = generator.evaluate_expr(rec, ctx)?;
 
     let to = generator.to_bitvec(ctx.module_id, rec);
@@ -542,13 +547,13 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
         match expr.kind {
             ExprKind::Call(rec, args) => {
                 let from = generator.find_sig_ty(
-                    &generator.node_type(args[0].hir_id),
+                    generator.node_type(args[0].hir_id),
                     ctx.generics,
                     args[0].span,
                 )?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator.find_sig_ty(
-                        &generator.node_type(ty.hir_id),
+                        generator.node_type(ty.hir_id),
                         ctx.generics,
                         rec.span,
                     )?,
@@ -561,12 +566,12 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
             }
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from = generator.find_sig_ty(
-                    &generator.node_type(rec.hir_id),
+                    generator.node_type(rec.hir_id),
                     ctx.generics,
                     rec.span,
                 )?;
                 let target = generator.find_sig_ty(
-                    &generator.node_type(expr.hir_id),
+                    generator.node_type(expr.hir_id),
                     ctx.generics,
                     span,
                 )?;

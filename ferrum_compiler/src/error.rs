@@ -72,6 +72,8 @@ pub enum SpanErrorKind {
     ExpectedIfElseExpr,
     #[error("expected Array type")]
     ExpectedArray,
+    #[error("expected Struct type")]
+    ExpectedStructType,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(PrimTy),
@@ -81,8 +83,6 @@ pub enum SpanErrorKind {
     UnsupportedBinOp(BinOpKind),
     #[error("unsupported conversion")]
     UnsupportedConversion,
-    #[error("unsupported generic")]
-    UnsupportedGeneric,
 
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,

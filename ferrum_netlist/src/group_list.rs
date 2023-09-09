@@ -1,6 +1,6 @@
 use std::ops::{Index, IndexMut};
 
-use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy};
+use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GroupId(usize);
@@ -55,32 +55,54 @@ impl From<SignalTy> for GroupKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Named<T> {
+    pub inner: T,
+    pub name: Option<Symbol>,
+}
+
+impl<T> Named<T> {
+    pub fn new(inner: T, name: Option<Symbol>) -> Self {
+        Self { inner, name }
+    }
+
+    pub fn is(&self, s: &str) -> bool {
+        match &self.name {
+            Some(name) => name.as_str() == s,
+            None => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct Group {
     pub kind: GroupKind,
-    pub item_ids: &'static [ItemId],
+    pub item_ids: &'static [Named<ItemId>],
 }
 
 impl !Sync for Group {}
 impl !Send for Group {}
 
 impl Group {
-    pub fn new(kind: GroupKind, iter: impl IntoIterator<Item = ItemId>) -> Self {
+    pub fn new(kind: GroupKind, iter: impl IntoIterator<Item = Named<ItemId>>) -> Self {
         Self {
             kind,
             item_ids: unsafe { with_arena().alloc_from_iter(iter) },
         }
     }
 
-    pub fn new_with_item_ids(kind: GroupKind, item_ids: &'static [ItemId]) -> Self {
+    pub fn new_with_item_ids(
+        kind: GroupKind,
+        item_ids: &'static [Named<ItemId>],
+    ) -> Self {
         Self { kind, item_ids }
     }
 
     pub fn by_field(&self, field: &str) -> Option<ItemId> {
-        match field.parse::<usize>() {
-            Ok(ind) => self.item_ids.get(ind).copied(),
-            Err(_) => None,
-        }
+        self.item_ids
+            .iter()
+            .find(|named| named.is(field))
+            .map(|named| named.inner)
     }
 
     pub fn len(&self) -> usize {
@@ -148,7 +170,7 @@ impl GroupList {
                 group
                     .item_ids
                     .iter()
-                    .map(|&item_id| self.len_inner(item_id))
+                    .map(|named| self.len_inner(named.inner))
                     .sum()
             }
         }
@@ -183,42 +205,12 @@ impl GroupList {
             ItemId::Group(group_id) => {
                 let group = &self[group_id];
 
-                for item_id in group.item_ids.iter().copied() {
-                    self.deep_iter_inner(item_id, ind, &mut *f)?;
+                for named in group.item_ids.iter() {
+                    self.deep_iter_inner(named.inner, ind, &mut *f)?;
                 }
             }
         }
 
         Ok(())
     }
-
-    // pub fn combine<F: FnMut(NodeId, NodeId) -> NodeId>(
-    //     &mut self,
-    //     item_id1: ItemId,
-    //     item_id2: ItemId,
-    //     f: &mut F,
-    // ) -> Option<ItemId> {
-    //     match (item_id1, item_id2) {
-    //         (ItemId::Node(node_id1), ItemId::Node(node_id2)) => {
-    //             Some(f(node_id1, node_id2).into())
-    //         }
-    //         (ItemId::Group(group_id1), ItemId::Group(group_id2)) => {
-    //             let item_ids1 = self[group_id1].item_ids;
-    //             let item_ids2 = self[group_id2].item_ids;
-
-    //             if item_ids1.len() != item_ids2.len() {
-    //                 return None;
-    //             }
-
-    //             let group = item_ids1
-    //                 .iter()
-    //                 .zip(item_ids2.iter())
-    //                 .map(|(item_id1, item_id2)| self.combine(*item_id1, *item_id2, f))
-    //                 .collect::<Option<Vec<ItemId>>>()?;
-
-    //             Some(self.add_group(Group::new(group)).into())
-    //         }
-    //         _ => None,
-    //     }
-    // }
 }

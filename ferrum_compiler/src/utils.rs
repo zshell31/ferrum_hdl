@@ -1,4 +1,5 @@
-use rustc_hir::{Expr, ExprKind, Pat, PathSegment};
+use rustc_hir::{def_id::DefId, Expr, ExprKind, Pat, PathSegment};
+use rustc_middle::ty::{GenericArgsRef, Ty, TyKind};
 use rustc_span::{symbol::Ident, Span};
 
 use crate::error::{Error, SpanError, SpanErrorKind};
@@ -15,6 +16,26 @@ use crate::error::{Error, SpanError, SpanErrorKind};
 //         _ => None,
 //     }
 // }
+
+pub fn ty_def_id(ty: Ty<'_>) -> Option<DefId> {
+    match ty.kind() {
+        TyKind::Adt(adt, _) => Some(adt.did()),
+        TyKind::FnDef(did, _) => Some(*did),
+        _ => None,
+    }
+}
+
+pub fn subst(ty: Ty<'_>) -> GenericArgsRef<'_> {
+    match ty.kind() {
+        TyKind::Adt(_, subst) => subst,
+        TyKind::FnDef(_, subst) => subst,
+        _ => panic!("expected substitution for type '{}'", ty),
+    }
+}
+
+pub fn subst_type(ty: Ty<'_>, index: usize) -> Option<Ty<'_>> {
+    subst(ty).get(index).and_then(|generic| generic.as_type())
+}
 
 pub fn expected_call<'a, 'tcx>(
     expr: &'a Expr<'tcx>,

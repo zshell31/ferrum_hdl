@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 #![feature(negative_impls)]
+#![feature(iter_intersperse)]
 
 mod bitvec;
 mod blackbox;

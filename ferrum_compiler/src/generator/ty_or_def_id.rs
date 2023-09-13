@@ -8,7 +8,7 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
     Ty as HirTy,
 };
-use rustc_middle::ty::{EarlyBinder, GenericArg, List, Ty, TyCtxt};
+use rustc_middle::ty::{EarlyBinder, GenericArgsRef, Ty, TyCtxt};
 use rustc_span::Span;
 use rustc_type_ir::{
     TyKind::{self},
@@ -19,6 +19,7 @@ use super::{generic::Generics, Generator};
 use crate::{
     blackbox::{self, Blackbox},
     error::{Error, SpanError, SpanErrorKind},
+    utils,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -28,33 +29,18 @@ pub enum TyOrDefId<'tcx> {
 }
 
 pub trait IsTyOrDefId<'tcx> {
-    fn make(
-        self,
-        tcx: TyCtxt<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> TyOrDefId<'tcx>;
+    fn make(self, tcx: TyCtxt<'tcx>, generics: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx>;
 }
 
 impl<'tcx> IsTyOrDefId<'tcx> for DefId {
-    fn make(
-        self,
-        _: TyCtxt<'tcx>,
-        _: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> TyOrDefId<'tcx> {
+    fn make(self, _: TyCtxt<'tcx>, _: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx> {
         TyOrDefId::DefId(self)
     }
 }
 
 impl<'tcx> IsTyOrDefId<'tcx> for Ty<'tcx> {
-    fn make(
-        self,
-        tcx: TyCtxt<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    ) -> TyOrDefId<'tcx> {
-        let ty = match generics {
-            Some(generics) => EarlyBinder::bind(self).instantiate(tcx, generics),
-            None => self,
-        };
+    fn make(self, tcx: TyCtxt<'tcx>, generics: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx> {
+        let ty = EarlyBinder::bind(self).instantiate(tcx, generics);
 
         TyOrDefId::Ty(ty)
     }
@@ -63,11 +49,7 @@ impl<'tcx> IsTyOrDefId<'tcx> for Ty<'tcx> {
 impl<'tcx> TyOrDefId<'tcx> {
     pub fn def_id(&self) -> Option<DefId> {
         match self {
-            Self::Ty(ty) => match ty.kind() {
-                TyKind::Adt(adt, _) => Some(adt.did()),
-                _ => None,
-            },
-
+            Self::Ty(ty) => utils::ty_def_id(*ty),
             Self::DefId(def_id) => Some(*def_id),
         }
     }
@@ -123,7 +105,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_blackbox<T: IsTyOrDefId<'tcx>>(
         &mut self,
         key: T,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<Blackbox, Error> {
         let key = key.make(self.tcx, generics);
@@ -157,7 +139,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_sig_ty<T: IsTyOrDefId<'tcx>>(
         &mut self,
         key: T,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
         let key = key.make(self.tcx, generics);
@@ -225,7 +207,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         fn_id: LocalDefId,
         ty: &HirTy<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
         let ty = self.ast_ty_to_ty(fn_id, ty);
@@ -235,7 +217,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_generics(
         &mut self,
         ty_or_def_id: TyOrDefId<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<TyOrDefIdWithGen<'tcx>, Error> {
         let generics = match ty_or_def_id {

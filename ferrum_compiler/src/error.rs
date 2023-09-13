@@ -51,8 +51,6 @@ pub enum SpanErrorKind {
     MissingPrimTy(String),
     #[error("cannot find node for ident {0}")]
     MissingNodeForIdent(Ident),
-    #[error("cannot define def_id")]
-    MissingDefId,
 
     #[error("expected call")]
     ExpectedCall,
@@ -83,6 +81,8 @@ pub enum SpanErrorKind {
     UnsupportedBinOp(BinOpKind),
     #[error("unsupported conversion")]
     UnsupportedConversion,
+    #[error("multiple impls of trait '{0}' found")]
+    MultipleTraitImpls(String),
 
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,

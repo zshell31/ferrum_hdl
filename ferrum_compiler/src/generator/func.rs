@@ -1,4 +1,4 @@
-use std::iter;
+use std::{borrow::Cow, iter};
 
 use ferrum_netlist::{
     group_list::ItemId,
@@ -7,11 +7,12 @@ use ferrum_netlist::{
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
+use rustc_ast::Mutability;
 use rustc_hir::{
-    def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, Param, Pat,
-    PatKind, QPath, Ty as HirTy, TyKind as HirTyKind,
+    def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
+    Param, Pat, PatKind, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
-use rustc_middle::ty::{GenericArg, List};
+use rustc_middle::ty::GenericArgsRef;
 use rustc_span::symbol::Ident;
 
 use super::{EvalContext, Generator};
@@ -26,12 +27,12 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_fn_item(
         &mut self,
         item: &Item<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generic_args: GenericArgsRef<'tcx>,
         _is_top_module: bool,
     ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
             return self
-                .evaluate_fn(item.ident, decl, body_id, generics)
+                .evaluate_fn(item.ident.as_str(), decl, body_id, generic_args)
                 .map(Some);
         }
 
@@ -41,118 +42,43 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_impl_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> Result<Option<ModuleId>, Error> {
+        let self_ty = self
+            .tcx
+            .hir()
+            .get_parent(impl_item.hir_id())
+            .expect_item()
+            .expect_impl()
+            .self_ty;
+        let ident: Cow<str> = match self_ty.kind {
+            HirTyKind::Path(QPath::Resolved(_, path), ..) => {
+                let prefix = path
+                    .segments
+                    .iter()
+                    .map(|segment| segment.ident.as_str())
+                    .intersperse("$")
+                    .collect::<String>();
+
+                format!("{}${}", prefix, impl_item.ident.as_str()).into()
+            }
+            _ => impl_item.ident.as_str().into(),
+        };
         if let ImplItemKind::Fn(FnSig { decl, .. }, body_id) = impl_item.kind {
             return self
-                .evaluate_fn(impl_item.ident, decl, body_id, generics)
+                .evaluate_fn(ident.as_ref(), decl, body_id, generic_args)
                 .map(Some);
         }
 
         Ok(None)
     }
 
-    // fn evaluate_fn_generics(
-    //     &mut self,
-    //     fn_id: LocalDefId,
-    //     hir_generics: &HirGenerics<'tcx>,
-    //     generics: Option<&'tcx List<GenericArg<'tcx>>>,
-    //     ignore: bool,
-    // ) -> Result<(), Error> {
-    //     let make_err =
-    //         |span| Error::from(SpanError::new(SpanErrorKind::UnsupportedGeneric, span));
-
-    //     let mut params: FxHashMap<DefId, Span> = hir_generics
-    //         .params
-    //         .iter()
-    //         .map(|param| (param.def_id.to_def_id(), param.span))
-    //         .collect();
-
-    //     for predicate in hir_generics.predicates {
-    //         match predicate {
-    //             WherePredicate::BoundPredicate(predicate) => {
-    //                 let def_id = match predicate.bounded_ty.as_generic_param() {
-    //                     Some((def_id, _)) => def_id,
-    //                     None => {
-    //                         continue;
-    //                     }
-    //                 };
-
-    //                 let span = match params.remove_entry(&def_id) {
-    //                     Some((_, span)) => span,
-    //                     None => {
-    //                         continue;
-    //                     }
-    //                 };
-
-    //                 let mut found_signal = false;
-    //                 for bound in predicate.bounds {
-    //                     let trait_ref = match bound.trait_ref() {
-    //                         Some(trait_ref) => trait_ref,
-    //                         None => {
-    //                             continue;
-    //                         }
-    //                     };
-
-    //                     let trait_def_id = match trait_ref.path.res.opt_def_id() {
-    //                         Some(def_id) => def_id,
-    //                         None => {
-    //                             continue;
-    //                         }
-    //                     };
-
-    //                     // TODO: move into blackbox
-    //                     if self.tcx.def_path(trait_def_id)
-    //                         == ItemPath(&["signal", "Signal"])
-    //                     {
-    //                         let arg = trait_ref.path.segments[0]
-    //                             .args
-    //                             .ok_or_else(|| make_err(span))?;
-
-    //                         let ty = arg.bindings[0].ty();
-    //                         let sig_ty =
-    //                             self.find_sig_ty_for_hir_ty(fn_id, ty, generics, span)?;
-
-    //                         let key = def_id.as_key(self, generics, span)?;
-    //                         self.sig_ty.insert(key, Some(sig_ty));
-
-    //                         let key = self
-    //                             .ast_ty_to_ty(fn_id, predicate.bounded_ty)
-    //                             .as_key(self, generics, span)?;
-    //                         self.sig_ty.insert(key, Some(sig_ty));
-
-    //                         found_signal = true;
-
-    //                         break;
-    //                     }
-    //                 }
-
-    //                 if !ignore && !found_signal {
-    //                     return Err(make_err(span));
-    //                 }
-    //             }
-    //             _ => {
-    //                 if !ignore {
-    //                     return Err(make_err(predicate.span()));
-    //                 }
-    //             }
-    //         }
-    //     }
-
-    //     if !ignore && !params.is_empty() {
-    //         let span = params.values().next().unwrap();
-    //         return Err(make_err(*span));
-    //     }
-
-    //     Ok(())
-    // }
-
     pub fn evaluate_fn(
         &mut self,
-        name: Ident,
+        name: &str,
         fn_decl: &FnDecl<'tcx>,
         body_id: BodyId,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> Result<ModuleId, Error> {
         let module_sym = self.idents.module(name);
         let module_id = self.net_list.add_module(module_sym);
@@ -161,7 +87,7 @@ impl<'tcx> Generator<'tcx> {
 
         let body = self.tcx.hir().body(body_id);
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
-        let ctx = EvalContext::new(generics, module_id);
+        let ctx = EvalContext::new(generic_args, module_id);
 
         self.evaluate_inputs(inputs, ctx, false, &mut |_| {})?;
         let item_id = self.evaluate_expr(body.value, ctx)?;
@@ -332,7 +258,7 @@ impl<'tcx> Generator<'tcx> {
             HirTyKind::Infer => {
                 let sig_ty = self.find_sig_ty(
                     self.node_type(input.hir_id),
-                    ctx.generics,
+                    ctx.generic_args,
                     input.span,
                 )?;
 
@@ -346,16 +272,16 @@ impl<'tcx> Generator<'tcx> {
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
 
-                let sig_ty =
-                    self.find_sig_ty(def_id, ctx.generics, input.span)
-                        .or_else(|_| {
-                            self.find_sig_ty_for_hir_ty(
-                                fn_id,
-                                input,
-                                ctx.generics,
-                                input.span,
-                            )
-                        })?;
+                let sig_ty = self
+                    .find_sig_ty(def_id, ctx.generic_args, input.span)
+                    .or_else(|_| {
+                        self.find_sig_ty_for_hir_ty(
+                            fn_id,
+                            input,
+                            ctx.generic_args,
+                            input.span,
+                        )
+                    })?;
 
                 let input = self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy);
 
@@ -367,6 +293,13 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(input)
             }
+            HirTyKind::Ref(
+                _,
+                MutTy {
+                    ty,
+                    mutbl: Mutability::Not,
+                },
+            ) => self.make_input(ty, ctx, is_dummy),
             HirTyKind::Tup(ty) => self.make_tuple_group(ty.iter(), |generator, ty| {
                 generator.make_input(ty, ctx, is_dummy)
             }),

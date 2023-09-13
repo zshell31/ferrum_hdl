@@ -80,6 +80,7 @@ dependencies = [
  "either",
  "ferrum",
  "ferrum_netlist",
+ "smallvec",
  "thiserror",
 ]
 

@@ -43,7 +43,7 @@ impl PartialEq<ItemPath> for DefPath {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blackbox {
     RegisterFn,
     SignalMap,
@@ -226,18 +226,16 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
 
         let ty = generator.node_type(rec.hir_id);
 
-        let signal_val_ty = generator.generic_type(&ty, 1).and_then(|ty| {
+        let signal_val_ty = utils::subst_type(ty, 1).and_then(|ty| {
             generator
-                .find_sig_ty(ty, ctx.generics, rec.span)
+                .find_sig_ty(ty, ctx.generic_args, rec.span)
                 .ok()
                 .map(|sig_ty| sig_ty.prim_ty())
         });
 
-        let gen = generator
-            .generic_type(&ty, 1)
-            .ok_or_else(|| Self::make_err(rec.span))?;
+        let gen = utils::subst_type(ty, 1).ok_or_else(|| Self::make_err(rec.span))?;
         let prim_ty = generator
-            .find_sig_ty(gen, ctx.generics, rec.span)?
+            .find_sig_ty(gen, ctx.generic_args, rec.span)?
             .prim_ty();
 
         let clk = generator.evaluate_expr(&args[0], ctx)?.node_id();
@@ -327,8 +325,11 @@ pub fn bit_vec_trans<'tcx>(
         BitVecTransArgs,
     ) -> Result<(NodeId, SignalTy), Error>,
 ) -> Result<ItemId, Error> {
-    let sig_ty =
-        generator.find_sig_ty(generator.node_type(rec.hir_id), ctx.generics, rec.span)?;
+    let sig_ty = generator.find_sig_ty(
+        generator.node_type(rec.hir_id),
+        ctx.generic_args,
+        rec.span,
+    )?;
     let rec = generator.evaluate_expr(rec, ctx)?;
 
     let to = generator.to_bitvec(ctx.module_id, rec);
@@ -548,13 +549,13 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
             ExprKind::Call(rec, args) => {
                 let from = generator.find_sig_ty(
                     generator.node_type(args[0].hir_id),
-                    ctx.generics,
+                    ctx.generic_args,
                     args[0].span,
                 )?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator.find_sig_ty(
                         generator.node_type(ty.hir_id),
-                        ctx.generics,
+                        ctx.generic_args,
                         rec.span,
                     )?,
                     _ => {
@@ -567,12 +568,12 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from = generator.find_sig_ty(
                     generator.node_type(rec.hir_id),
-                    ctx.generics,
+                    ctx.generic_args,
                     rec.span,
                 )?;
                 let target = generator.find_sig_ty(
                     generator.node_type(expr.hir_id),
-                    ctx.generics,
+                    ctx.generic_args,
                     span,
                 )?;
 

@@ -1,3 +1,4 @@
+mod arg_matcher;
 pub mod expr;
 pub mod func;
 pub mod generic;
@@ -23,16 +24,16 @@ use rustc_hir::{
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
-use rustc_middle::ty::{GenericArg, List, Ty, TyCtxt};
+use rustc_middle::ty::{EarlyBinder, GenericArgsRef, List, Ty, TyCtxt};
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
-use rustc_type_ir::TyKind::{self};
 
 use self::ty_or_def_id::TyOrDefIdWithGen;
 use crate::{
-    blackbox::Blackbox,
+    blackbox::{Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
+    utils,
 };
 
 pub struct CompilerCallbacks {}
@@ -77,17 +78,22 @@ fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
 
 #[derive(Clone, Copy)]
 pub struct EvalContext<'tcx> {
-    pub generics: Option<&'tcx List<GenericArg<'tcx>>>,
+    pub generic_args: GenericArgsRef<'tcx>,
     pub module_id: ModuleId,
 }
 
 impl<'tcx> EvalContext<'tcx> {
-    fn new(generics: Option<&'tcx List<GenericArg<'tcx>>>, module_id: ModuleId) -> Self {
+    fn new(generic_args: GenericArgsRef<'tcx>, module_id: ModuleId) -> Self {
         Self {
-            generics,
+            generic_args,
             module_id,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TraitKind {
+    From,
 }
 
 pub struct Generator<'tcx> {
@@ -95,6 +101,7 @@ pub struct Generator<'tcx> {
     top_module: HirItemId,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<Blackbox>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
+    local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     pub net_list: NetList,
     pub group_list: GroupList,
     pub idents: Idents,
@@ -103,6 +110,12 @@ pub struct Generator<'tcx> {
 impl<'tcx> !Sync for Generator<'tcx> {}
 impl<'tcx> !Send for Generator<'tcx> {}
 
+pub struct TraitImpls<'a> {
+    pub trait_id: DefId,
+    pub fn_did: DefId,
+    pub impls: &'a [LocalDefId],
+}
+
 impl<'tcx> Generator<'tcx> {
     pub fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId) -> Self {
         Self {
@@ -110,6 +123,7 @@ impl<'tcx> Generator<'tcx> {
             top_module,
             blackbox: FxHashMap::default(),
             sig_ty: FxHashMap::default(),
+            local_trait_impls: FxHashMap::default(),
             net_list: NetList::default(),
             group_list: GroupList::default(),
             idents: Idents::new(),
@@ -133,14 +147,52 @@ impl<'tcx> Generator<'tcx> {
         let mut path = path.join(name);
         path.set_extension("v");
 
+        self.collect_local_trait_impls();
+
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_fn_item(item, None, true)?;
+        self.evaluate_fn_item(item, List::empty(), true)?;
 
         InjectPass::new(&mut self.net_list).inject();
 
         let verilog = Verilog::new(&self.net_list).generate();
 
         Ok(fs::write(path, verilog)?)
+    }
+
+    fn collect_local_trait_impls(&mut self) {
+        for (trait_id, impls) in self.tcx.all_local_trait_impls(()) {
+            let def_path = self.tcx.def_path(*trait_id);
+            let mut kind = None;
+            if def_path == ItemPath(&["convert", "From"]) {
+                kind = Some(TraitKind::From);
+            }
+
+            if let Some(kind) = kind {
+                let imp = impls[0];
+                let fn_did = self.tcx.hir().expect_item(imp).expect_impl().items[0]
+                    .trait_item_def_id
+                    .unwrap();
+                self.local_trait_impls.insert(kind, (*trait_id, fn_did));
+            }
+        }
+    }
+
+    pub fn find_local_trait_impls(
+        &self,
+        trait_kind: TraitKind,
+    ) -> Option<TraitImpls<'_>> {
+        self.local_trait_impls
+            .get(&trait_kind)
+            .and_then(|(trait_id, fn_did)| {
+                self.tcx
+                    .all_local_trait_impls(())
+                    .get(trait_id)
+                    .map(|impls| TraitImpls {
+                        trait_id: *trait_id,
+                        fn_did: *fn_did,
+                        impls: impls.as_slice(),
+                    })
+            })
     }
 
     fn emit_err(&mut self, err: Error) {
@@ -161,31 +213,6 @@ impl<'tcx> Generator<'tcx> {
         typeck_res.node_type(hir_id)
     }
 
-    pub fn generics(&self, ty: &Ty<'tcx>) -> Option<&'tcx List<GenericArg<'tcx>>> {
-        match ty.kind() {
-            TyKind::FnDef(_, subst) => Some(subst),
-            _ => None,
-        }
-    }
-
-    pub fn generic_type(&self, ty: &Ty<'tcx>, index: usize) -> Option<Ty<'tcx>> {
-        self.generics(ty)
-            .and_then(|generics| generics.get(index))
-            .and_then(|generic| generic.as_type())
-    }
-
-    pub fn type_dependent_def_id(
-        &self,
-        hir_id: HirId,
-        span: Span,
-    ) -> Result<DefId, Error> {
-        self.tcx
-            .typeck(hir_id.owner)
-            .type_dependent_def_id(hir_id)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::MissingDefId, span))
-            .map_err(Into::into)
-    }
-
     pub fn item_id_for_ident(
         &mut self,
         module_id: ModuleId,
@@ -201,8 +228,9 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {
-        let item_ctx = &ItemCtxt::new(self.tcx, fn_id) as &dyn AstConv<'tcx>;
-        item_ctx.ast_ty_to_ty(ty)
+        let item_ctx = &ItemCtxt::new(self.tcx, fn_id);
+        let astconv = item_ctx.astconv();
+        astconv.ast_ty_to_ty(ty)
     }
 
     pub fn link_dummy_inputs(
@@ -239,5 +267,13 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(())
             })
+    }
+
+    pub fn subst_with(
+        &self,
+        subst: GenericArgsRef<'tcx>,
+        new_subst: GenericArgsRef<'tcx>,
+    ) -> GenericArgsRef<'tcx> {
+        EarlyBinder::bind(subst).instantiate(self.tcx, new_subst)
     }
 }

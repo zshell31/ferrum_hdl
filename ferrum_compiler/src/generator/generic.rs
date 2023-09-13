@@ -1,7 +1,9 @@
 use either::Either;
 use ferrum_netlist::{arena::with_arena, sig_ty::SignalTy};
 use rustc_const_eval::interpret::{ConstValue, Scalar};
-use rustc_middle::ty::{GenericArg, List, ScalarInt, Ty, TyCtxt, UnevaluatedConst};
+use rustc_middle::ty::{
+    GenericArg, GenericArgsRef, List, ScalarInt, Ty, TyCtxt, UnevaluatedConst,
+};
 use rustc_span::Span;
 use rustc_type_ir::{
     ConstKind,
@@ -82,7 +84,7 @@ impl Generic {
         span: Span,
     ) -> Result<Self, Error> {
         if let Some(ty) = arg.as_type() {
-            let sig_ty = generator.find_sig_ty(ty, None, span)?;
+            let sig_ty = generator.find_sig_ty(ty, List::empty(), span)?;
             return Ok(Generic::Ty(sig_ty));
         }
 
@@ -121,7 +123,7 @@ impl Generics {
     pub fn from_ty<'tcx>(
         ty: &Ty<'tcx>,
         generator: &mut Generator<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<Option<Self>, Error> {
         match ty.kind() {

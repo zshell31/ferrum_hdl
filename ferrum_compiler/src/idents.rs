@@ -94,8 +94,8 @@ impl Idents {
         Self::default()
     }
 
-    pub fn module(&self, ident: Ident) -> Symbol {
-        Symbol::new(ident.as_str())
+    pub fn module(&self, ident: &str) -> Symbol {
+        Symbol::new(ident)
     }
 
     pub fn for_module(&mut self, module_id: ModuleId) -> &mut ModuleIdents {

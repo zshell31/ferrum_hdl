@@ -1,5 +1,5 @@
 use ferrum_netlist::sig_ty::SignalTy;
-use rustc_middle::ty::{GenericArg, List, Ty, TyKind};
+use rustc_middle::ty::{GenericArgsRef, Ty, TyKind};
 use rustc_span::Span;
 
 use crate::{
@@ -12,7 +12,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_struct_ty(
         &mut self,
         ty: &Ty<'tcx>,
-        generics: Option<&'tcx List<GenericArg<'tcx>>>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<Option<SignalTy>, Error> {
         let tcx = self.tcx;

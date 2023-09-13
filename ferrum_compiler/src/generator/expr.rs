@@ -9,7 +9,7 @@ use ferrum_netlist::{
         NotNode, PassNode, Splitter,
     },
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{ArrayTy, PrimTy, SignalTy},
     symbol::Symbol,
 };
 use rustc_ast::LitKind;
@@ -23,8 +23,7 @@ use rustc_span::{source_map::Spanned, symbol::Ident, Span};
 
 use super::{arg_matcher::ArgMatcher, EvalContext, Generator, TraitImpls, TraitKind};
 use crate::{
-    bitvec::ArrayDesc,
-    blackbox::{self, bit_vec_trans, BitVecTransArgs, Blackbox, EvaluateExpr},
+    blackbox::{self, bit_vec_trans, Blackbox, EvaluateExpr},
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
@@ -536,16 +535,16 @@ impl<'tcx> Generator<'tcx> {
                     ..
                 },
                 span,
-            ) => bit_vec_trans(
-                self,
-                expr,
-                ctx,
-                |generator, ctx, BitVecTransArgs { rec, bit_vec, .. }| {
-                    let ArrayDesc { width, .. } =
-                        generator.opt_array_desc(rec).ok_or_else(|| {
-                            SpanError::new(SpanErrorKind::ExpectedArray, span)
-                        })?;
+            ) => {
+                let ArrayTy(_, sig_ty) = self
+                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                    .opt_array_ty()
+                    .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedArray, span))?;
+                let width = sig_ty.width();
 
+                let expr = self.evaluate_expr(expr, ctx)?;
+
+                bit_vec_trans(self, expr, ctx, |generator, ctx, bit_vec| {
                     let ty = PrimTy::BitVec(width);
                     let start = ind * width;
                     Ok((
@@ -559,8 +558,8 @@ impl<'tcx> Generator<'tcx> {
                         ),
                         ty.into(),
                     ))
-                },
-            ),
+                })
+            }
             ExprKind::Lit(lit) => {
                 let prim_ty = self.find_sig_ty(ty, ctx.generic_args, lit.span)?.prim_ty();
                 let value = blackbox::evaluate_lit(prim_ty, lit)?;

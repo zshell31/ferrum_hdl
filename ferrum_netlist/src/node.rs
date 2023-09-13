@@ -3,7 +3,9 @@ mod bit_not;
 mod bit_vec_trans;
 mod consta;
 mod dff;
+mod expr;
 mod input;
+mod loop_nodes;
 mod merger;
 mod mod_inst;
 mod mux2;
@@ -21,7 +23,9 @@ pub use self::{
     bit_vec_trans::BitVecTrans,
     consta::ConstNode,
     dff::DFFNode,
+    expr::Expr,
     input::InputNode,
+    loop_nodes::{LoopEnd, LoopStart},
     merger::Merger,
     mod_inst::ModInst,
     mux2::Mux2Node,
@@ -79,7 +83,7 @@ macro_rules! define_nodes {
             fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
                 match self {
                     $(
-                        Self::$kind(node) => node.inputs().items(),
+                        Self::$kind(node) => Inputs::items(node.inputs()),
                     )+
                 }
             }
@@ -87,7 +91,7 @@ macro_rules! define_nodes {
             fn len(&self) -> usize {
                 match self {
                     $(
-                        Self::$kind(node) => node.inputs().len(),
+                        Self::$kind(node) => Inputs::len(node.inputs()),
                     )+
                 }
             }
@@ -106,7 +110,7 @@ macro_rules! define_nodes {
             fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
                 match self {
                     $(
-                        Self::$kind(node) => node.outputs().items(),
+                        Self::$kind(node) => Outputs::items(node.outputs()),
                     )+
                 }
             }
@@ -115,7 +119,7 @@ macro_rules! define_nodes {
             fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_ {
                 match self {
                     $(
-                        Self::$kind(node) => node.outputs_mut().items_mut(),
+                        Self::$kind(node) => Outputs::items_mut(node.outputs_mut()),
                     )+
                 }
             }
@@ -123,7 +127,7 @@ macro_rules! define_nodes {
             fn by_ind(&self, out: OutId) -> &NodeOutput {
                 match self {
                     $(
-                        Self::$kind(node) => node.outputs().by_ind(out),
+                        Self::$kind(node) => Outputs::by_ind(node.outputs(), out),
                     )+
                 }
             }
@@ -131,7 +135,7 @@ macro_rules! define_nodes {
             fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
                 match self {
                     $(
-                        Self::$kind(node) => node.outputs_mut().by_ind_mut(out),
+                        Self::$kind(node) => Outputs::by_ind_mut(node.outputs_mut(), out),
                     )+
                 }
             }
@@ -139,7 +143,7 @@ macro_rules! define_nodes {
             fn len(&self) -> usize {
                 match self {
                     $(
-                        Self::$kind(node) => node.outputs().len(),
+                        Self::$kind(node) => Outputs::len(node.outputs()),
                     )+
                 }
             }
@@ -174,6 +178,9 @@ define_nodes!(
     DummyInput => InputNode,
     Input => InputNode,
     ModInst => ModInst,
+    LoopStart => LoopStart,
+    LoopEnd => LoopEnd,
+    Expr => Expr,
     Pass => PassNode,
     Const => ConstNode,
     Splitter => Splitter,

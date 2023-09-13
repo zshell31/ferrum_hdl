@@ -5,8 +5,8 @@ use crate::{
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, BitVecTrans, ConstNode, DFFNode, IsNode, Merger, ModInst,
-        Mux2Node, Node, NodeOutput, NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, BitVecTrans, ConstNode, DFFNode, Expr, IsNode, LoopStart,
+        Merger, ModInst, Mux2Node, Node, NodeOutput, NotNode, PassNode, Splitter,
     },
     params::Outputs,
     symbol::Symbol,
@@ -16,9 +16,9 @@ use crate::{
 pub trait Backend {}
 
 pub struct Verilog<'n> {
-    buffer: Buffer,
-    locals: BTreeSet<Symbol>,
-    net_list: &'n NetList,
+    pub buffer: Buffer,
+    pub locals: BTreeSet<Symbol>,
+    pub net_list: &'n NetList,
 }
 
 impl<'n> Verilog<'n> {
@@ -243,6 +243,47 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_str(");\n\n");
             }
+            Node::LoopStart(LoopStart {
+                genvar,
+                count,
+                output,
+            }) => {
+                if let Some(output) = output {
+                    self.write_local(output, None);
+                }
+
+                self.buffer.write_template(format_args!(
+                    r#"
+genvar {genvar};
+generate
+for ({genvar} = 0; {genvar} < {count}; {genvar} = {genvar} + 1) begin
+"#
+                ));
+                self.buffer.push_tab();
+            }
+            Node::LoopEnd(_) => {
+                self.buffer.pop_tab();
+                self.buffer.write_template(format_args!(
+                    r#"
+end
+endgenerate
+                "#,
+                ));
+            }
+            Node::Expr(Expr {
+                input,
+                output,
+                skip_output_def,
+                expr,
+            }) => {
+                if !skip_output_def {
+                    self.write_local(output, None);
+                }
+                let input = self.net_list[*input].sym;
+                let output = output.sym;
+
+                expr(&mut self.buffer, input, output);
+            }
             Node::Pass(PassNode {
                 inject,
                 input,
@@ -327,7 +368,7 @@ impl<'n> Visitor for Verilog<'n> {
                 let input = self.net_list[*input].sym;
                 let output = output.sym;
 
-                trans(&mut self.buffer, input, output);
+                trans(self, input, output);
             }
             Node::BitNot(BitNotNode { input, output }) => {
                 self.write_local(output, None);

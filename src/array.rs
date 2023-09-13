@@ -93,6 +93,10 @@ impl<const N: usize, T> Array<N, T> {
         }
         values.into()
     }
+
+    pub fn map<U>(self, f: impl Fn(T) -> U) -> Array<N, U> {
+        self.0.map(f).into()
+    }
 }
 
 impl<const N: usize, T> Index<usize> for Array<N, T> {

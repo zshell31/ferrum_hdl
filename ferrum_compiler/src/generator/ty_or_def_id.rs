@@ -160,7 +160,7 @@ impl<'tcx> Generator<'tcx> {
                                 unsafe { with_arena().alloc(key.generic_ty(0).unwrap()) };
                             let cons = key.generic_const(1).unwrap();
 
-                            sig_ty = Some(SignalTy::Array(cons, ty));
+                            sig_ty = Some(SignalTy::mk_array(cons, *ty));
                         }
                         TyKind::Bool => {
                             sig_ty = Some(PrimTy::Bool.into());

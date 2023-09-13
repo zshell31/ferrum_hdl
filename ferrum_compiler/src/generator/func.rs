@@ -5,7 +5,7 @@ use ferrum_netlist::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{InputNode, IsNode, PassNode, Splitter},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
 use rustc_ast::Mutability;
 use rustc_hir::{
@@ -17,7 +17,6 @@ use rustc_span::symbol::Ident;
 
 use super::{EvalContext, Generator};
 use crate::{
-    bitvec::ArrayDesc,
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
     utils,
@@ -129,7 +128,7 @@ impl<'tcx> Generator<'tcx> {
                 let ident = utils::pat_ident(pat)?;
                 match item_id {
                     ItemId::Node(node_id) => {
-                        let sym = self.idents.for_module(module_id).ident(ident);
+                        let sym = self.idents.for_module(module_id).ident(ident.as_str());
                         self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
                     }
                     ItemId::Group(group_id) => {
@@ -145,21 +144,19 @@ impl<'tcx> Generator<'tcx> {
                     .add_local_ident(ident, item_id);
             }
             PatKind::Slice(before, wild, after) => {
-                let ArrayDesc { count, width } =
-                    self.opt_array_desc(item_id).ok_or_else(|| {
+                let ArrayTy(count, sig_ty) =
+                    self.item_ty(item_id).opt_array_ty().ok_or_else(|| {
                         SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
                     })?;
-
-                let sig_ty =
-                    self.item_ty(self.group_list[item_id.group_id()].item_ids[0].inner);
+                let width = sig_ty.width();
 
                 let to = self.to_bitvec(module_id, item_id);
 
-                self.slice_pattern_match(to, width, sig_ty, before, None)?;
+                self.slice_pattern_match(to, width, *sig_ty, before, None)?;
 
                 if wild.is_some() {
-                    let start = ((count - after.len()) as u128) * width;
-                    self.slice_pattern_match(to, width, sig_ty, after, Some(start))?;
+                    let start = (count - (after.len() as u128)) * width;
+                    self.slice_pattern_match(to, width, *sig_ty, after, Some(start))?;
                 }
             }
             PatKind::Tuple(pats, dot_dot_pos) => {
@@ -327,7 +324,7 @@ impl<'tcx> Generator<'tcx> {
                 })
                 .into()
             }
-            SignalTy::Array(n, ty) => self
+            SignalTy::Array(ArrayTy(n, ty)) => self
                 .make_array_group(iter::repeat(ty).take(n as usize), |generator, ty| {
                     Ok(generator.make_input_with_sig_ty(*ty, module_id, is_dummy))
                 })

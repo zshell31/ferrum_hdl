@@ -2,46 +2,49 @@ use derive_where::derive_where;
 
 use super::{IsNode, Node, NodeOutput};
 use crate::{
-    backend::Verilog, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
+    buffer::Buffer, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
     symbol::Symbol,
 };
 
 #[derive_where(Debug)]
-pub struct BitVecTrans {
+pub struct Expr {
     pub input: NodeOutId,
     pub output: NodeOutput,
+    pub skip_output_def: bool,
     // TODO: how to specify trans for different backends (Verilog, VHDL, etc)
     #[allow(clippy::type_complexity)]
     #[derive_where(skip)]
-    pub trans: Box<dyn for<'n> Fn(&mut Verilog<'n>, Symbol, Symbol)>,
+    pub expr: Box<dyn Fn(&mut Buffer, Symbol, Symbol)>,
 }
 
-impl BitVecTrans {
+impl Expr {
     pub fn new(
-        width: u128,
+        ty: PrimTy,
         input: NodeOutId,
         sym: Symbol,
-        trans: impl for<'n> Fn(&mut Verilog<'n>, Symbol, Symbol) + 'static,
+        skip_output_def: bool,
+        expr: impl Fn(&mut Buffer, Symbol, Symbol) + 'static,
     ) -> Self {
         Self {
             input,
             output: NodeOutput {
-                ty: PrimTy::BitVec(width),
+                ty,
                 sym,
                 kind: NetKind::Wire,
             },
-            trans: Box::new(trans),
+            skip_output_def,
+            expr: Box::new(expr),
         }
     }
 }
 
-impl From<BitVecTrans> for Node {
-    fn from(node: BitVecTrans) -> Self {
-        Self::BitVecTrans(node)
+impl From<Expr> for Node {
+    fn from(node: Expr) -> Self {
+        Self::Expr(node)
     }
 }
 
-impl IsNode for BitVecTrans {
+impl IsNode for Expr {
     type Inputs = NodeOutId;
     type Outputs = NodeOutput;
 

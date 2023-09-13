@@ -1,3 +1,7 @@
+use std::iter;
+
+use either::Either;
+
 use crate::{
     net_list::{NodeId, NodeOutId, OutId},
     node::NodeOutput,
@@ -12,7 +16,7 @@ pub trait Inputs {
 
 impl Inputs for () {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        [].into_iter()
+        iter::empty()
     }
 
     fn len(&self) -> usize {
@@ -117,6 +121,28 @@ macro_rules! no_output {
     };
 }
 
+impl Outputs for () {
+    fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
+        iter::empty()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_ {
+        iter::empty()
+    }
+
+    fn by_ind(&self, _out: OutId) -> &NodeOutput {
+        panic!("no outputs")
+    }
+
+    fn by_ind_mut(&mut self, _out: OutId) -> &mut NodeOutput {
+        panic!("no outputs")
+    }
+
+    fn len(&self) -> usize {
+        0
+    }
+}
+
 impl Outputs for NodeOutput {
     fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
         [self]
@@ -154,6 +180,43 @@ impl Outputs for NodeOutput {
 
     fn len(&self) -> usize {
         1
+    }
+}
+
+impl Outputs for Option<NodeOutput> {
+    fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
+        match self {
+            Some(output) => Either::Left(output.items()),
+            None => Either::Right(iter::empty()),
+        }
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_ {
+        match self {
+            Some(output) => Either::Left(output.items_mut()),
+            None => Either::Right(iter::empty()),
+        }
+    }
+
+    fn by_ind(&self, out: OutId) -> &NodeOutput {
+        match self {
+            Some(output) => output.by_ind(out),
+            None => no_output!(out),
+        }
+    }
+
+    fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
+        match self {
+            Some(output) => output.by_ind_mut(out),
+            None => no_output!(out),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Some(output) => output.len(),
+            None => 0,
+        }
     }
 }
 

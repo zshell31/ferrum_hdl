@@ -38,9 +38,12 @@ impl IsPrimTy for bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ArrayTy(pub u128, pub &'static SignalTy);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignalTy {
     Prim(PrimTy),
-    Array(u128, &'static SignalTy),
+    Array(ArrayTy),
     Group(&'static [Named<SignalTy>]),
 }
 
@@ -54,12 +57,23 @@ impl From<PrimTy> for SignalTy {
 }
 
 impl SignalTy {
-    pub fn group(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
+    pub fn mk_group(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
         Self::Group(unsafe { with_arena().alloc_from_iter(iter) })
     }
 
-    pub fn array(n: u128, sig_ty: SignalTy) -> Self {
-        Self::Array(n, unsafe { with_arena().alloc(sig_ty) })
+    pub fn mk_array(n: u128, sig_ty: SignalTy) -> Self {
+        Self::Array(ArrayTy(n, unsafe { with_arena().alloc(sig_ty) }))
+    }
+
+    pub fn opt_array_ty(&self) -> Option<ArrayTy> {
+        match self {
+            Self::Array(array_ty) => Some(*array_ty),
+            _ => None,
+        }
+    }
+
+    pub fn array_ty(&self) -> ArrayTy {
+        self.opt_array_ty().expect("expected array type")
     }
 
     pub fn prim_ty(&self) -> PrimTy {
@@ -72,7 +86,7 @@ impl SignalTy {
     pub fn width(&self) -> u128 {
         match self {
             Self::Prim(prim_ty) => prim_ty.width(),
-            Self::Array(n, ty) => n * ty.width(),
+            Self::Array(ArrayTy(n, ty)) => n * ty.width(),
             Self::Group(ty) => ty.iter().map(|ty| ty.inner.width()).sum(),
         }
     }

@@ -5,15 +5,10 @@ use ferrum_netlist::{
     net_list::{ModuleId, NodeOutId},
     node::{IsNode, Merger, PassNode, Splitter},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
 
 use crate::generator::Generator;
-
-pub struct ArrayDesc {
-    pub count: usize,
-    pub width: u128,
-}
 
 impl<'tcx> Generator<'tcx> {
     pub fn item_width(&self, item_id: ItemId) -> u128 {
@@ -38,36 +33,15 @@ impl<'tcx> Generator<'tcx> {
                 let group = self.group_list[group_id];
                 match group.kind {
                     GroupKind::Group => {
-                        SignalTy::group(group.item_ids.iter().map(|item_id| {
+                        SignalTy::mk_group(group.item_ids.iter().map(|item_id| {
                             Named::new(self.item_ty(item_id.inner), item_id.name)
                         }))
                     }
                     GroupKind::Array => {
                         let n = group.item_ids.len();
                         let sig_ty = self.item_ty(group.item_ids[0].inner);
-                        SignalTy::array(n as u128, sig_ty)
+                        SignalTy::mk_array(n as u128, sig_ty)
                     }
-                }
-            }
-        }
-    }
-
-    pub fn array_desc(&self, item_id: ItemId) -> ArrayDesc {
-        self.opt_array_desc(item_id).expect("Expected array")
-    }
-
-    pub fn opt_array_desc(&self, item_id: ItemId) -> Option<ArrayDesc> {
-        match item_id {
-            ItemId::Node(_) => None,
-            ItemId::Group(group_id) => {
-                let group = self.group_list[group_id];
-                match group.kind {
-                    GroupKind::Array => {
-                        let count = group.item_ids.len();
-                        let width = self.item_width(group.item_ids[0].inner);
-                        Some(ArrayDesc { count, width })
-                    }
-                    _ => None,
                 }
             }
         }
@@ -139,7 +113,7 @@ impl<'tcx> Generator<'tcx> {
                 );
                 self.net_list.add_node(module_id, pass).into()
             }
-            SignalTy::Array(n, sig_ty) => {
+            SignalTy::Array(ArrayTy(n, sig_ty)) => {
                 let width = sig_ty.width();
 
                 self.to_bitvec_inner(

@@ -33,7 +33,6 @@ use crate::{
     blackbox::{Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
-    utils,
 };
 
 pub struct CompilerCallbacks {}

@@ -43,8 +43,8 @@ impl ModuleIdents {
         }
     }
 
-    pub fn ident(&mut self, ident: Ident) -> Symbol {
-        self.ident_inner(ident.as_str())
+    pub fn ident(&mut self, ident: &str) -> Symbol {
+        self.ident_inner(ident)
     }
 
     pub fn tmp(&mut self) -> Symbol {

@@ -70,6 +70,10 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         (self.next)()
     }
 
+    pub fn lift(value: T) -> Signal<D, T> {
+        Self::new(move || value.clone())
+    }
+
     pub fn map<U: SignalValue, F>(self, f: F) -> Signal<D, U>
     where
         F: Fn(T) -> U + Clone + 'static,

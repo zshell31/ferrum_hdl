@@ -8,7 +8,7 @@ pub struct LocalScope(FxHashMap<Ident, ItemId>);
 #[derive(Debug, Default)]
 pub struct ModuleIdents {
     scopes: Vec<LocalScope>,
-    idents: FxHashMap<String, usize>,
+    idents: FxHashMap<Symbol, usize>,
     self_arg: Option<ItemId>,
 }
 
@@ -30,15 +30,16 @@ impl ModuleIdents {
             "self" => "self$",
             _ => ident,
         };
+        let ident = Symbol::new(ident);
 
-        match self.idents.get_mut(ident) {
+        match self.idents.get_mut(&ident) {
             Some(count) => {
                 *count += 1;
-                Symbol::new(&format!("{}_{}", ident, count))
+                Symbol::new_from_args(format_args!("{}_{}", ident, count))
             }
             None => {
-                self.idents.insert(ident.to_string(), 0);
-                Symbol::new(ident)
+                self.idents.insert(ident, 0);
+                ident
             }
         }
     }

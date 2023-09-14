@@ -14,7 +14,7 @@ use ferrum_netlist::{
 };
 use rustc_ast::LitKind;
 use rustc_hir::{
-    def::Res,
+    def::{DefKind, Res},
     def_id::{DefId, LocalDefId},
     BinOpKind, Expr, ExprKind, Path, QPath, StmtKind, UnOp,
 };
@@ -641,17 +641,21 @@ impl<'tcx> Generator<'tcx> {
                     }
                 }
             }
-            ExprKind::Path(QPath::Resolved(
-                _,
-                Path {
-                    res: Res::Local(_),
-                    segments,
-                    ..
-                },
-            )) if segments.len() == 1 => {
-                let ident = segments[0].ident;
-                self.item_id_for_ident(ctx.module_id, ident)
-            }
+            ExprKind::Path(QPath::Resolved(_, Path { res, segments, .. })) => match res {
+                Res::Local(_) if segments.len() == 1 => {
+                    let ident = segments[0].ident;
+                    self.item_id_for_ident(ctx.module_id, ident)
+                }
+                Res::Def(DefKind::Const, def_id) => {
+                    let blackbox =
+                        self.find_blackbox(*def_id, ctx.generic_args, expr.span)?;
+                    blackbox.evaluate_expr(self, expr, ctx)
+                }
+                _ => {
+                    println!("{:#?}", expr);
+                    Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
+                }
+            },
             ExprKind::Struct(_, fields, ..) => self.make_struct_group_from_exprs(
                 expr,
                 fields.iter().map(|field| field.expr),

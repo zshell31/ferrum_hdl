@@ -1,4 +1,4 @@
-use std::{cell::OnceCell, mem};
+use std::{cell::OnceCell, fmt::Arguments, mem};
 
 use bumpalo::Bump;
 use smallvec::SmallVec;
@@ -25,6 +25,14 @@ impl Arena {
 
     pub fn alloc_str(&self, src: &str) -> &mut str {
         self.0.alloc_str(src)
+    }
+
+    pub fn alloc_args(&self, args: Arguments<'_>) -> &str {
+        use bumpalo::core_alloc::fmt::Write;
+        let b = &self.0;
+        let mut s = bumpalo::collections::String::new_in(b);
+        let _ = s.write_fmt(args);
+        s.into_bump_str()
     }
 
     pub fn alloc_slice<T: Copy>(&self, vals: &[T]) -> &mut [T] {

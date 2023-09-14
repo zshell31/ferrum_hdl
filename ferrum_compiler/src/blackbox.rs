@@ -5,7 +5,9 @@ use ferrum::{
 use ferrum_netlist::{
     group_list::ItemId,
     net_list::{NodeId, NodeOutId},
-    node::{DFFNode, Expr as ExprNode, IsNode, LoopEnd, LoopStart, Node, Splitter},
+    node::{
+        ConstNode, DFFNode, Expr as ExprNode, IsNode, LoopEnd, LoopStart, Node, Splitter,
+    },
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
     symbol::Symbol,
@@ -45,6 +47,8 @@ impl PartialEq<ItemPath> for DefPath {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Blackbox {
+    BitL,
+    BitH,
     RegisterFn,
     SignalLift,
     SignalMap,
@@ -61,6 +65,14 @@ pub enum Blackbox {
 
 pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     // TODO: check crate
+    if def_path == &ItemPath(&["bit", "L"]) {
+        return Some(Blackbox::BitL);
+    }
+
+    if def_path == &ItemPath(&["bit", "H"]) {
+        return Some(Blackbox::BitH);
+    }
+
     if def_path == &ItemPath(&["signal", "reg"]) {
         return Some(Blackbox::RegisterFn);
     }
@@ -184,6 +196,8 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match self {
+            Self::BitL => BitL.evaluate_expr(generator, expr, ctx),
+            Self::BitH => BitH.evaluate_expr(generator, expr, ctx),
             Self::RegisterFn => RegisterFn.evaluate_expr(generator, expr, ctx),
             Self::SignalLift => SignalLift.evaluate_expr(generator, expr, ctx),
             Self::SignalMap => SignalMap.evaluate_expr(generator, expr, ctx),
@@ -197,6 +211,45 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::StdConversion => StdConversion.evaluate_expr(generator, expr, ctx),
             Self::StdClone => StdClone.evaluate_expr(generator, expr, ctx),
         }
+    }
+}
+
+fn create_bit_value<'tcx>(
+    generator: &mut Generator<'tcx>,
+    value: u128,
+    ctx: EvalContext<'tcx>,
+) -> Result<ItemId, Error> {
+    let cons = ConstNode::new(
+        PrimTy::Bit,
+        value,
+        generator.idents.for_module(ctx.module_id).tmp(),
+    );
+    Ok(generator.net_list.add_node(ctx.module_id, cons).into())
+}
+
+struct BitL;
+
+impl<'tcx> EvaluateExpr<'tcx> for BitL {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        _: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        create_bit_value(generator, 0, ctx)
+    }
+}
+
+struct BitH;
+
+impl<'tcx> EvaluateExpr<'tcx> for BitH {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        _: &Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        create_bit_value(generator, 1, ctx)
     }
 }
 

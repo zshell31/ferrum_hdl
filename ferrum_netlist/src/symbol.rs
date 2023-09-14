@@ -1,4 +1,4 @@
-use std::fmt::{self, Debug, Display};
+use std::fmt::{self, Arguments, Debug, Display};
 
 use crate::arena::with_arena;
 
@@ -23,8 +23,13 @@ impl Display for Symbol {
 impl Symbol {
     pub fn new(name: &str) -> Self {
         // TODO: check duplicates
-        let src = unsafe { with_arena().alloc_str(name) };
-        Self(src)
+        let s = unsafe { with_arena().alloc_str(name) };
+        Self(s)
+    }
+
+    pub fn new_from_args(args: Arguments<'_>) -> Self {
+        let s = unsafe { with_arena().alloc_args(args) };
+        Self(s)
     }
 
     pub fn new_from_ind(ind: usize) -> Self {

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 auto_enums = "0.8.2"
-bumpalo = "3.13.0"
+bumpalo = { version = "3.13.0", features = ["collections"] }
 derive-where = "1.2.5"
 either = "1.9.0"
 indexmap = "2.0.0"

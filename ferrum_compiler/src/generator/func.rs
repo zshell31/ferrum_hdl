@@ -254,7 +254,7 @@ impl<'tcx> Generator<'tcx> {
         match input.kind {
             HirTyKind::Infer => {
                 let sig_ty = self.find_sig_ty(
-                    self.node_type(input.hir_id),
+                    self.node_type(input.hir_id, ctx.generic_args),
                     ctx.generic_args,
                     input.span,
                 )?;

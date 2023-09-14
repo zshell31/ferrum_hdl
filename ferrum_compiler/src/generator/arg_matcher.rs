@@ -1,15 +1,20 @@
-use rustc_middle::ty::{Const, ConstKind, GenericArg, GenericArgKind, Ty, TyKind};
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::{
+    Const, ConstKind, GenericArg, GenericArgKind, GenericArgs, GenericArgsRef, Ty,
+    TyCtxt, TyKind,
+};
 use smallvec::SmallVec;
 
 pub struct ArgMatcher<'tcx> {
+    tcx: TyCtxt<'tcx>,
     generic_args: SmallVec<[Option<GenericArg<'tcx>>; 8]>,
 }
 
 impl<'tcx> ArgMatcher<'tcx> {
-    pub fn new() -> Self {
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
         let generic_args = SmallVec::with_capacity(8);
 
-        Self { generic_args }
+        Self { tcx, generic_args }
     }
 
     pub fn clear(&mut self) {
@@ -24,6 +29,29 @@ impl<'tcx> ArgMatcher<'tcx> {
         orig.iter()
             .zip(with_param)
             .all(|(orig, with_param)| self.is_ty_match(*orig, *with_param))
+    }
+
+    pub fn extract_params(
+        mut self,
+        def_id: DefId,
+        orig: &[GenericArg<'tcx>],
+        with_param: &[GenericArg<'tcx>],
+    ) -> Option<GenericArgsRef<'tcx>> {
+        let is_match = self.is_args_match(orig, with_param);
+        if is_match {
+            Some(GenericArgs::for_item(
+                self.tcx,
+                def_id,
+                |param, _| match self.arg(param.index) {
+                    Some(arg) => arg,
+                    None => {
+                        panic!("cannot find generic arg for param {:?}", param);
+                    }
+                },
+            ))
+        } else {
+            None
+        }
     }
 
     pub fn is_args_match(
@@ -61,9 +89,7 @@ impl<'tcx> ArgMatcher<'tcx> {
                 GenericArgKind::Const(orig_cons),
                 GenericArgKind::Const(cons_with_param),
             ) => self.is_cons_match(orig_cons, cons_with_param),
-            (GenericArgKind::Lifetime(_), GenericArgKind::Lifetime(_)) => {
-                panic!("lifetimes are not supported");
-            }
+            (GenericArgKind::Lifetime(_), GenericArgKind::Lifetime(_)) => true,
             _ => false,
         }
     }

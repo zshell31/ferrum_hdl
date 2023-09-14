@@ -24,7 +24,7 @@ use rustc_hir::{
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
-use rustc_middle::ty::{EarlyBinder, GenericArgsRef, List, Ty, TyCtxt};
+use rustc_middle::ty::{AssocKind, EarlyBinder, GenericArgsRef, List, Ty, TyCtxt};
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
 
@@ -95,12 +95,22 @@ pub enum TraitKind {
     From,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MonoItem<'tcx>(LocalDefId, GenericArgsRef<'tcx>);
+
+impl<'tcx> MonoItem<'tcx> {
+    pub fn new(item_id: LocalDefId, generic_args: GenericArgsRef<'tcx>) -> Self {
+        Self(item_id, generic_args)
+    }
+}
+
 pub struct Generator<'tcx> {
     tcx: TyCtxt<'tcx>,
     top_module: HirItemId,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<Blackbox>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
+    evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     pub net_list: NetList,
     pub group_list: GroupList,
     pub idents: Idents,
@@ -109,10 +119,10 @@ pub struct Generator<'tcx> {
 impl<'tcx> !Sync for Generator<'tcx> {}
 impl<'tcx> !Send for Generator<'tcx> {}
 
-pub struct TraitImpls<'a> {
+pub struct TraitImpls<'tcx> {
     pub trait_id: DefId,
     pub fn_did: DefId,
-    pub impls: &'a [LocalDefId],
+    pub impls: &'tcx [LocalDefId],
 }
 
 impl<'tcx> Generator<'tcx> {
@@ -123,6 +133,7 @@ impl<'tcx> Generator<'tcx> {
             blackbox: FxHashMap::default(),
             sig_ty: FxHashMap::default(),
             local_trait_impls: FxHashMap::default(),
+            evaluated_modules: FxHashMap::default(),
             net_list: NetList::default(),
             group_list: GroupList::default(),
             idents: Idents::new(),
@@ -159,19 +170,23 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn collect_local_trait_impls(&mut self) {
-        for (trait_id, impls) in self.tcx.all_local_trait_impls(()) {
+        for (trait_id, _) in self.tcx.all_local_trait_impls(()) {
             let def_path = self.tcx.def_path(*trait_id);
-            let mut kind = None;
             if def_path == ItemPath(&["convert", "From"]) {
-                kind = Some(TraitKind::From);
-            }
+                let fn_did = self
+                    .tcx
+                    .associated_items(*trait_id)
+                    .find_by_name_and_kind(
+                        self.tcx,
+                        Ident::from_str("from"),
+                        AssocKind::Fn,
+                        *trait_id,
+                    )
+                    .unwrap()
+                    .def_id;
 
-            if let Some(kind) = kind {
-                let imp = impls[0];
-                let fn_did = self.tcx.hir().expect_item(imp).expect_impl().items[0]
-                    .trait_item_def_id
-                    .unwrap();
-                self.local_trait_impls.insert(kind, (*trait_id, fn_did));
+                self.local_trait_impls
+                    .insert(TraitKind::From, (*trait_id, fn_did));
             }
         }
     }
@@ -179,7 +194,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_local_trait_impls(
         &self,
         trait_kind: TraitKind,
-    ) -> Option<TraitImpls<'_>> {
+    ) -> Option<TraitImpls<'tcx>> {
         self.local_trait_impls
             .get(&trait_kind)
             .and_then(|(trait_id, fn_did)| {
@@ -206,10 +221,15 @@ impl<'tcx> Generator<'tcx> {
         self.tcx.sess.abort_if_errors();
     }
 
-    pub fn node_type(&self, hir_id: HirId) -> Ty<'tcx> {
+    pub fn node_type(
+        &self,
+        hir_id: HirId,
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> Ty<'tcx> {
         let owner_id = hir_id.owner;
         let typeck_res = self.tcx.typeck(owner_id);
-        typeck_res.node_type(hir_id)
+        EarlyBinder::bind(typeck_res.node_type(hir_id))
+            .instantiate(self.tcx, generic_args)
     }
 
     pub fn item_id_for_ident(

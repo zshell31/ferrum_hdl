@@ -61,7 +61,7 @@ pub enum Blackbox {
     ArrayMap,
     Unbundle,
     Bundle,
-    StdConversion,
+    StdConversion { from: bool },
     StdClone,
 }
 
@@ -124,11 +124,11 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
     }
 
     if def_path == &ItemPath(&["convert", "From", "from"]) {
-        return Some(Blackbox::StdConversion);
+        return Some(Blackbox::StdConversion { from: true });
     }
 
     if def_path == &ItemPath(&["convert", "Into", "into"]) {
-        return Some(Blackbox::StdConversion);
+        return Some(Blackbox::StdConversion { from: false });
     }
 
     if def_path == &ItemPath(&["clone", "Clone", "clone"]) {
@@ -193,7 +193,7 @@ pub trait EvaluateExpr<'tcx> {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error>;
 }
@@ -202,7 +202,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match self {
@@ -224,7 +224,9 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::ArrayMap => ArrayMap.evaluate_expr(generator, expr, ctx),
             Self::Unbundle => Unbundle.evaluate_expr(generator, expr, ctx),
             Self::Bundle => Bundle.evaluate_expr(generator, expr, ctx),
-            Self::StdConversion => StdConversion.evaluate_expr(generator, expr, ctx),
+            Self::StdConversion { from } => {
+                StdConversion { from: *from }.evaluate_expr(generator, expr, ctx)
+            }
             Self::StdClone => StdClone.evaluate_expr(generator, expr, ctx),
         }
     }
@@ -236,7 +238,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Cast {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
@@ -296,12 +298,12 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (rec, args) = utils::expected_call(expr)?;
 
-        let ty = generator.node_type(rec.hir_id);
+        let ty = generator.node_type(rec.hir_id, ctx.generic_args);
 
         let value_ty =
             utils::subst_type(ty, 1).ok_or_else(|| Self::make_err(rec.span))?;
@@ -378,7 +380,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
@@ -393,7 +395,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
@@ -414,7 +416,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (rec, args) = utils::expected_call(expr)?;
@@ -500,7 +502,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
@@ -531,7 +533,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayIntoInner {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
@@ -545,13 +547,17 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
         let ArrayTy(count, sig_ty) = generator
-            .find_sig_ty(generator.node_type(rec.hir_id), ctx.generic_args, rec.span)?
+            .find_sig_ty(
+                generator.node_type(rec.hir_id, ctx.generic_args),
+                ctx.generic_args,
+                rec.span,
+            )?
             .array_ty();
         let width = sig_ty.width();
 
@@ -587,14 +593,18 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
         let span = rec.span;
 
         let ArrayTy(count, sig_ty) = generator
-            .find_sig_ty(generator.node_type(rec.hir_id), ctx.generic_args, rec.span)?
+            .find_sig_ty(
+                generator.node_type(rec.hir_id, ctx.generic_args),
+                ctx.generic_args,
+                rec.span,
+            )?
             .array_ty();
         let width = sig_ty.width();
 
@@ -650,7 +660,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Unbundle {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
@@ -665,7 +675,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Bundle {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
@@ -674,7 +684,10 @@ impl<'tcx> EvaluateExpr<'tcx> for Bundle {
     }
 }
 
-struct StdConversion;
+#[allow(dead_code)]
+pub struct StdConversion {
+    from: bool,
+}
 
 impl StdConversion {
     fn make_err(span: Span) -> Error {
@@ -685,48 +698,54 @@ impl StdConversion {
         .into()
     }
 
-    fn convert<'tcx>(
+    pub fn convert(
         from: SignalTy,
         target: SignalTy,
-        generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        generator: &mut Generator<'_>,
+        item_id: ItemId,
+        span: Span,
     ) -> Result<ItemId, Error> {
         if from == target {
-            return generator.evaluate_expr(expr, ctx);
+            return Ok(item_id);
         }
 
         match (from, target) {
             (SignalTy::Prim(PrimTy::Bool), SignalTy::Prim(PrimTy::Bit)) => {
                 assert_convert::<bool, Bit>();
-                generator.evaluate_expr(expr, ctx)
+                Ok(item_id)
             }
             (SignalTy::Prim(PrimTy::Bit), SignalTy::Prim(PrimTy::Bool)) => {
                 assert_convert::<Bit, bool>();
-                generator.evaluate_expr(expr, ctx)
+                Ok(item_id)
             }
             (SignalTy::Prim(PrimTy::U128), SignalTy::Prim(PrimTy::Unsigned(n))) => {
                 assert_convert::<u128, Unsigned<1>>();
-                let node_id = generator.evaluate_expr(expr, ctx)?;
-
-                let node_out = generator.net_list[node_id.node_id()]
+                let node_out = generator.net_list[item_id.node_id()]
                     .outputs_mut()
                     .only_one_mut()
                     .out;
                 node_out.ty = PrimTy::Unsigned(n);
 
-                Ok(node_id)
+                Ok(item_id)
             }
             _ => {
                 println!("from: {:?}", from);
                 println!("to: {:?}", target);
 
-                Err(
-                    SpanError::new(SpanErrorKind::UnsupportedConversion, expr.span)
-                        .into(),
-                )
+                Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
             }
         }
+    }
+
+    fn convert_for_expr<'tcx>(
+        from: SignalTy,
+        target: SignalTy,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let item_id = generator.evaluate_expr(expr, ctx)?;
+        Self::convert(from, target, generator, item_id, expr.span)
     }
 }
 
@@ -742,13 +761,13 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
         match expr.kind {
             ExprKind::Call(rec, args) => {
                 let from = generator.find_sig_ty(
-                    generator.node_type(args[0].hir_id),
+                    generator.node_type(args[0].hir_id, ctx.generic_args),
                     ctx.generic_args,
                     args[0].span,
                 )?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator.find_sig_ty(
-                        generator.node_type(ty.hir_id),
+                        generator.node_type(ty.hir_id, ctx.generic_args),
                         ctx.generic_args,
                         rec.span,
                     )?,
@@ -757,21 +776,21 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
                     }
                 };
 
-                Self::convert(from, target, generator, &args[0], ctx)
+                Self::convert_for_expr(from, target, generator, &args[0], ctx)
             }
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from = generator.find_sig_ty(
-                    generator.node_type(rec.hir_id),
+                    generator.node_type(rec.hir_id, ctx.generic_args),
                     ctx.generic_args,
                     rec.span,
                 )?;
                 let target = generator.find_sig_ty(
-                    generator.node_type(expr.hir_id),
+                    generator.node_type(expr.hir_id, ctx.generic_args),
                     ctx.generic_args,
                     span,
                 )?;
 
-                Self::convert(from, target, generator, rec, ctx)
+                Self::convert_for_expr(from, target, generator, rec, ctx)
             }
             _ => Err(Self::make_err(expr.span)),
         }
@@ -784,7 +803,7 @@ impl<'tcx> EvaluateExpr<'tcx> for StdClone {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
-        expr: &Expr<'tcx>,
+        expr: &'tcx Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;

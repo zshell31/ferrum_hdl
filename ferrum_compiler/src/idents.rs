@@ -6,9 +6,29 @@ use rustc_span::symbol::Ident;
 pub struct LocalScope(FxHashMap<Ident, ItemId>);
 
 #[derive(Debug, Default)]
+struct IdentsInner(FxHashMap<Symbol, usize>);
+
+impl IdentsInner {
+    fn ident(&mut self, ident: &str) -> Symbol {
+        let ident = Symbol::new(ident);
+
+        match self.0.get_mut(&ident) {
+            Some(count) => {
+                *count += 1;
+                Symbol::new_from_args(format_args!("{}_{}", ident, count))
+            }
+            None => {
+                self.0.insert(ident, 0);
+                ident
+            }
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct ModuleIdents {
     scopes: Vec<LocalScope>,
-    idents: FxHashMap<Symbol, usize>,
+    idents: IdentsInner,
     self_arg: Option<ItemId>,
 }
 
@@ -21,7 +41,7 @@ impl ModuleIdents {
         self.scopes.pop();
     }
 
-    pub fn ident_inner(&mut self, ident: &str) -> Symbol {
+    fn ident_inner(&mut self, ident: &str) -> Symbol {
         // TODO: check if ident is keyword
         let ident = match ident {
             "input" => "input$",
@@ -30,18 +50,8 @@ impl ModuleIdents {
             "self" => "self$",
             _ => ident,
         };
-        let ident = Symbol::new(ident);
 
-        match self.idents.get_mut(&ident) {
-            Some(count) => {
-                *count += 1;
-                Symbol::new_from_args(format_args!("{}_{}", ident, count))
-            }
-            None => {
-                self.idents.insert(ident, 0);
-                ident
-            }
-        }
+        self.idents.ident(ident)
     }
 
     pub fn ident(&mut self, ident: &str) -> Symbol {
@@ -88,6 +98,7 @@ impl ModuleIdents {
 #[derive(Default)]
 pub struct Idents {
     modules: FxHashMap<ModuleId, ModuleIdents>,
+    idents: IdentsInner,
 }
 
 impl Idents {
@@ -95,8 +106,8 @@ impl Idents {
         Self::default()
     }
 
-    pub fn module(&self, ident: &str) -> Symbol {
-        Symbol::new(ident)
+    pub fn module(&mut self, ident: &str) -> Symbol {
+        self.idents.ident(ident)
     }
 
     pub fn for_module(&mut self, module_id: ModuleId) -> &mut ModuleIdents {

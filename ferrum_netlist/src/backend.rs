@@ -197,6 +197,7 @@ impl<'n> Visitor for Verilog<'n> {
                 outputs,
             }) => {
                 let module = &self.net_list[*module_id];
+                println!("{}", module.name);
                 assert_eq!(inputs.len(), module.inputs_len());
                 assert_eq!(outputs.len(), module.outputs_len());
 

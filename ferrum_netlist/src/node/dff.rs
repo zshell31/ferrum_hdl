@@ -3,25 +3,28 @@ use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symb
 
 #[derive(Debug, Clone)]
 pub struct DFFNode {
-    pub inputs: (NodeOutId, NodeOutId, NodeOutId),
+    pub inputs: (NodeOutId, NodeOutId, Option<NodeOutId>),
     pub output: NodeOutput,
+    pub rst_val: u128,
 }
 
 impl DFFNode {
     pub fn new(
         ty: PrimTy,
         clk: NodeOutId,
-        rst_val: NodeOutId,
+        rst: Option<NodeOutId>,
+        rst_val: u128,
         data: NodeOutId,
         sym: Symbol,
     ) -> Self {
         Self {
-            inputs: (clk, rst_val, data),
+            inputs: (clk, data, rst),
             output: NodeOutput {
                 ty,
                 sym,
                 kind: NetKind::Reg,
             },
+            rst_val,
         }
     }
 }
@@ -33,7 +36,7 @@ impl From<DFFNode> for Node {
 }
 
 impl IsNode for DFFNode {
-    type Inputs = (NodeOutId, NodeOutId, NodeOutId);
+    type Inputs = (NodeOutId, NodeOutId, Option<NodeOutId>);
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

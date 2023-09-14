@@ -5,9 +5,11 @@ use std::{
 };
 
 use dyn_clone::{clone_trait_object, DynClone};
-use ferrum_netlist::sig_ty::IsPrimTy;
 
-use crate::domain::{Clock, ClockDomain};
+use crate::{
+    bit::Bit,
+    domain::{Clock, ClockDomain},
+};
 
 pub trait SignalValue: Debug + Clone + 'static {}
 
@@ -198,15 +200,35 @@ where
 }
 
 #[inline(always)]
-pub fn reg<D: ClockDomain, T: SignalValue + IsPrimTy>(
+pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    reset_val: T,
+    rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut next_value = reset_val.clone();
+    let mut next_val = rst_val.clone();
     Signal::new(move || {
-        let value = next_value.clone();
-        next_value = (comb_fn)(value.clone());
+        let value = next_val.clone();
+        next_val = (comb_fn)(value.clone());
+
+        value
+    })
+}
+
+#[inline(always)]
+pub fn reg_rst<D: ClockDomain, T: SignalValue>(
+    _clock: Clock<D>,
+    mut rst: Signal<D, Bit>,
+    rst_val: T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    let mut next_val = rst_val.clone();
+    Signal::new(move || {
+        let value = if rst.next().into() {
+            rst_val.clone()
+        } else {
+            next_val.clone()
+        };
+        next_val = (comb_fn)(value.clone());
 
         value
     })

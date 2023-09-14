@@ -253,13 +253,13 @@ impl<'tcx> Generator<'tcx> {
                 let lhs = self.evaluate_expr(lhs, ctx)?.node_id();
                 if let Node::Const(node) = &mut self.net_list[lhs] {
                     node.output.ty = prim_ty;
-                    node.inject = true;
+                    node.skip = true;
                 }
 
                 let rhs = self.evaluate_expr(rhs, ctx)?.node_id();
                 if let Node::Const(node) = &mut self.net_list[rhs] {
                     node.output.ty = prim_ty;
-                    node.inject = true;
+                    node.skip = true;
                 }
 
                 let lhs = self.net_list.only_one_node_out_id(lhs);

@@ -51,6 +51,7 @@ pub enum Blackbox {
     BitL,
     BitH,
     RegisterFn,
+    RegisterFnWithRst,
     SignalLift,
     SignalMap,
     SignalApply2,
@@ -80,6 +81,10 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
 
     if def_path == &ItemPath(&["signal", "reg"]) {
         return Some(Blackbox::RegisterFn);
+    }
+
+    if def_path == &ItemPath(&["signal", "reg_rst"]) {
+        return Some(Blackbox::RegisterFnWithRst);
     }
 
     if def_path == &ItemPath(&["signal", "impl", "lift"]) {
@@ -202,9 +207,14 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
     ) -> Result<ItemId, Error> {
         match self {
             Self::Cast => Cast.evaluate_expr(generator, expr, ctx),
-            Self::BitL => BitL.evaluate_expr(generator, expr, ctx),
-            Self::BitH => BitH.evaluate_expr(generator, expr, ctx),
-            Self::RegisterFn => RegisterFn.evaluate_expr(generator, expr, ctx),
+            Self::BitL => BitVal(false).evaluate_expr(generator, expr, ctx),
+            Self::BitH => BitVal(true).evaluate_expr(generator, expr, ctx),
+            Self::RegisterFn => {
+                RegisterFn { has_rst: false }.evaluate_expr(generator, expr, ctx)
+            }
+            Self::RegisterFnWithRst => {
+                RegisterFn { has_rst: true }.evaluate_expr(generator, expr, ctx)
+            }
             Self::SignalLift => SignalLift.evaluate_expr(generator, expr, ctx),
             Self::SignalMap => SignalMap.evaluate_expr(generator, expr, ctx),
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
@@ -235,46 +245,42 @@ impl<'tcx> EvaluateExpr<'tcx> for Cast {
     }
 }
 
-fn create_bit_value<'tcx>(
-    generator: &mut Generator<'tcx>,
-    value: u128,
-    ctx: EvalContext<'tcx>,
-) -> Result<ItemId, Error> {
-    let cons = ConstNode::new(
-        PrimTy::Bit,
-        value,
-        generator.idents.for_module(ctx.module_id).tmp(),
-    );
-    Ok(generator.net_list.add_node(ctx.module_id, cons).into())
+struct BitVal(bool);
+
+impl BitVal {
+    fn create_bit_value<'tcx>(
+        &self,
+        generator: &mut Generator<'tcx>,
+        ctx: EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let value = match self.0 {
+            true => 1,
+            false => 0,
+        };
+
+        let cons = ConstNode::new(
+            PrimTy::Bit,
+            value,
+            generator.idents.for_module(ctx.module_id).tmp(),
+        );
+        Ok(generator.net_list.add_node(ctx.module_id, cons).into())
+    }
 }
 
-struct BitL;
-
-impl<'tcx> EvaluateExpr<'tcx> for BitL {
+impl<'tcx> EvaluateExpr<'tcx> for BitVal {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,
         ctx: EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        create_bit_value(generator, 0, ctx)
+        self.create_bit_value(generator, ctx)
     }
 }
 
-struct BitH;
-
-impl<'tcx> EvaluateExpr<'tcx> for BitH {
-    fn evaluate_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        _: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        create_bit_value(generator, 1, ctx)
-    }
+struct RegisterFn {
+    has_rst: bool,
 }
-
-struct RegisterFn;
 
 impl RegisterFn {
     fn make_err(span: Span) -> Error {
@@ -297,44 +303,72 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
 
         let ty = generator.node_type(rec.hir_id);
 
-        let signal_val_ty = utils::subst_type(ty, 1).and_then(|ty| {
-            generator
-                .find_sig_ty(ty, ctx.generic_args, rec.span)
-                .ok()
-                .map(|sig_ty| sig_ty.prim_ty())
-        });
+        let value_ty =
+            utils::subst_type(ty, 1).ok_or_else(|| Self::make_err(rec.span))?;
+        let sig_ty = generator.find_sig_ty(value_ty, ctx.generic_args, rec.span)?;
 
-        let gen = utils::subst_type(ty, 1).ok_or_else(|| Self::make_err(rec.span))?;
-        let prim_ty = generator
-            .find_sig_ty(gen, ctx.generic_args, rec.span)?
-            .prim_ty();
+        let (clk, rst, rst_val, comb) = match self.has_rst {
+            true => (&args[0], Some(&args[1]), &args[2], &args[3]),
+            false => (&args[0], None, &args[1], &args[2]),
+        };
 
-        let clk = generator.evaluate_expr(&args[0], ctx)?.node_id();
-        let rst_value = generator.evaluate_expr(&args[1], ctx)?.node_id();
-        let comb = generator.evaluate_expr(&args[2], ctx)?.node_id();
+        let clk = generator.evaluate_expr(clk, ctx)?.node_id();
 
-        if let Node::Const(node) = &mut generator.net_list[rst_value] {
-            node.inject = true;
-            // Add conversion from node.out.ty to signal_val_ty
-            if let Some(prim_ty) = signal_val_ty {
-                node.output.ty = prim_ty;
+        let rst = rst
+            .map(|rst| {
+                generator
+                    .evaluate_expr(rst, ctx)
+                    .map(|item_id| item_id.node_id())
+                    .map(|node_id| {
+                        generator.net_list[node_id]
+                            .outputs()
+                            .only_one()
+                            .node_out_id(node_id)
+                    })
+            })
+            .transpose()?;
+
+        // TODO: refactor truncating
+        let len = generator.net_list.module_len(ctx.module_id);
+        let rst_val = generator.evaluate_expr(rst_val, ctx)?;
+        let rst_val = generator
+            .to_const(rst_val)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, args[1].span))?;
+        generator.net_list.module_truncate(ctx.module_id, len);
+
+        let comb = generator.evaluate_expr(comb, ctx)?;
+
+        let comb_out = generator.maybe_to_bitvec(ctx.module_id, comb);
+
+        let prim_ty = match sig_ty {
+            SignalTy::Prim(prim_ty) => prim_ty,
+            _ => {
+                let width = sig_ty.width();
+                PrimTy::BitVec(width)
             }
-        }
+        };
 
         let dff = generator.net_list.add_node(
             ctx.module_id,
             DFFNode::new(
                 prim_ty,
                 generator.net_list.only_one_node_out_id(clk),
-                generator.net_list.only_one_node_out_id(rst_value),
-                generator.net_list.only_one_node_out_id(comb),
+                rst,
+                rst_val,
+                comb_out,
                 generator.idents.for_module(ctx.module_id).tmp(),
             ),
         );
+        let dff_out = generator.net_list[dff]
+            .outputs()
+            .only_one()
+            .node_out_id(dff);
 
-        generator.link_dummy_inputs(&[dff.into()], comb.into(), rec.span)?;
+        let dff_out = generator.maybe_from_bitvec(ctx.module_id, dff_out, sig_ty);
 
-        Ok(dff.into())
+        generator.link_dummy_inputs(&[dff_out], comb, rec.span)?;
+
+        Ok(dff_out)
     }
 }
 
@@ -596,18 +630,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
                 let sig_ty = generator.item_ty(closure);
                 let width = sig_ty.width();
 
-                let closure_out = match closure {
-                    ItemId::Node(node_id) => {
-                        let out = generator.net_list[node_id].outputs();
-                        if out.len() == 1 {
-                            out.only_one().node_out_id(node_id)
-                        } else {
-                            generator.to_bitvec(ctx.module_id, closure)
-                        }
-                    }
-                    ItemId::Group(_) => generator.to_bitvec(ctx.module_id, closure),
-                };
-
+                let closure_out = generator.maybe_to_bitvec(ctx.module_id, closure);
                 let map_out = generator.idents.for_module(ctx.module_id).ident("map_out");
                 generator.net_list[closure_out].sym = map_out;
 

@@ -72,6 +72,8 @@ pub enum SpanErrorKind {
     ExpectedArray,
     #[error("expected Struct type")]
     ExpectedStructType,
+    #[error("expected const value")]
+    ExpectedConst,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(PrimTy),

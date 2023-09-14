@@ -3,7 +3,7 @@ use std::iter;
 use ferrum_netlist::{
     group_list::{GroupKind, ItemId, Named},
     net_list::{ModuleId, NodeOutId},
-    node::{IsNode, Merger, PassNode, Splitter},
+    node::{ConstNode, IsNode, Merger, Node, PassNode, Splitter},
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
@@ -94,6 +94,20 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
+    pub fn maybe_to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
+        match item_id {
+            ItemId::Node(node_id) => {
+                let out = self.net_list[node_id].outputs();
+                if out.len() == 1 {
+                    out.only_one().node_out_id(node_id)
+                } else {
+                    self.to_bitvec(module_id, item_id)
+                }
+            }
+            ItemId::Group(_) => self.to_bitvec(module_id, item_id),
+        }
+    }
+
     #[allow(clippy::wrong_self_convention)]
     pub fn from_bitvec(
         &mut self,
@@ -128,6 +142,15 @@ impl<'tcx> Generator<'tcx> {
                 ty.iter().map(|ty| (ty.inner.width(), ty.inner)),
             ),
         }
+    }
+
+    pub fn maybe_from_bitvec(
+        &mut self,
+        module_id: ModuleId,
+        node_out_id: NodeOutId,
+        sig_ty: SignalTy,
+    ) -> ItemId {
+        self.from_bitvec(module_id, node_out_id, sig_ty)
     }
 
     #[allow(clippy::wrong_self_convention)]
@@ -165,5 +188,36 @@ impl<'tcx> Generator<'tcx> {
             },
         )
         .unwrap()
+    }
+
+    pub fn to_const(&self, item_id: ItemId) -> Option<u128> {
+        self.to_const_inner(item_id).map(|(val, _)| val)
+    }
+
+    pub fn to_const_inner(&self, item_id: ItemId) -> Option<(u128, u128)> {
+        match item_id {
+            ItemId::Node(node_id) => {
+                let node = &self.net_list[node_id];
+                match node {
+                    Node::Const(ConstNode { value, output, .. }) => {
+                        Some((*value, output.ty.width()))
+                    }
+                    _ => None,
+                }
+            }
+            ItemId::Group(group_id) => {
+                let group = &self.group_list[group_id];
+                let mut res: u128 = 0;
+                let mut total: u128 = 0;
+                for item_id in group.item_ids.iter().rev() {
+                    let (val, width) = self.to_const_inner(item_id.inner)?;
+                    // TODO: use long arithmetic instead
+                    res = (res << width) | val;
+                    total = total.checked_add(width).unwrap();
+                }
+
+                Some((res, total))
+            }
+        }
     }
 }

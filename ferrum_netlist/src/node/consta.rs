@@ -4,20 +4,20 @@ use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
 #[derive(Debug, Clone)]
 pub struct ConstNode {
     pub value: u128,
-    pub inject: bool,
     pub output: NodeOutput,
+    pub skip: bool,
 }
 
 impl ConstNode {
     pub fn new(ty: PrimTy, value: u128, sym: Symbol) -> Self {
         Self {
             value,
-            inject: false,
             output: NodeOutput {
                 ty,
                 sym,
                 kind: NetKind::Wire,
             },
+            skip: false,
         }
     }
 }

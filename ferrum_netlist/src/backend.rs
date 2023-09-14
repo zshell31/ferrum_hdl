@@ -72,17 +72,17 @@ impl<'n> Verilog<'n> {
     fn inject_const(&mut self, node_out_id: NodeOutId) {
         let node = &self.net_list[node_out_id.node_id()];
 
-        if let Node::Const(ConstNode {
-            value,
-            inject: true,
-            output,
-        }) = node
-        {
-            self.write_value(output, *value);
-        } else {
-            let sym = node.outputs().only_one().out.sym;
-            self.buffer.write_fmt(format_args!("{}", sym));
-        }
+        let sym = node.outputs().only_one().out.sym;
+        self.buffer.write_fmt(format_args!("{}", sym));
+        // if let Node::Const(ConstNode {
+        //     value,
+        //     inject: true,
+        //     output,
+        // }) = node
+        // {
+        //     self.write_value(output, *value);
+        // } else {
+        // }
     }
 }
 
@@ -300,10 +300,10 @@ endgenerate
             }
             Node::Const(ConstNode {
                 value,
-                inject,
                 output,
+                skip,
             }) => {
-                if !inject {
+                if !skip {
                     self.write_local(output, None);
                     let output = output.sym;
 
@@ -431,32 +431,42 @@ end
                 ));
             }
             Node::DFF(DFFNode {
-                inputs: (clk, rst_val, data),
+                inputs: (clk, data, rst),
                 output,
+                rst_val,
             }) => {
-                let init = if let Node::Const(ConstNode {
-                    value,
-                    inject: true,
-                    ..
-                }) = &self.net_list[rst_val.node_id()]
-                {
-                    Some(*value)
-                } else {
-                    None
-                };
-                self.write_local(output, init);
+                self.write_local(output, Some(*rst_val));
 
                 let clk = self.net_list[*clk].sym;
                 let data = self.net_list[*data].sym;
+                let width = output.ty.width();
                 let output = output.sym;
 
-                self.buffer.write_template(format_args!(
-                    "
+                match rst {
+                    Some(rst) => {
+                        let rst = self.net_list[*rst].sym;
+
+                        self.buffer.write_template(format_args!(
+                            "
+always @ (posedge {clk} or posedge {rst}) begin
+    if ({rst})
+        {output} <= {width}'d{rst_val};
+    else
+        {output} <= {data};
+end
+"
+                        ));
+                    }
+                    None => {
+                        self.buffer.write_template(format_args!(
+                            "
 always @ (posedge {clk}) begin
     {output} <= {data};
 end
 "
-                ));
+                        ));
+                    }
+                }
             }
         }
     }

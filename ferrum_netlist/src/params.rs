@@ -54,6 +54,22 @@ impl Inputs for (NodeOutId, NodeOutId, NodeOutId) {
     }
 }
 
+impl Inputs for (NodeOutId, NodeOutId, Option<NodeOutId>) {
+    fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+        match self.2 {
+            Some(node_out_id) => Either::Left([self.0, self.1, node_out_id].into_iter()),
+            None => Either::Right([self.0, self.1].into_iter()),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self.2 {
+            Some(_) => 3,
+            None => 2,
+        }
+    }
+}
+
 impl Inputs for [NodeOutId] {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         self.iter().copied()

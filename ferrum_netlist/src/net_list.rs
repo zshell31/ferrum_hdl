@@ -159,6 +159,15 @@ impl Module {
     pub fn outputs_len(&self) -> usize {
         self.outputs.len()
     }
+
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn truncate(&mut self, new_len: usize) {
+        self.nodes.truncate(new_len)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -317,6 +326,14 @@ impl NetList {
 
     pub fn find_dummy_inputs(&self, node_id: NodeId) -> Vec<NodeId> {
         self.find_node(node_id, |node| node.is_dummy_input())
+    }
+
+    pub fn module_len(&self, module_id: ModuleId) -> usize {
+        self[module_id].len()
+    }
+
+    pub fn module_truncate(&mut self, module_id: ModuleId, new_len: usize) {
+        self[module_id].truncate(new_len)
     }
 
     // pub fn link(

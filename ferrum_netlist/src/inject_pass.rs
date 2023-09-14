@@ -1,6 +1,7 @@
 use crate::{
     net_list::{ModuleId, NetList, NodeId},
     node::{Node, PassNode},
+    symbol::Symbol,
     visitor::Visitor,
 };
 
@@ -15,6 +16,19 @@ impl<'n> InjectPass<'n> {
 
     pub fn inject(&mut self) {
         self.visit_modules();
+    }
+
+    pub fn input_sym(&self, node_id: NodeId) -> Option<Symbol> {
+        let node = &self.net_list[node_id];
+        match node {
+            Node::Pass(PassNode { inject, input, .. }) if inject.is_none() => {
+                match self.input_sym(input.node_id()) {
+                    Some(sym) => Some(sym),
+                    None => Some(self.net_list[*input].sym),
+                }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -34,18 +48,12 @@ impl<'n> Visitor for InjectPass<'n> {
     }
 
     fn visit_node(&mut self, node_id: NodeId) {
-        let node = &self.net_list[node_id];
-        let sym = match node {
-            Node::Pass(PassNode { inject, input, .. }) if inject.is_none() => {
-                self.net_list[*input].sym
+        if let Some(sym) = self.input_sym(node_id) {
+            let node = &mut self.net_list[node_id];
+            if let Node::Pass(PassNode { inject, output, .. }) = node {
+                *inject = Some(true);
+                output.sym = sym;
             }
-            _ => return,
-        };
-
-        let node = &mut self.net_list[node_id];
-        if let Node::Pass(PassNode { inject, output, .. }) = node {
-            *inject = Some(true);
-            output.sym = sym;
         }
     }
 }

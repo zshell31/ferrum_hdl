@@ -6,19 +6,19 @@ use std::{
 
 use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
 
-use crate::{signal::SignalValue, Cast};
+use crate::{signal::SignalValue, CastInner};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Bit(bool);
 
-impl Cast<bool> for Bit {
+impl CastInner<bool> for Bit {
     fn cast(self) -> bool {
         unsafe { mem::transmute::<Bit, bool>(self) }
     }
 }
 
-impl Cast<Bit> for bool {
+impl CastInner<Bit> for bool {
     fn cast(self) -> Bit {
         unsafe { mem::transmute::<bool, Bit>(self) }
     }

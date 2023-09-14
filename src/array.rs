@@ -4,16 +4,16 @@ use crate::{
     const_asserts::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue},
-    Cast,
+    CastInner,
 };
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
 pub struct Array<const N: usize, T>([T; N]);
 
-impl<const N: usize, T, U: Copy> Cast<[U; N]> for Array<N, T>
+impl<const N: usize, T, U: Copy> CastInner<[U; N]> for Array<N, T>
 where
-    T: Cast<U>,
+    T: CastInner<U>,
 {
     fn cast(self) -> [U; N] {
         unsafe {
@@ -23,9 +23,9 @@ where
     }
 }
 
-impl<const N: usize, T: Copy, U> Cast<Array<N, T>> for [U; N]
+impl<const N: usize, T: Copy, U> CastInner<Array<N, T>> for [U; N]
 where
-    U: Cast<T>,
+    U: CastInner<T>,
 {
     fn cast(self) -> Array<N, T> {
         unsafe {

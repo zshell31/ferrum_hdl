@@ -17,6 +17,23 @@ pub mod domain;
 pub mod signal;
 pub mod unsigned;
 
-pub trait Cast<T: Sized>: Sized {
+pub trait CastInner<T: Sized>: Sized {
     fn cast(self) -> T;
 }
+
+impl<T: Sized> CastInner<T> for T {
+    fn cast(self) -> T {
+        self
+    }
+}
+
+pub trait Cast {
+    fn cast<T>(self) -> T
+    where
+        Self: CastInner<T>,
+    {
+        CastInner::<T>::cast(self)
+    }
+}
+
+impl<T: Sized> Cast for T {}

@@ -11,7 +11,7 @@ use crate::{
     bit_pack::BitPack,
     const_asserts::{Assert, IsTrue},
     signal::SignalValue,
-    Cast,
+    CastInner,
 };
 
 pub const fn is_unsigned(n: u8) -> bool {
@@ -62,7 +62,7 @@ where
     }
 }
 
-impl<const N: u8> Cast<u128> for Unsigned<N>
+impl<const N: u8> CastInner<u128> for Unsigned<N>
 where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {
@@ -71,7 +71,7 @@ where
     }
 }
 
-impl<const N: u8> Cast<Unsigned<N>> for u128
+impl<const N: u8> CastInner<Unsigned<N>> for u128
 where
     Assert<{ is_unsigned(N) }>: IsTrue,
 {

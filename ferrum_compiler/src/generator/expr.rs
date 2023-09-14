@@ -647,9 +647,30 @@ impl<'tcx> Generator<'tcx> {
                     self.item_id_for_ident(ctx.module_id, ident)
                 }
                 Res::Def(DefKind::Const, def_id) => {
-                    let blackbox =
-                        self.find_blackbox(*def_id, ctx.generic_args, expr.span)?;
-                    blackbox.evaluate_expr(self, expr, ctx)
+                    if def_id.is_local() {
+                        let (_, generics, body_id) = self
+                            .tcx
+                            .hir()
+                            .expect_item(def_id.expect_local())
+                            .expect_const();
+
+                        if !generics.params.is_empty() {
+                            println!("{:#?}", expr);
+                            return Err(SpanError::new(
+                                SpanErrorKind::NotSynthExpr,
+                                expr.span,
+                            )
+                            .into());
+                        }
+
+                        let body = self.tcx.hir().body(body_id);
+
+                        self.evaluate_expr(body.value, ctx)
+                    } else {
+                        let blackbox =
+                            self.find_blackbox(*def_id, ctx.generic_args, expr.span)?;
+                        blackbox.evaluate_expr(self, expr, ctx)
+                    }
                 }
                 _ => {
                     println!("{:#?}", expr);

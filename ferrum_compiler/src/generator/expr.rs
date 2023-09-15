@@ -135,7 +135,7 @@ impl<'tcx> ExprOrItemId<'tcx> {
     pub fn evaluate(
         &self,
         generator: &mut Generator<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match self {
             ExprOrItemId::Expr(expr) => generator.evaluate_expr(expr, ctx),
@@ -240,10 +240,10 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         expr: &Expr<'tcx>,
         sub_exprs: impl IntoIterator<Item = &'tcx Expr<'tcx>> + 'tcx,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let sig_ty = self.find_sig_ty(
-            self.node_type(expr.hir_id, ctx.generic_args),
+            self.node_type(expr.hir_id, ctx),
             ctx.generic_args,
             expr.span,
         )?;
@@ -252,7 +252,7 @@ impl<'tcx> Generator<'tcx> {
                 let sub_exprs = sub_exprs
                     .into_iter()
                     .filter(|sub_expr| {
-                        let ty = self.node_type(sub_expr.hir_id, ctx.generic_args);
+                        let ty = self.node_type(sub_expr.hir_id, ctx);
                         match utils::ty_def_id(ty) {
                             Some(def_id) => {
                                 !blackbox::ignore_ty(&self.tcx.def_path(def_id))
@@ -278,7 +278,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn make_dummy_inputs_from_sig_ty(
         &mut self,
         sig_ty: SignalTy,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> (ItemId, SmallVec<[NodeId; 8]>) {
         let mut dummy_inputs = SmallVec::new();
         let item_id =
@@ -289,7 +289,7 @@ impl<'tcx> Generator<'tcx> {
     fn make_dummy_inputs_from_sig_ty_inner(
         &mut self,
         sig_ty: SignalTy,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
         dummy_inputs: &mut SmallVec<[NodeId; 8]>,
     ) -> ItemId {
         let module_id = ctx.module_id;
@@ -330,7 +330,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_expr(
         &mut self,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let scope = Scope::enter(
             self.net_list[ctx.module_id].name,
@@ -338,7 +338,7 @@ impl<'tcx> Generator<'tcx> {
             ctx.generic_args,
         );
 
-        let ty = self.node_type(expr.hir_id, ctx.generic_args);
+        let ty = self.node_type(expr.hir_id, ctx);
 
         let res = match expr.kind {
             ExprKind::Array(items) => self
@@ -507,10 +507,8 @@ impl<'tcx> Generator<'tcx> {
                         {
                             let fn_id = res.def_id();
                             if fn_id.is_local() {
-                                let fn_ty =
-                                    self.node_type(fn_item.hir_id, ctx.generic_args);
-                                let generic_args = self
-                                    .subst_with(utils::subst(fn_ty), ctx.generic_args);
+                                let fn_ty = self.node_type(fn_item.hir_id, ctx);
+                                let generic_args = utils::subst(fn_ty);
 
                                 self.evaluate_fn_call(
                                     fn_id.expect_local(),
@@ -525,10 +523,9 @@ impl<'tcx> Generator<'tcx> {
                             }
                         }
                         QPath::TypeRelative(_, _) => {
-                            let fn_ty = self.node_type(fn_item.hir_id, ctx.generic_args);
+                            let fn_ty = self.node_type(fn_item.hir_id, ctx);
                             let fn_id = utils::ty_def_id(fn_ty).unwrap();
-                            let generic_args =
-                                self.subst_with(utils::subst(fn_ty), ctx.generic_args);
+                            let generic_args = utils::subst(fn_ty);
 
                             match self.find_local_impl_id(
                                 fn_id,
@@ -778,7 +775,7 @@ impl<'tcx> Generator<'tcx> {
                 }
             },
             ExprKind::Path(QPath::TypeRelative(_, _)) => {
-                let ty = self.node_type(expr.hir_id, ctx.generic_args);
+                let ty = self.node_type(expr.hir_id, ctx);
                 if ty.is_fn() {
                     let fn_ty_did = utils::ty_def_id(ty).unwrap();
                     self.evaluate_closure_fn_without_params(fn_ty_did, expr, ctx)
@@ -842,7 +839,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         fn_id: DefId,
         expr: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let arg = match self.tcx.hir().find_parent(expr.hir_id) {
             Some(HirNode::Expr(Expr {
@@ -858,8 +855,8 @@ impl<'tcx> Generator<'tcx> {
 
         if let Some(arg) = arg {
             let span = arg.span;
-            let ty = self.node_type(arg.hir_id, ctx.generic_args);
-            let generic_args = self.subst_with(utils::subst(ty), ctx.generic_args);
+            let ty = self.node_type(arg.hir_id, ctx);
+            let generic_args = ctx.instantiate(self.tcx, utils::subst(ty));
 
             let fn_sig = self.fn_sig(fn_id, Some(generic_args));
             let input_ty = self.find_sig_ty(fn_sig.inputs()[0], generic_args, span)?;
@@ -951,13 +948,13 @@ impl<'tcx> Generator<'tcx> {
         &self,
         fn_id: DefId,
         expr: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<GenericArgsRef<'tcx>, Error> {
         let arg_matcher = ArgMatcher::new(self.tcx);
 
         let fn_args = self.subst_with(
             self.tcx.typeck(expr.hir_id.owner).node_args(expr.hir_id),
-            ctx.generic_args,
+            ctx,
         );
 
         let fn_generic_args =
@@ -983,7 +980,7 @@ impl<'tcx> Generator<'tcx> {
         module_id: ModuleId,
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let mut inputs = Vec::new();
 
@@ -1179,7 +1176,7 @@ impl<'tcx> Generator<'tcx> {
         fn_id: LocalDefId,
         generic_args: GenericArgsRef<'tcx>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let mono_item = MonoItem::new(fn_id, generic_args);
 
@@ -1206,7 +1203,7 @@ impl<'tcx> Generator<'tcx> {
         generic_args: GenericArgsRef<'tcx>,
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let mono_item = MonoItem::new(impl_id, generic_args);
 

@@ -88,8 +88,8 @@ impl<'tcx> Generator<'tcx> {
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
         let ctx = EvalContext::new(generic_args, module_id);
 
-        self.evaluate_inputs(inputs, ctx, false, &mut |_| {})?;
-        let item_id = self.evaluate_expr(body.value, ctx)?;
+        self.evaluate_inputs(inputs, &ctx, false, &mut |_| {})?;
+        let item_id = self.evaluate_expr(body.value, &ctx)?;
         self.evaluate_outputs(item_id)?;
 
         self.idents.for_module(module_id).pop_scope();
@@ -100,7 +100,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_inputs<'a, F: FnMut(ItemId)>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
         is_dummy: bool,
         f: &mut F,
     ) -> Result<(), Error>
@@ -248,13 +248,13 @@ impl<'tcx> Generator<'tcx> {
     fn make_input(
         &mut self,
         input: &HirTy<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
         is_dummy: bool,
     ) -> Result<ItemId, Error> {
         match input.kind {
             HirTyKind::Infer => {
                 let sig_ty = self.find_sig_ty(
-                    self.node_type(input.hir_id, ctx.generic_args),
+                    self.node_type(input.hir_id, ctx),
                     ctx.generic_args,
                     input.span,
                 )?;

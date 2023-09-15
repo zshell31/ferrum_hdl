@@ -54,7 +54,9 @@ pub enum Blackbox {
     RegisterFnWithRst,
     SignalLift,
     SignalMap,
+    SignalAndThen,
     SignalApply2,
+    SignalValue,
     BitPackMsb,
     ArrayIntoInner,
     ArrayReverse,
@@ -93,6 +95,14 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
 
     if def_path == &ItemPath(&["signal", "impl", "map"]) {
         return Some(Blackbox::SignalMap);
+    }
+
+    if def_path == &ItemPath(&["signal", "impl", "and_then"]) {
+        return Some(Blackbox::SignalAndThen);
+    }
+
+    if def_path == &ItemPath(&["signal", "impl", "value"]) {
+        return Some(Blackbox::SignalValue);
     }
 
     if def_path == &ItemPath(&["signal", "apply2"]) {
@@ -150,34 +160,26 @@ pub fn ignore_ty(def_path: &DefPath) -> bool {
 pub fn find_sig_ty(key: &TyOrDefIdWithGen<'_>, def_path: &DefPath) -> Option<SignalTy> {
     // TODO: check crate
     if def_path == &ItemPath(&["signal", "Signal"]) {
-        #[allow(unused_imports)]
-        use ferrum::signal::Signal;
-        return key.generic_ty(0);
+        return key.generic_ty(1);
+    }
+
+    if def_path == &ItemPath(&["signal", "Wrapped"]) {
+        return key.generic_ty(1);
     }
 
     if def_path == &ItemPath(&["bit", "Bit"]) {
-        #[allow(unused_imports)]
-        use ferrum::bit::Bit;
         return Some(PrimTy::Bit.into());
     }
 
     if def_path == &ItemPath(&["domain", "Clock"]) {
-        #[allow(unused_imports)]
-        use ferrum::domain::Clock;
         return Some(PrimTy::Clock.into());
     }
 
     if def_path == &ItemPath(&["unsigned", "Unsigned"]) {
-        #[allow(unused_imports)]
-        use ferrum::unsigned::Unsigned;
-
         return key.generic_const(0).map(|val| PrimTy::Unsigned(val).into());
     }
 
     if def_path == &ItemPath(&["array", "Array"]) {
-        #[allow(unused_imports)]
-        use ferrum::array::Array;
-
         let n = key.generic_const(0)?;
         let ty = key.generic_ty(1)?;
 
@@ -194,7 +196,7 @@ pub trait EvaluateExpr<'tcx> {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error>;
 }
 
@@ -203,7 +205,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match self {
             Self::Cast => Cast.evaluate_expr(generator, expr, ctx),
@@ -217,7 +219,9 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             }
             Self::SignalLift => SignalLift.evaluate_expr(generator, expr, ctx),
             Self::SignalMap => SignalMap.evaluate_expr(generator, expr, ctx),
+            Self::SignalAndThen => SignalAndThen.evaluate_expr(generator, expr, ctx),
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
+            Self::SignalValue => SignalValue.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
             Self::ArrayIntoInner => ArrayIntoInner.evaluate_expr(generator, expr, ctx),
             Self::ArrayReverse => ArrayReverse.evaluate_expr(generator, expr, ctx),
@@ -239,7 +243,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Cast {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
@@ -253,7 +257,7 @@ impl BitVal {
     fn create_bit_value<'tcx>(
         &self,
         generator: &mut Generator<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let value = match self.0 {
             true => 1,
@@ -274,7 +278,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVal {
         &self,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         self.create_bit_value(generator, ctx)
     }
@@ -299,11 +303,11 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (rec, args) = utils::expected_call(expr)?;
 
-        let ty = generator.node_type(rec.hir_id, ctx.generic_args);
+        let ty = generator.node_type(rec.hir_id, ctx);
 
         let value_ty =
             utils::subst_type(ty, 1).ok_or_else(|| Self::make_err(rec.span))?;
@@ -381,7 +385,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
 
@@ -396,7 +400,28 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        let span = rec.span;
+
+        let rec = generator.evaluate_expr(rec, ctx)?;
+        let comb = generator.evaluate_expr(&args[0], ctx)?;
+
+        generator.link_dummy_inputs(&[rec], comb, span)?;
+
+        Ok(comb)
+    }
+}
+
+struct SignalAndThen;
+
+impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
         let span = rec.span;
@@ -417,7 +442,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (rec, args) = utils::expected_call(expr)?;
 
@@ -431,10 +456,25 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
     }
 }
 
+struct SignalValue;
+
+impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+
+        generator.evaluate_expr(rec, ctx)
+    }
+}
+
 pub fn bit_vec_trans<'tcx>(
     generator: &mut Generator<'tcx>,
     source: ItemId,
-    ctx: EvalContext<'tcx>,
+    ctx: &EvalContext<'tcx>,
     trans: impl FnOnce(
         &mut Generator<'tcx>,
         &EvalContext<'tcx>,
@@ -443,7 +483,7 @@ pub fn bit_vec_trans<'tcx>(
 ) -> Result<ItemId, Error> {
     let bit_vec = generator.to_bitvec(ctx.module_id, source);
 
-    let (trans, sig_ty) = trans(generator, &ctx, bit_vec)?;
+    let (trans, sig_ty) = trans(generator, ctx, bit_vec)?;
     let trans = generator.net_list[trans]
         .outputs()
         .only_one()
@@ -463,7 +503,7 @@ pub struct LoopArgs {
 pub fn bit_vec_trans_in_loop<'tcx>(
     generator: &mut Generator<'tcx>,
     source: ItemId,
-    ctx: EvalContext<'tcx>,
+    ctx: &EvalContext<'tcx>,
     count: u128,
     trans: impl FnOnce(
         &mut Generator<'tcx>,
@@ -503,7 +543,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
         let rec = generator.evaluate_expr(rec, ctx)?;
@@ -534,7 +574,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayIntoInner {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
         generator.evaluate_expr(rec, ctx)
@@ -548,13 +588,13 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
         let ArrayTy(count, sig_ty) = generator
             .find_sig_ty(
-                generator.node_type(rec.hir_id, ctx.generic_args),
+                generator.node_type(rec.hir_id, ctx),
                 ctx.generic_args,
                 rec.span,
             )?
@@ -594,14 +634,14 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
         let span = rec.span;
 
         let ArrayTy(count, sig_ty) = generator
             .find_sig_ty(
-                generator.node_type(rec.hir_id, ctx.generic_args),
+                generator.node_type(rec.hir_id, ctx),
                 ctx.generic_args,
                 rec.span,
             )?
@@ -634,7 +674,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
                     .node_out_id(input);
                 let input = generator.from_bitvec(ctx.module_id, input, *sig_ty);
 
-                let closure = generator.evaluate_expr(closure, *ctx)?;
+                let closure = generator.evaluate_expr(closure, ctx)?;
                 generator.link_dummy_inputs(&[input], closure, span)?;
 
                 let sig_ty = generator.item_ty(closure);
@@ -661,7 +701,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Unbundle {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
 
@@ -676,7 +716,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Bundle {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, args) = utils::expected_call(expr)?;
 
@@ -742,7 +782,7 @@ impl StdConversion {
         target: SignalTy,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let item_id = generator.evaluate_expr(expr, ctx)?;
         Self::convert(from, target, generator, item_id, expr.span)
@@ -756,18 +796,18 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match expr.kind {
             ExprKind::Call(rec, args) => {
                 let from = generator.find_sig_ty(
-                    generator.node_type(args[0].hir_id, ctx.generic_args),
+                    generator.node_type(args[0].hir_id, ctx),
                     ctx.generic_args,
                     args[0].span,
                 )?;
                 let target = match rec.kind {
                     ExprKind::Path(QPath::TypeRelative(ty, _)) => generator.find_sig_ty(
-                        generator.node_type(ty.hir_id, ctx.generic_args),
+                        generator.node_type(ty.hir_id, ctx),
                         ctx.generic_args,
                         rec.span,
                     )?,
@@ -780,12 +820,12 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
             }
             ExprKind::MethodCall(_, rec, _, span) => {
                 let from = generator.find_sig_ty(
-                    generator.node_type(rec.hir_id, ctx.generic_args),
+                    generator.node_type(rec.hir_id, ctx),
                     ctx.generic_args,
                     rec.span,
                 )?;
                 let target = generator.find_sig_ty(
-                    generator.node_type(expr.hir_id, ctx.generic_args),
+                    generator.node_type(expr.hir_id, ctx),
                     ctx.generic_args,
                     span,
                 )?;
@@ -804,7 +844,7 @@ impl<'tcx> EvaluateExpr<'tcx> for StdClone {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: EvalContext<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 

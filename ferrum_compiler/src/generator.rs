@@ -27,6 +27,7 @@ use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::ty::{AssocKind, EarlyBinder, GenericArgsRef, List, Ty, TyCtxt};
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
+use rustc_type_ir::fold::TypeFoldable;
 
 use self::ty_or_def_id::TyOrDefIdWithGen;
 use crate::{
@@ -87,6 +88,14 @@ impl<'tcx> EvalContext<'tcx> {
             generic_args,
             module_id,
         }
+    }
+
+    pub fn instantiate<T: TypeFoldable<TyCtxt<'tcx>>>(
+        &self,
+        tcx: TyCtxt<'tcx>,
+        foldable: T,
+    ) -> T {
+        EarlyBinder::bind(foldable).instantiate(tcx, self.generic_args)
     }
 }
 
@@ -221,15 +230,19 @@ impl<'tcx> Generator<'tcx> {
         self.tcx.sess.abort_if_errors();
     }
 
-    pub fn node_type(
-        &self,
-        hir_id: HirId,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Ty<'tcx> {
+    pub fn node_type(&self, hir_id: HirId, ctx: &EvalContext<'tcx>) -> Ty<'tcx> {
         let owner_id = hir_id.owner;
         let typeck_res = self.tcx.typeck(owner_id);
-        EarlyBinder::bind(typeck_res.node_type(hir_id))
-            .instantiate(self.tcx, generic_args)
+        let ty = typeck_res.node_type(hir_id);
+        ctx.instantiate(self.tcx, ty)
+    }
+
+    pub fn subst_with(
+        &self,
+        subst: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> GenericArgsRef<'tcx> {
+        ctx.instantiate(self.tcx, subst)
     }
 
     pub fn item_id_for_ident(
@@ -286,13 +299,5 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(())
             })
-    }
-
-    pub fn subst_with(
-        &self,
-        subst: GenericArgsRef<'tcx>,
-        new_subst: GenericArgsRef<'tcx>,
-    ) -> GenericArgsRef<'tcx> {
-        EarlyBinder::bind(subst).instantiate(self.tcx, new_subst)
     }
 }

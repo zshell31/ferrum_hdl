@@ -1,4 +1,5 @@
 use std::{
+    cell::RefCell,
     fmt::Debug,
     marker::PhantomData,
     ops::{Add, BitAnd, BitOr, Not, Sub},
@@ -87,8 +88,37 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         })
     }
 
+    pub fn and_then<U: SignalValue, F>(self, f: F) -> Signal<D, U>
+    where
+        F: Fn(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
+    {
+        let wrapped = Wrapped::new(self);
+        f(wrapped)
+    }
+
     pub fn iter(self) -> impl Iterator<Item = T> {
         SignalIter(self)
+    }
+}
+
+pub struct Wrapped<D: ClockDomain, T: SignalValue>(RefCell<Signal<D, T>>);
+
+impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
+    #[inline(always)]
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
+    fn new(signal: Signal<D, T>) -> Self {
+        Self(RefCell::new(signal))
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    #[inline(always)]
+    pub fn value(&self) -> T {
+        self.0.borrow_mut().next()
     }
 }
 
@@ -214,10 +244,13 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     })
 }
 
+#[allow(type_alias_bounds)]
+pub type Reset<D: ClockDomain> = Signal<D, Bit>;
+
 #[inline(always)]
 pub fn reg_rst<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    mut rst: Signal<D, Bit>,
+    mut rst: Reset<D>,
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {

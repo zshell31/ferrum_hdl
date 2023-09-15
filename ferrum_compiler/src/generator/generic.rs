@@ -20,6 +20,7 @@ use crate::{
 pub enum Generic {
     Ty(SignalTy),
     Const(u128),
+    Ignored,
 }
 
 impl From<SignalTy> for Generic {
@@ -145,18 +146,24 @@ impl Generics {
                     return Ok(None);
                 }
 
-                let generics = if generator.tcx.def_path(adt.did())
-                    == ItemPath(&["signal", "Signal"])
+                let def_path = generator.tcx.def_path(adt.did());
+                let generics = if def_path == ItemPath(&["signal", "Signal"])
+                    || def_path == ItemPath(&["signal", "Wrapped"])
                 {
-                    Either::Left(generics.iter().skip(1)) // the first generic argument is ClockDomain
+                    Either::Left([None, Some(generics[1])].into_iter()) // the first generic argument is ClockDomain
                 } else {
-                    Either::Right(generics.iter())
+                    Either::Right(generics.iter().map(Some))
                 };
 
                 Ok(Some(Self(unsafe {
-                    with_arena().alloc_from_res_iter(generics.map(|generic| {
-                        Generic::from_gen_arg(&generic, generator, span)
-                    }))?
+                    with_arena().alloc_from_res_iter(generics.map(
+                        |generic| match generic {
+                            Some(generic) => {
+                                Generic::from_gen_arg(&generic, generator, span)
+                            }
+                            None => Ok(Generic::Ignored),
+                        },
+                    ))?
                 })))
             }
             _ => Ok(None),

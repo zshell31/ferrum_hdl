@@ -1,9 +1,12 @@
 use std::{fmt::Debug, mem, ops::Index};
 
+use smallvec::SmallVec;
+
 use crate::{
     const_asserts::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue},
+    simulation::Simulate,
     CastInner,
 };
 
@@ -111,14 +114,14 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T
     type Unbundled = Array<N, Signal<D, T>>;
 
     fn bundle(mut signals: Self::Unbundled) -> Signal<D, Self> {
-        Signal::new(move || {
+        Signal::new(move |cycle| {
             let values = signals
                 .0
                 .iter_mut()
-                .map(|signal| signal.next())
-                .collect::<Vec<T>>();
+                .map(|signal| signal.next(cycle))
+                .collect::<SmallVec<[T; 8]>>();
 
-            Array::from(match <[T; N]>::try_from(values) {
+            Array::from(match <[T; N]>::try_from(values.as_slice()) {
                 Ok(res) => res,
                 Err(_) => unreachable!(),
             })
@@ -127,13 +130,28 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T
 
     fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled {
         let signals = (0 .. N)
-            .map(|ind| signal.clone().map(move |s| s[ind].clone()))
+            .map(|ind| signal.clone().map(move |s| s[ind]))
             .collect::<Vec<_>>();
 
         Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
             Ok(res) => res,
             Err(_) => unreachable!(),
         })
+    }
+}
+
+impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for Array<N, Signal<D, T>> {
+    type Value = [T; N];
+
+    fn next(&mut self, cycle: u16) -> Self::Value {
+        let values = (0 .. N)
+            .map(|ind| self.0[ind].next(cycle))
+            .collect::<SmallVec<[_; 8]>>();
+
+        match <[_; N]>::try_from(values.as_slice()) {
+            Ok(res) => res,
+            Err(_) => unreachable!(),
+        }
     }
 }
 
@@ -173,11 +191,12 @@ mod tests {
 
         let res = Array::<3, _>::unbundle(s);
 
-        let extract = |ind| res[ind].clone().iter().take(4).collect::<Vec<_>>();
-
-        assert_eq!(extract(0), [H, L, H, L]);
-        assert_eq!(extract(1), [H, H, L, L]);
-        assert_eq!(extract(2), [L, L, H, H]);
+        assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
+            [H, H, L],
+            [L, H, L],
+            [H, L, H],
+            [L, L, H]
+        ]);
     }
 
     #[test]
@@ -190,7 +209,7 @@ mod tests {
 
         let res = Array::<3, _>::bundle(s);
 
-        assert_eq!(res.iter().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],

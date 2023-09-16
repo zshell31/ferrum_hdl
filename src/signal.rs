@@ -1,18 +1,21 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     fmt::Debug,
     marker::PhantomData,
     ops::{Add, BitAnd, BitOr, Not, Sub},
+    rc::Rc,
 };
 
-use dyn_clone::{clone_trait_object, DynClone};
+use derive_where::derive_where;
 
 use crate::{
-    bit::Bit,
+    bit::{Bit, L},
     domain::{Clock, ClockDomain},
+    signal_fn::SignalFn,
+    simulation::Simulate,
 };
 
-pub trait SignalValue: Debug + Clone + 'static {}
+pub trait SignalValue: Debug + Copy + 'static {}
 
 impl SignalValue for bool {}
 
@@ -37,53 +40,37 @@ impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
 impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
 impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
 
-pub(crate) trait SignalFn<T: SignalValue>:
-    DynClone + FnMut() -> T + 'static
-{
-}
-
-impl<T: SignalValue, F> SignalFn<T> for F where F: FnMut() -> T + Clone + 'static {}
-
-clone_trait_object!(<T> SignalFn<T> where T: SignalValue);
-
+#[derive_where(Debug, Clone)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
+    #[derive_where(skip)]
     _dom: PhantomData<D>,
-    next: Box<dyn SignalFn<T>>,
-}
-
-impl<D: ClockDomain, T: SignalValue> Clone for Signal<D, T> {
-    fn clone(&self) -> Self {
-        Self {
-            _dom: PhantomData,
-            next: self.next.clone(),
-        }
-    }
+    next: Rc<RefCell<SignalFn<T>>>,
 }
 
 impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
-    pub(crate) fn new(f: impl SignalFn<T>) -> Self {
+    pub(crate) fn new(f: impl FnMut(u16) -> T + 'static) -> Self {
         Self {
             _dom: PhantomData,
-            next: Box::new(f),
+            next: Rc::new(RefCell::new(SignalFn::new(f))),
         }
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub fn next(&mut self) -> T {
-        (self.next)()
+    pub(crate) fn next(&mut self, cycle: u16) -> T {
+        self.next.borrow_mut().next_val(cycle)
     }
 
     pub fn lift(value: T) -> Signal<D, T> {
-        Self::new(move || value.clone())
+        Self::new(move |_| value)
     }
 
     pub fn map<U: SignalValue, F>(self, f: F) -> Signal<D, U>
     where
         F: Fn(T) -> U + Clone + 'static,
     {
-        let mut next = self.next;
-        Signal::new(move || {
-            let val = (next)();
+        let mut inner = self;
+        Signal::new(move |cycle| {
+            let val = inner.next(cycle);
             (f)(val)
         })
     }
@@ -92,16 +79,44 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     where
         F: Fn(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
     {
-        let wrapped = Wrapped::new(self);
-        f(wrapped)
+        let mut wrapped = Wrapped::new(self);
+        let mut signal = f(wrapped.clone());
+        Signal::new(move |cycle| {
+            wrapped.next(cycle);
+            signal.next(cycle)
+        })
     }
 
-    pub fn iter(self) -> impl Iterator<Item = T> {
-        SignalIter(self)
+    pub fn source(value: T) -> (Source<T>, Signal<D, T>) {
+        let source = Source::new(value);
+        let source_clone = source.clone();
+        let signal = Signal::new(move |_| source_clone.value());
+
+        (source, signal)
     }
 }
 
-pub struct Wrapped<D: ClockDomain, T: SignalValue>(RefCell<Signal<D, T>>);
+impl<D: ClockDomain> Reset<D> {
+    pub fn reset() -> (Source<Bit>, Signal<D, Bit>) {
+        Self::source(L)
+    }
+
+    pub fn click(source: &Source<Bit>, f: impl FnOnce()) {
+        source.revert();
+        f();
+        source.revert();
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
+    type Value = T;
+
+    fn next(&mut self, cycle: u16) -> Self::Value {
+        self.next(cycle)
+    }
+}
+
+pub struct Wrapped<D: ClockDomain, T: SignalValue>(Signal<D, T>);
 
 impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
     #[inline(always)]
@@ -112,23 +127,40 @@ impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
 
 impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     fn new(signal: Signal<D, T>) -> Self {
-        Self(RefCell::new(signal))
+        Self(signal)
     }
 
     #[allow(clippy::should_implement_trait)]
     #[inline(always)]
     pub fn value(&self) -> T {
-        self.0.borrow_mut().next()
+        self.0.next.borrow().value()
+    }
+
+    pub(crate) fn next(&mut self, cycle: u16) {
+        self.0.next(cycle);
     }
 }
 
-pub struct SignalIter<S>(S);
+#[derive(Debug, Clone)]
+pub struct Source<T: SignalValue>(Rc<Cell<T>>);
 
-impl<D: ClockDomain, T: SignalValue> Iterator for SignalIter<Signal<D, T>> {
-    type Item = T;
+impl<T: SignalValue> Source<T> {
+    pub(crate) fn new(value: T) -> Self {
+        Self(Rc::new(Cell::new(value)))
+    }
 
-    fn next(&mut self) -> Option<Self::Item> {
-        Some(self.0.next())
+    pub fn value(&self) -> T {
+        self.0.get()
+    }
+
+    pub fn set_value(&self, value: T) -> T {
+        self.0.replace(value)
+    }
+}
+
+impl Source<Bit> {
+    pub fn revert(&self) {
+        self.0.update(|val| !val);
     }
 }
 
@@ -140,12 +172,12 @@ pub fn apply2<D: ClockDomain, T: SignalValue, U: SignalValue, V: SignalValue, F>
 where
     F: Fn(T, U) -> V + Clone + 'static,
 {
-    let mut s1 = s1.next;
-    let mut s2 = s2.next;
+    let mut s1 = s1;
+    let mut s2 = s2;
 
-    Signal::new(move || {
-        let s1 = (s1)();
-        let s2 = (s2)();
+    Signal::new(move |cycle| {
+        let s1 = s1.next(cycle);
+        let s2 = s2.next(cycle);
         (f)(s1, s2)
     })
 }
@@ -220,12 +252,12 @@ where
 impl<I> SignalIterExt for I
 where
     I: IntoIterator + Sized,
-    I::IntoIter: Clone + 'static,
+    I::IntoIter: 'static,
     I::Item: SignalValue,
 {
     fn into_signal<D: ClockDomain>(self) -> Signal<D, Self::Item> {
         let mut iter = self.into_iter();
-        Signal::new(move || iter.next().expect("No values"))
+        Signal::new(move |_| iter.next().expect("No values"))
     }
 }
 
@@ -235,10 +267,10 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut next_val = rst_val.clone();
-    Signal::new(move || {
-        let value = next_val.clone();
-        next_val = (comb_fn)(value.clone());
+    let mut next_val = rst_val;
+    Signal::new(move |_| {
+        let value = next_val;
+        next_val = (comb_fn)(value);
 
         value
     })
@@ -254,14 +286,14 @@ pub fn reg_rst<D: ClockDomain, T: SignalValue>(
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut next_val = rst_val.clone();
-    Signal::new(move || {
-        let value = if rst.next().into() {
-            rst_val.clone()
+    let mut next_val = rst_val;
+    Signal::new(move |cycle| {
+        let value = if rst.next(cycle).into() {
+            rst_val
         } else {
-            next_val.clone()
+            next_val
         };
-        next_val = (comb_fn)(value.clone());
+        next_val = (comb_fn)(value);
 
         value
     })
@@ -296,7 +328,7 @@ mod tests {
             .map(Unsigned::<8>::from)
             .into_signal::<TestSystem>();
 
-        assert_eq!(s.iter().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
+        assert_eq!(s.values().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
     }
 
     #[test]
@@ -304,7 +336,7 @@ mod tests {
         let clk = Clock::<TestSystem>::default();
         let r = reg::<TestSystem, Unsigned<3>>(clk, 0.into(), |val| val + 1);
 
-        assert_eq!(r.iter().take(16).collect::<Vec<_>>(), [
+        assert_eq!(r.values().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
         ]);
     }

@@ -5,13 +5,13 @@ use std::{
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
-use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
+use ferrum_netlist::sig_ty::PrimTy;
 
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::BitVec,
+    cast::{CastInner, IsPrimTy},
     signal::SignalValue,
-    CastInner,
 };
 
 const fn bit_mask(n: u128) -> u128 {
@@ -90,12 +90,13 @@ impl<const N: usize> const From<Unsigned<N>> for u128 {
 
 impl<const N: usize> Display for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.inner(), f)
+        write!(f, "Unsigned({})", self.inner())
     }
 }
 
 impl<const N: usize> Binary for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Unsigned(")?;
         let bits = u128::BITS - self.inner().leading_zeros();
         for _ in 0 .. (N - (bits as usize)) {
             f.write_char('0')?;
@@ -103,6 +104,7 @@ impl<const N: usize> Binary for Unsigned<N> {
         if self.inner() != 0 {
             Binary::fmt(&self.inner(), f)?;
         }
+        f.write_str(")")?;
 
         Ok(())
     }
@@ -110,7 +112,7 @@ impl<const N: usize> Binary for Unsigned<N> {
 
 impl<const N: usize> LowerHex for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        LowerHex::fmt(&self.inner(), f)
+        write!(f, "{:x}", self.inner())
     }
 }
 

@@ -46,8 +46,8 @@ mod tests {
     use crate::{
         array::Array,
         bit::{H, L},
+        cast::Cast,
         unsigned::Unsigned,
-        Cast,
     };
 
     #[test]

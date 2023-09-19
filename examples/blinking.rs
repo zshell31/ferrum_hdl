@@ -4,8 +4,8 @@
 use ferrum::{
     bit::Bit,
     bit_pack::BitPack,
-    const_asserts::IsConst,
     const_functions::clog2,
+    const_helpers::UsizeConstr,
     domain::{Clock, ClockDomain, PICOSECONDS},
     signal::{reg, Reset, Signal},
     unsigned::Unsigned,
@@ -27,13 +27,12 @@ pub const fn clock_divider<D: ClockDomain>(ps: usize) -> usize {
     ps / D::PERIOD
 }
 
-// https://github.com/rust-lang/rust/issues/82509
 pub fn blinking<D: ClockDomain>(
     clk: Clock<D>,
     rst: Reset<D>,
 ) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
-    IsConst<{ blinking_count::<D>() }>:,
+    UsizeConstr<{ blinking_count::<D>() }>:,
 {
     reg::<D, _>(
         clk,

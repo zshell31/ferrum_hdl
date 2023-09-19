@@ -149,7 +149,7 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::Bundle);
     }
 
-    if def_path == &ItemPath(&["signal", "Bundle", "unbundle"]) {
+    if def_path == &ItemPath(&["signal", "Unbundle", "unbundle"]) {
         return Some(Blackbox::Unbundle);
     }
 
@@ -850,9 +850,9 @@ impl<'tcx> EvaluateExpr<'tcx> for Unbundle {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, args) = utils::expected_call(expr)?;
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        generator.evaluate_expr(&args[0], ctx)
+        generator.evaluate_expr(rec, ctx)
     }
 }
 
@@ -865,9 +865,9 @@ impl<'tcx> EvaluateExpr<'tcx> for Bundle {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, args) = utils::expected_call(expr)?;
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        generator.evaluate_expr(&args[0], ctx)
+        generator.evaluate_expr(rec, ctx)
     }
 }
 

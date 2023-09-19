@@ -43,18 +43,6 @@ impl PrimTy {
     }
 }
 
-pub trait IsPrimTy: Sized {
-    const PRIM_TY: PrimTy;
-}
-
-impl IsPrimTy for bool {
-    const PRIM_TY: PrimTy = PrimTy::Bool;
-}
-
-impl IsPrimTy for u128 {
-    const PRIM_TY: PrimTy = PrimTy::U128;
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArrayTy(pub u128, pub &'static SignalTy);
 

@@ -1,18 +1,23 @@
-use std::{fmt::Debug, mem, ops::Index};
+use core::fmt;
+use std::{
+    fmt::{Binary, Debug, Display, LowerHex},
+    mem,
+    ops::Index,
+};
 
 use smallvec::SmallVec;
 
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::{BitVec, BitVecInner},
-    const_asserts::{Assert, IsTrue},
+    cast::CastInner,
+    const_helpers::{Assert, IsTrue},
     domain::ClockDomain,
-    signal::{Bundle, Signal, SignalValue},
+    signal::{Bundle, Signal, SignalValue, Unbundle},
     simulation::Simulate,
-    CastInner,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 #[repr(transparent)]
 pub struct Array<const N: usize, T>([T; N]);
 
@@ -42,6 +47,30 @@ where
 }
 
 impl<const N: usize, T: SignalValue> SignalValue for Array<N, T> {}
+
+impl<const N: usize, T: SignalValue + Display> Display for Array<N, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<const N: usize, T: SignalValue + Debug> Debug for Array<N, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<const N: usize, T: SignalValue + Binary> Binary for Array<N, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl<const N: usize, T: SignalValue + LowerHex> LowerHex for Array<N, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 impl<const N: usize, T: BitSize> BitSize for Array<N, T> {
     const BITS: usize = N * T::BITS;
@@ -161,12 +190,27 @@ impl<const N: usize, T> Index<usize> for Array<N, T> {
     }
 }
 
-impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T> {
+impl<const N: usize, D: ClockDomain, T: SignalValue> Unbundle for Signal<D, Array<N, T>> {
     type Unbundled = Array<N, Signal<D, T>>;
 
-    fn bundle(mut signals: Self::Unbundled) -> Signal<D, Self> {
+    fn unbundle(self) -> Self::Unbundled {
+        let signals = (0 .. N)
+            .map(|ind| self.clone().map(move |s| s[ind]))
+            .collect::<Vec<_>>(); // TODO: smallvec
+
+        Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
+            Ok(res) => res,
+            Err(_) => unreachable!(),
+        })
+    }
+}
+
+impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for Array<N, Signal<D, T>> {
+    type Bundled = Signal<D, Array<N, T>>;
+
+    fn bundle(mut self) -> Self::Bundled {
         Signal::new(move |cycle| {
-            let values = signals
+            let values = self
                 .0
                 .iter_mut()
                 .map(|signal| signal.next(cycle))
@@ -176,17 +220,6 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T
                 Ok(res) => res,
                 Err(_) => unreachable!(),
             })
-        })
-    }
-
-    fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled {
-        let signals = (0 .. N)
-            .map(|ind| signal.clone().map(move |s| s[ind]))
-            .collect::<Vec<_>>(); // TODO: smallvec
-
-        Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
         })
     }
 }
@@ -212,8 +245,8 @@ mod tests {
     use crate::{
         bit::{Bit, H, L},
         bit_vec::BitVec,
+        cast::Cast,
         signal::SignalIterExt,
-        Cast,
     };
 
     pub struct TestSystem;
@@ -242,7 +275,7 @@ mod tests {
             .map(Array::from)
             .into_signal::<TestSystem>();
 
-        let res = Array::<3, _>::unbundle(s);
+        let res = s.unbundle();
 
         assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
             [H, H, L],
@@ -260,7 +293,7 @@ mod tests {
             [L, L, H, H].into_signal::<TestSystem>(),
         ]);
 
-        let res = Array::<3, _>::bundle(s);
+        let res = s.bundle();
 
         assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
             [H, H, L],

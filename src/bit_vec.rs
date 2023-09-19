@@ -6,7 +6,7 @@ use std::{
 use crate::{
     bit::Bit,
     bit_pack::BitPack,
-    const_asserts::{Assert, IsTrue},
+    const_helpers::{Assert, IsTrue},
     signal::SignalValue,
 };
 

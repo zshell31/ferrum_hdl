@@ -1,16 +1,16 @@
 use std::{
-    fmt::{self, Debug, Display},
+    fmt::{self, Binary, Debug, Display},
     mem,
     ops::{BitAnd, BitOr, Not},
 };
 
-use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
+use ferrum_netlist::sig_ty::PrimTy;
 
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::BitVec,
+    cast::{CastInner, IsPrimTy},
     signal::SignalValue,
-    CastInner,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -93,6 +93,12 @@ impl Display for Bit {
 }
 
 impl Debug for Bit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl Binary for Bit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
     }

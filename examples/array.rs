@@ -3,7 +3,7 @@
 use ferrum::{
     array::Array,
     domain::ClockDomain,
-    signal::{Bundle, Signal},
+    signal::{Bundle, Signal, Unbundle},
     unsigned::Unsigned,
 };
 
@@ -16,7 +16,7 @@ impl ClockDomain for TestSystem {
 pub fn top_module(
     signals: Signal<TestSystem, Array<4, Unsigned<4>>>,
 ) -> Signal<TestSystem, Array<4, Unsigned<4>>> {
-    let [start, .., end] = Array::<4, _>::unbundle(signals).into_inner();
+    let [start, .., end] = signals.unbundle().into_inner();
 
     Array::<4, _>::bundle(
         [

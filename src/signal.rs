@@ -7,9 +7,11 @@ use std::{
 };
 
 use derive_where::derive_where;
+use seq_macro::seq;
 
 use crate::{
     bit::{Bit, H, L},
+    cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
     simulation::Simulate,
@@ -21,24 +23,27 @@ impl SignalValue for bool {}
 
 macro_rules! impl_signal_value_for_tuples {
     (
-        $( $t:ident ),+
+        $n: literal
     ) => {
-       impl<$( $t: SignalValue, )+> SignalValue for ($( $t, )+) {}
-    };
+        seq!(N in 0..$n {
+            impl< #( T~N: SignalValue, )* > SignalValue for ( #( T~N, )* ) {}
+
+        });
+     };
 }
 
-impl_signal_value_for_tuples!(T1);
-impl_signal_value_for_tuples!(T1, T2);
-impl_signal_value_for_tuples!(T1, T2, T3);
-impl_signal_value_for_tuples!(T1, T2, T3, T4);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11);
-impl_signal_value_for_tuples!(T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12);
+impl_signal_value_for_tuples!(1);
+impl_signal_value_for_tuples!(2);
+impl_signal_value_for_tuples!(3);
+impl_signal_value_for_tuples!(4);
+impl_signal_value_for_tuples!(5);
+impl_signal_value_for_tuples!(6);
+impl_signal_value_for_tuples!(7);
+impl_signal_value_for_tuples!(8);
+impl_signal_value_for_tuples!(9);
+impl_signal_value_for_tuples!(10);
+impl_signal_value_for_tuples!(11);
+impl_signal_value_for_tuples!(12);
 
 #[derive_where(Debug, Clone)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
@@ -312,35 +317,104 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |cycle| {
-        let value = if rst.next(cycle).into() {
-            rst_val
+        if rst.next(cycle).into() {
+            next_val = rst_val;
+            next_val
+        } else if en.next(cycle).into() {
+            let val = (comb_fn)(next_val);
+            next_val = val;
+            val
         } else {
             next_val
-        };
-
-        if en.next(cycle).into() {
-            next_val = (comb_fn)(value);
         }
-
-        value
     })
 }
 
-pub trait Bundle<D: ClockDomain, T: SignalValue>
-where
-    Self: SignalValue,
-{
+pub trait Unbundle {
     type Unbundled;
 
-    fn bundle(signals: Self::Unbundled) -> Signal<D, Self>;
-
-    fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled;
+    fn unbundle(self) -> Self::Unbundled;
 }
+
+pub trait Bundle {
+    type Bundled: Unbundle<Unbundled = Self>;
+    fn bundle(self) -> Self::Bundled;
+}
+
+macro_rules! impl_bundle_for_tuples {
+    (
+        $n:literal
+    ) => {
+        seq!(N in 0..$n {
+            impl<D: ClockDomain, #( T~N: SignalValue, )*> Unbundle for Signal<D, ( #(T~N,)* )> {
+                type Unbundled = ( #( Signal<D, T~N>, )* );
+
+                fn unbundle(self) -> Self::Unbundled {
+                    (
+                        #(
+                            self.clone().map(|values| values.N),
+                        )*
+
+                    )
+                }
+            }
+
+            impl<D: ClockDomain, #( T~N: SignalValue, )*> Bundle for ( #( Signal<D, T~N>, )* ) {
+                type Bundled = Signal<D, ( #(T~N,)* )>;
+                fn bundle(mut self) -> Self::Bundled {
+                    Signal::new(move |cycle| (
+                        #(
+                            self.N.next(cycle),
+                        )*
+                    ))
+                }
+            }
+
+
+            impl<D: ClockDomain, #( T~N: SignalValue, )*> Simulate for ( #( Signal<D, T~N>, )* ) {
+                type Value = ( #( T~N, )* );
+
+                fn next(&mut self, cycle: u16) -> Self::Value {
+                    (
+                        #(
+                            self.N.next(cycle),
+                        )*
+                    )
+                }
+            }
+
+            impl<#( U~N, T~N: CastInner<U~N>, )*> CastInner<( #( U~N, )* )> for ( #( T~N, )* ) {
+                fn cast_inner(self) -> ( #( U~N, )* ) {
+                    (
+                        #(
+                            self.N.cast_inner(),
+                        )*
+                    )
+                }
+            }
+        });
+
+
+    };
+}
+
+impl_bundle_for_tuples!(1);
+impl_bundle_for_tuples!(2);
+impl_bundle_for_tuples!(3);
+impl_bundle_for_tuples!(4);
+impl_bundle_for_tuples!(5);
+impl_bundle_for_tuples!(6);
+impl_bundle_for_tuples!(7);
+impl_bundle_for_tuples!(8);
+impl_bundle_for_tuples!(9);
+impl_bundle_for_tuples!(10);
+impl_bundle_for_tuples!(11);
+impl_bundle_for_tuples!(12);
 
 #[cfg(test)]
 mod tests {
     use super::{SignalIterExt, *};
-    use crate::unsigned::Unsigned;
+    use crate::{cast::Cast, unsigned::Unsigned};
 
     struct TestSystem;
 
@@ -366,6 +440,54 @@ mod tests {
 
         assert_eq!(r.values().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+        ]);
+    }
+
+    #[test]
+    fn unbundle() {
+        let s: Signal<TestSystem, (Unsigned<4>, Bit)> = [
+            (0, false),
+            (1, true),
+            (2, true),
+            (3, false),
+            (4, true),
+            (5, false),
+        ]
+        .into_iter()
+        .map(Cast::cast)
+        .into_signal();
+
+        let res = s.unbundle();
+
+        assert_eq!(res.values().take(6).map(Cast::cast).collect::<Vec<_>>(), [
+            (0, false),
+            (1, true),
+            (2, true),
+            (3, false),
+            (4, true),
+            (5, false),
+        ]);
+    }
+
+    #[test]
+    fn bundle() {
+        let s: (Signal<TestSystem, Unsigned<4>>, Signal<TestSystem, Bit>) = (
+            [0, 1, 2, 3, 4, 5].into_iter().map(Cast::cast).into_signal(),
+            [false, true, true, false, true, false]
+                .into_iter()
+                .map(Cast::cast)
+                .into_signal(),
+        );
+
+        let res = s.bundle();
+
+        assert_eq!(res.values().take(6).map(Cast::cast).collect::<Vec<_>>(), [
+            (0, false),
+            (1, true),
+            (2, true),
+            (3, false),
+            (4, true),
+            (5, false),
         ]);
     }
 }

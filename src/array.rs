@@ -14,7 +14,7 @@ use crate::{
     const_helpers::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue, Unbundle},
-    simulation::Simulate,
+    simulation::{SimCtx, Simulate},
 };
 
 #[derive(Clone, Copy)]
@@ -209,11 +209,11 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for Array<N, Signal<
     type Bundled = Signal<D, Array<N, T>>;
 
     fn bundle(mut self) -> Self::Bundled {
-        Signal::new(move |cycle| {
+        Signal::new(move |ctx| {
             let values = self
                 .0
                 .iter_mut()
-                .map(|signal| signal.next(cycle))
+                .map(|signal| signal.next(ctx))
                 .collect::<SmallVec<[T; 8]>>();
 
             Array::from(match <[T; N]>::try_from(values.as_slice()) {
@@ -227,9 +227,9 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for Array<N, Signal<
 impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for Array<N, Signal<D, T>> {
     type Value = [T; N];
 
-    fn next(&mut self, cycle: u16) -> Self::Value {
+    fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
         let values = (0 .. N)
-            .map(|ind| self.0[ind].next(cycle))
+            .map(|ind| self.0[ind].next(ctx))
             .collect::<SmallVec<[_; 8]>>();
 
         match <[_; N]>::try_from(values.as_slice()) {
@@ -277,7 +277,7 @@ mod tests {
 
         let res = s.unbundle();
 
-        assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],
@@ -295,7 +295,7 @@ mod tests {
 
         let res = s.bundle();
 
-        assert_eq!(res.values().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],

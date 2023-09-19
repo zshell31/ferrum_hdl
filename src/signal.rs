@@ -4,6 +4,7 @@ use std::{
     marker::PhantomData,
     ops::{Add, BitAnd, BitOr, Not, Sub},
     rc::Rc,
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use derive_where::derive_where;
@@ -14,7 +15,7 @@ use crate::{
     cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
-    simulation::Simulate,
+    simulation::{SimCtx, Simulate},
 };
 
 pub trait SignalValue: Debug + Copy + 'static {}
@@ -45,24 +46,40 @@ impl_signal_value_for_tuples!(10);
 impl_signal_value_for_tuples!(11);
 impl_signal_value_for_tuples!(12);
 
+static SIGNAL_ID: AtomicUsize = AtomicUsize::new(0);
+
 #[derive_where(Debug, Clone)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
     _dom: PhantomData<D>,
+    signal_id: usize,
     next: Rc<RefCell<SignalFn<T>>>,
+    name: Option<&'static str>,
 }
 
 impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
-    pub(crate) fn new(f: impl FnMut(u16) -> T + 'static) -> Self {
+    pub(crate) fn new(f: impl FnMut(&mut SimCtx) -> T + 'static) -> Self {
         Self {
             _dom: PhantomData,
+            signal_id: SIGNAL_ID.fetch_add(1, Ordering::Relaxed),
             next: Rc::new(RefCell::new(SignalFn::new(f))),
+            name: None,
         }
     }
 
     #[allow(clippy::should_implement_trait)]
-    pub(crate) fn next(&mut self, cycle: u16) -> T {
-        self.next.borrow_mut().next_val(cycle)
+    pub(crate) fn next(&mut self, ctx: &mut SimCtx) -> T {
+        let value = self.next.borrow_mut().next_val(ctx);
+        if let Some(name) = self.name.as_ref() {
+            ctx.watch(self.signal_id, name, &value);
+        }
+
+        value
+    }
+
+    pub fn watch(mut self, name: &'static str) -> Self {
+        self.name = Some(name);
+        self
     }
 
     pub fn lift(value: T) -> Signal<D, T> {
@@ -74,8 +91,8 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         F: Fn(T) -> U + Clone + 'static,
     {
         let mut inner = self;
-        Signal::new(move |cycle| {
-            let val = inner.next(cycle);
+        Signal::new(move |ctx| {
+            let val = inner.next(ctx);
             (f)(val)
         })
     }
@@ -86,9 +103,9 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     {
         let mut wrapped = Wrapped::new(self);
         let mut signal = f(wrapped.clone());
-        Signal::new(move |cycle| {
-            wrapped.next(cycle);
-            signal.next(cycle)
+        Signal::new(move |ctx| {
+            wrapped.next(ctx);
+            signal.next(ctx)
         })
     }
 
@@ -138,8 +155,8 @@ impl<D: ClockDomain> Enable<D> {
 impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
     type Value = T;
 
-    fn next(&mut self, cycle: u16) -> Self::Value {
-        self.next(cycle)
+    fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
+        self.next(ctx)
     }
 }
 
@@ -164,8 +181,8 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
         self.0.next.borrow().value()
     }
 
-    pub(crate) fn next(&mut self, cycle: u16) {
-        self.0.next(cycle);
+    pub(crate) fn next(&mut self, ctx: &mut SimCtx) {
+        self.0.next(ctx);
     }
 }
 
@@ -203,9 +220,9 @@ where
     let mut s1 = s1;
     let mut s2 = s2;
 
-    Signal::new(move |cycle| {
-        let s1 = s1.next(cycle);
-        let s2 = s2.next(cycle);
+    Signal::new(move |ctx| {
+        let s1 = s1.next(ctx);
+        let s2 = s2.next(ctx);
         (f)(s1, s2)
     })
 }
@@ -296,8 +313,8 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
-    Signal::new(move |cycle| {
-        let value = if rst.next(cycle).into() {
+    Signal::new(move |ctx| {
+        let value = if rst.next(ctx).into() {
             rst_val
         } else {
             next_val
@@ -316,11 +333,11 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
-    Signal::new(move |cycle| {
-        if rst.next(cycle).into() {
+    Signal::new(move |ctx| {
+        if rst.next(ctx).into() {
             next_val = rst_val;
             next_val
-        } else if en.next(cycle).into() {
+        } else if en.next(ctx).into() {
             let val = (comb_fn)(next_val);
             next_val = val;
             val
@@ -362,9 +379,9 @@ macro_rules! impl_bundle_for_tuples {
             impl<D: ClockDomain, #( T~N: SignalValue, )*> Bundle for ( #( Signal<D, T~N>, )* ) {
                 type Bundled = Signal<D, ( #(T~N,)* )>;
                 fn bundle(mut self) -> Self::Bundled {
-                    Signal::new(move |cycle| (
+                    Signal::new(move |ctx| (
                         #(
-                            self.N.next(cycle),
+                            self.N.next(ctx),
                         )*
                     ))
                 }
@@ -374,10 +391,10 @@ macro_rules! impl_bundle_for_tuples {
             impl<D: ClockDomain, #( T~N: SignalValue, )*> Simulate for ( #( Signal<D, T~N>, )* ) {
                 type Value = ( #( T~N, )* );
 
-                fn next(&mut self, cycle: u16) -> Self::Value {
+                fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
                     (
                         #(
-                            self.N.next(cycle),
+                            self.N.next(ctx),
                         )*
                     )
                 }
@@ -429,7 +446,7 @@ mod tests {
             .map(Unsigned::<8>::from)
             .into_signal::<TestSystem>();
 
-        assert_eq!(s.values().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
+        assert_eq!(s.simulate().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
     }
 
     #[test]
@@ -438,7 +455,7 @@ mod tests {
         let rst = Reset::reset();
         let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val| val + 1);
 
-        assert_eq!(r.values().take(16).collect::<Vec<_>>(), [
+        assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
         ]);
     }
@@ -459,14 +476,17 @@ mod tests {
 
         let res = s.unbundle();
 
-        assert_eq!(res.values().take(6).map(Cast::cast).collect::<Vec<_>>(), [
-            (0, false),
-            (1, true),
-            (2, true),
-            (3, false),
-            (4, true),
-            (5, false),
-        ]);
+        assert_eq!(
+            res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
+            [
+                (0, false),
+                (1, true),
+                (2, true),
+                (3, false),
+                (4, true),
+                (5, false),
+            ]
+        );
     }
 
     #[test]
@@ -481,13 +501,16 @@ mod tests {
 
         let res = s.bundle();
 
-        assert_eq!(res.values().take(6).map(Cast::cast).collect::<Vec<_>>(), [
-            (0, false),
-            (1, true),
-            (2, true),
-            (3, false),
-            (4, true),
-            (5, false),
-        ]);
+        assert_eq!(
+            res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
+            [
+                (0, false),
+                (1, true),
+                (2, true),
+                (3, false),
+                (4, true),
+                (5, false),
+            ]
+        );
     }
 }

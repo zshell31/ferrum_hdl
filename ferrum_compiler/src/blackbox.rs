@@ -57,6 +57,7 @@ pub enum Blackbox {
     SignalAndThen,
     SignalApply2,
     SignalValue,
+    SignalWatch,
     BitPackPack,
     BitPackMsb,
     BitVecShrink,
@@ -107,6 +108,10 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
 
     if def_path == &ItemPath(&["signal", "impl", "value"]) {
         return Some(Blackbox::SignalValue);
+    }
+
+    if def_path == &ItemPath(&["signal", "impl", "watch"]) {
+        return Some(Blackbox::SignalWatch);
     }
 
     if def_path == &ItemPath(&["signal", "apply2"]) {
@@ -246,6 +251,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::SignalAndThen => SignalAndThen.evaluate_expr(generator, expr, ctx),
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
             Self::SignalValue => SignalValue.evaluate_expr(generator, expr, ctx),
+            Self::SignalWatch => SignalWatch.evaluate_expr(generator, expr, ctx),
             Self::BitPackPack => BitPackPack.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
             Self::BitVecShrink => BitVecShrink.evaluate_expr(generator, expr, ctx),
@@ -493,6 +499,21 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
 struct SignalValue;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+
+        generator.evaluate_expr(rec, ctx)
+    }
+}
+
+struct SignalWatch;
+
+impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,

@@ -68,6 +68,7 @@ dependencies = [
  "dyn-clone",
  "ferrum_macros",
  "ferrum_netlist",
+ "fnv",
  "seq-macro",
  "smallvec",
  "strum",

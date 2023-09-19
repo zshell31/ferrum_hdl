@@ -1,17 +1,17 @@
 use derive_where::derive_where;
 
-use crate::signal::SignalValue;
+use crate::{signal::SignalValue, simulation::SimCtx};
 
 #[derive_where(Debug)]
 pub struct SignalFn<T: SignalValue> {
     cycle: u16,
     cached: Option<T>,
     #[derive_where(skip)]
-    f: Box<dyn FnMut(u16) -> T>,
+    f: Box<dyn FnMut(&mut SimCtx) -> T>,
 }
 
 impl<T: SignalValue> SignalFn<T> {
-    pub(crate) fn new(f: impl FnMut(u16) -> T + 'static) -> Self {
+    pub(crate) fn new(f: impl FnMut(&mut SimCtx) -> T + 'static) -> Self {
         Self {
             cycle: u16::MAX,
             cached: None,
@@ -19,13 +19,14 @@ impl<T: SignalValue> SignalFn<T> {
         }
     }
 
-    fn call(&mut self, cycle: u16) -> T {
-        (self.f)(cycle)
+    fn call(&mut self, ctx: &mut SimCtx) -> T {
+        (self.f)(ctx)
     }
 
-    pub(crate) fn next_val(&mut self, cycle: u16) -> T {
+    pub(crate) fn next_val(&mut self, ctx: &mut SimCtx) -> T {
+        let cycle = ctx.cycle();
         if self.cycle != cycle {
-            let new_val = self.call(cycle);
+            let new_val = self.call(ctx);
             self.cached.replace(new_val);
             self.cycle = cycle;
         }
@@ -46,19 +47,19 @@ mod tests {
 
     #[test]
     fn signal_fn() {
-        let mut cycle = 0;
+        let mut ctx = SimCtx::default();
         let mut value = 0;
         let mut signal_fn = SignalFn::new(move |_| {
             value += 1;
             value
         });
 
-        cycle += 1;
-        assert_eq!(signal_fn.next_val(cycle), 1);
-        assert_eq!(signal_fn.next_val(cycle), 1);
+        ctx.next_cycle();
+        assert_eq!(signal_fn.next_val(&mut ctx), 1);
+        assert_eq!(signal_fn.next_val(&mut ctx), 1);
 
-        cycle += 1;
-        assert_eq!(signal_fn.next_val(cycle), 2);
-        assert_eq!(signal_fn.next_val(cycle), 2);
+        ctx.next_cycle();
+        assert_eq!(signal_fn.next_val(&mut ctx), 2);
+        assert_eq!(signal_fn.next_val(&mut ctx), 2);
     }
 }

@@ -2,10 +2,11 @@ use std::marker::PhantomData;
 
 use derive_where::derive_where;
 
+pub const PICOSECONDS: usize = 1_000_000_000_000;
+
 pub trait ClockDomain: 'static {
-    const PICOSECONDS: usize = 1_000_000_000_000;
     const FREQ: usize;
-    const PERIOD: usize = Self::PICOSECONDS / Self::FREQ;
+    const PERIOD: usize = PICOSECONDS / Self::FREQ;
 }
 
 pub struct System;

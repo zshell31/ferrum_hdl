@@ -5,24 +5,46 @@ use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symb
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
+    Add,
+    And,
     BitAnd,
     BitOr,
     BitXor,
-    And,
+    Div,
+    Eq,
+    Ge,
+    Gt,
+    Le,
+    Lt,
+    Mul,
+    Ne,
     Or,
-    Add,
+    Rem,
+    Shl,
+    Shr,
     Sub,
 }
 
 impl Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
+            Self::Add => "+",
+            Self::And => "&&",
             Self::BitAnd => "&",
             Self::BitOr => "|",
             Self::BitXor => "^",
-            Self::And => "&&",
+            Self::Div => "/",
+            Self::Eq => "==",
+            Self::Ge => ">=",
+            Self::Gt => ">",
+            Self::Le => "<=",
+            Self::Lt => "<",
+            Self::Mul => "*",
+            Self::Ne => "!=",
             Self::Or => "||",
-            Self::Add => "+",
+            Self::Rem => "%",
+            Self::Shl => "<<",
+            Self::Shr => ">>",
             Self::Sub => "-",
         })
     }

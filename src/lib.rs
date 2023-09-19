@@ -5,6 +5,7 @@
 #![feature(register_tool)]
 #![feature(type_alias_impl_trait)]
 #![feature(cell_update)]
+#![feature(const_trait_impl)]
 #![register_tool(ferrum_tool)]
 
 pub mod array;
@@ -21,11 +22,11 @@ pub mod simulation;
 pub mod unsigned;
 
 pub trait CastInner<T: Sized>: Sized {
-    fn cast(self) -> T;
+    fn cast_inner(self) -> T;
 }
 
 impl<T: Sized> CastInner<T> for T {
-    fn cast(self) -> T {
+    fn cast_inner(self) -> T {
         self
     }
 }
@@ -35,7 +36,7 @@ pub trait Cast {
     where
         Self: CastInner<T>,
     {
-        CastInner::<T>::cast(self)
+        CastInner::<T>::cast_inner(self)
     }
 }
 

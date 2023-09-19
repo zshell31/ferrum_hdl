@@ -1,24 +1,20 @@
 use std::{
-    fmt::{self, Binary, Display, LowerHex},
+    cmp::Ordering,
+    fmt::{self, Binary, Display, LowerHex, Write},
     mem,
-    ops::{Add, Div, Mul, Sub},
+    ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
 use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
 
 use crate::{
-    bit::Bit,
-    bit_pack::BitPack,
-    const_asserts::{Assert, IsTrue},
+    bit_pack::{BitPack, BitSize},
+    bit_vec::BitVec,
     signal::SignalValue,
     CastInner,
 };
 
-pub const fn is_unsigned(n: u8) -> bool {
-    n > 0 && n <= 128
-}
-
-const fn bit_mask(n: u8) -> u128 {
+const fn bit_mask(n: u128) -> u128 {
     // TODO: n == 128?
     if n == 128 {
         u128::MAX
@@ -27,148 +23,194 @@ const fn bit_mask(n: u8) -> u128 {
     }
 }
 
-const fn msb_mask(n: u8) -> u128 {
-    1 << (n - 1)
-}
-
 #[inline(always)]
-pub fn unsigned_value(value: u128, width: u8) -> u128 {
+pub const fn unsigned_value(value: u128, width: u128) -> u128 {
     value & bit_mask(width)
-}
-
-pub fn u<const N: u8>(n: u128) -> Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    n.into()
 }
 
 #[derive(Debug, Clone, Copy)]
 #[repr(transparent)]
-pub struct Unsigned<const N: u8>(u128)
-where
-    Assert<{ is_unsigned(N) }>: IsTrue;
+pub struct Unsigned<const N: usize>(u128);
 
-impl<const N: u8> Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    pub(crate) fn new(n: u128) -> Self {
-        Self(unsigned_value(n, N))
+impl<const N: usize> Unsigned<N> {
+    pub const fn new(n: u128) -> Self {
+        Self(unsigned_value(n, N as u128))
     }
 
     pub(crate) fn inner(self) -> u128 {
-        unsigned_value(self.0, N)
+        unsigned_value(self.0, N as u128)
     }
 }
 
-impl<const N: u8> CastInner<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn cast(self) -> u128 {
+impl<const N: usize> CastInner<u128> for Unsigned<N> {
+    fn cast_inner(self) -> u128 {
         unsafe { mem::transmute::<Unsigned<N>, u128>(self) }
     }
 }
 
-impl<const N: u8> CastInner<Unsigned<N>> for u128
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn cast(self) -> Unsigned<N> {
+impl<const N: usize> CastInner<Unsigned<N>> for u128 {
+    fn cast_inner(self) -> Unsigned<N> {
         unsafe { mem::transmute::<u128, Unsigned<N>>(self) }
     }
 }
 
-impl<const N: u8> Display for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(&self.inner(), f)
+impl<const N: usize> SignalValue for Unsigned<N> {}
+
+impl<const N: usize> IsPrimTy for Unsigned<N> {
+    const PRIM_TY: PrimTy = PrimTy::Unsigned(N as u128);
+}
+
+impl<const N: usize> BitSize for Unsigned<N> {
+    const BITS: usize = N;
+}
+
+impl<const N: usize> BitPack for Unsigned<N> {
+    type Packed = BitVec<N>;
+
+    fn pack(&self) -> Self::Packed {
+        BitVec::from(self.0)
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        Self::from(bitvec.inner())
     }
 }
 
-impl<const N: u8> Binary for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Binary::fmt(&self.inner(), f)
-    }
-}
-
-impl<const N: u8> LowerHex for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        LowerHex::fmt(&self.inner(), f)
-    }
-}
-
-impl<const N: u8> SignalValue for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
-
-impl<const N: u8> IsPrimTy for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    const PRIM_TY: PrimTy = PrimTy::Unsigned(N);
-}
-
-impl<const N: u8> Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
-
-impl<const N: u8> PartialEq for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.inner() == other.inner()
-    }
-}
-
-impl<const N: u8> PartialEq<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn eq(&self, other: &u128) -> bool {
-        self.inner() == *other
-    }
-}
-
-impl<const N: u8> Eq for Unsigned<N> where Assert<{ is_unsigned(N) }>: IsTrue {}
-
-impl<const N: u8> BitPack<N> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
-    fn msb(&self) -> Bit {
-        Bit::from_u128(self.inner() & msb_mask(N))
-    }
-}
-
-impl<const N: u8> From<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> const From<u128> for Unsigned<N> {
     fn from(value: u128) -> Self {
         Self::new(value)
     }
 }
 
-impl<const N: u8> From<Unsigned<N>> for u128
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> const From<Unsigned<N>> for u128 {
     fn from(value: Unsigned<N>) -> Self {
         value.inner()
     }
 }
 
-impl<const N: u8> Add for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Display for Unsigned<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.inner(), f)
+    }
+}
+
+impl<const N: usize> Binary for Unsigned<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bits = u128::BITS - self.inner().leading_zeros();
+        for _ in 0 .. (N - (bits as usize)) {
+            f.write_char('0')?;
+        }
+        if self.inner() != 0 {
+            Binary::fmt(&self.inner(), f)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<const N: usize> LowerHex for Unsigned<N> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        LowerHex::fmt(&self.inner(), f)
+    }
+}
+
+impl<const N: usize> PartialEq for Unsigned<N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner() == other.inner()
+    }
+}
+
+impl<const N: usize> PartialEq<u128> for Unsigned<N> {
+    fn eq(&self, other: &u128) -> bool {
+        self.inner() == *other
+    }
+}
+
+impl<const N: usize> PartialOrd for Unsigned<N> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
+    fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
+        Some(self.0.cmp(other))
+    }
+}
+
+impl<const N: usize> Ord for Unsigned<N> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<const N: usize> Eq for Unsigned<N> {}
+
+impl<const N: usize> BitAnd for Unsigned<N> {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        (self.inner() & rhs.inner()).into()
+    }
+}
+
+impl<const N: usize> BitAnd<u128> for Unsigned<N> {
+    type Output = Self;
+
+    fn bitand(self, rhs: u128) -> Self::Output {
+        self.bitand(Self::from(rhs))
+    }
+}
+
+impl<const N: usize> BitOr for Unsigned<N> {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        (self.inner() | rhs.inner()).into()
+    }
+}
+
+impl<const N: usize> BitOr<u128> for Unsigned<N> {
+    type Output = Self;
+
+    fn bitor(self, rhs: u128) -> Self::Output {
+        self.bitor(Self::from(rhs))
+    }
+}
+
+impl<const N: usize> Shl for Unsigned<N> {
+    type Output = Self;
+
+    fn shl(self, rhs: Self) -> Self::Output {
+        (self.inner() << rhs.inner()).into()
+    }
+}
+
+impl<const N: usize> Shl<u128> for Unsigned<N> {
+    type Output = Self;
+
+    fn shl(self, rhs: u128) -> Self::Output {
+        self.shl(Self::from(rhs))
+    }
+}
+
+impl<const N: usize> Shr for Unsigned<N> {
+    type Output = Self;
+
+    fn shr(self, rhs: Self) -> Self::Output {
+        (self.inner() >> rhs.inner()).into()
+    }
+}
+
+impl<const N: usize> Shr<u128> for Unsigned<N> {
+    type Output = Self;
+
+    fn shr(self, rhs: u128) -> Self::Output {
+        self.shl(Self::from(rhs))
+    }
+}
+
+impl<const N: usize> Add for Unsigned<N> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
@@ -176,10 +218,7 @@ where
     }
 }
 
-impl<const N: u8> Add<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Add<u128> for Unsigned<N> {
     type Output = Self;
 
     fn add(self, rhs: u128) -> Self::Output {
@@ -187,10 +226,7 @@ where
     }
 }
 
-impl<const N: u8> Sub for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Sub for Unsigned<N> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
@@ -198,10 +234,7 @@ where
     }
 }
 
-impl<const N: u8> Sub<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Sub<u128> for Unsigned<N> {
     type Output = Self;
 
     fn sub(self, rhs: u128) -> Self::Output {
@@ -209,10 +242,7 @@ where
     }
 }
 
-impl<const N: u8> Mul for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Mul for Unsigned<N> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
@@ -220,10 +250,7 @@ where
     }
 }
 
-impl<const N: u8> Mul<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Mul<u128> for Unsigned<N> {
     type Output = Self;
 
     fn mul(self, rhs: u128) -> Self::Output {
@@ -231,10 +258,7 @@ where
     }
 }
 
-impl<const N: u8> Div for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Div for Unsigned<N> {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
@@ -242,10 +266,7 @@ where
     }
 }
 
-impl<const N: u8> Div<u128> for Unsigned<N>
-where
-    Assert<{ is_unsigned(N) }>: IsTrue,
-{
+impl<const N: usize> Div<u128> for Unsigned<N> {
     type Output = Self;
 
     fn div(self, rhs: u128) -> Self::Output {

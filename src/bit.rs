@@ -6,20 +6,25 @@ use std::{
 
 use ferrum_netlist::sig_ty::{IsPrimTy, PrimTy};
 
-use crate::{signal::SignalValue, CastInner};
+use crate::{
+    bit_pack::{BitPack, BitSize},
+    bit_vec::BitVec,
+    signal::SignalValue,
+    CastInner,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct Bit(bool);
 
 impl CastInner<bool> for Bit {
-    fn cast(self) -> bool {
+    fn cast_inner(self) -> bool {
         unsafe { mem::transmute::<Bit, bool>(self) }
     }
 }
 
 impl CastInner<Bit> for bool {
-    fn cast(self) -> Bit {
+    fn cast_inner(self) -> Bit {
         unsafe { mem::transmute::<bool, Bit>(self) }
     }
 }
@@ -31,30 +36,35 @@ pub fn bit_value(value: bool) -> u128 {
     }
 }
 
-impl Display for Bit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", match self.0 {
-            true => "H",
-            false => "L",
-        })
-    }
-}
-
-impl Debug for Bit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
-    }
-}
-
 impl SignalValue for Bit {}
 
 impl IsPrimTy for Bit {
     const PRIM_TY: PrimTy = PrimTy::Bit;
 }
 
+impl BitSize for Bit {
+    const BITS: usize = 1;
+}
+
+impl BitPack for Bit {
+    type Packed = BitVec<1>;
+
+    fn pack(&self) -> Self::Packed {
+        (match self.0 {
+            true => 1,
+            false => 0,
+        })
+        .into()
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        Self::from_u128(bitvec.inner())
+    }
+}
+
 impl Bit {
-    pub(crate) fn from_u128(value: u128) -> Self {
-        Self::from(value > 0)
+    pub(crate) const fn from_u128(value: u128) -> Self {
+        Self(value > 0)
     }
 }
 
@@ -70,6 +80,21 @@ impl From<bool> for Bit {
 impl From<Bit> for bool {
     fn from(bit: Bit) -> Self {
         bit.0
+    }
+}
+
+impl Display for Bit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", match self.0 {
+            true => "H",
+            false => "L",
+        })
+    }
+}
+
+impl Debug for Bit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
     }
 }
 

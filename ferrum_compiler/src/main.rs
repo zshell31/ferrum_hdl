@@ -2,7 +2,6 @@
 #![feature(negative_impls)]
 #![feature(iter_intersperse)]
 
-mod bitvec;
 mod blackbox;
 mod error;
 mod generator;

@@ -72,17 +72,17 @@ impl<'n> Verilog<'n> {
     fn inject_const(&mut self, node_out_id: NodeOutId) {
         let node = &self.net_list[node_out_id.node_id()];
 
-        let sym = node.outputs().only_one().out.sym;
-        self.buffer.write_fmt(format_args!("{}", sym));
-        // if let Node::Const(ConstNode {
-        //     value,
-        //     inject: true,
-        //     output,
-        // }) = node
-        // {
-        //     self.write_value(output, *value);
-        // } else {
-        // }
+        if let Node::Const(ConstNode {
+            value,
+            skip: true,
+            output,
+        }) = node
+        {
+            self.write_value(output, *value);
+        } else {
+            let sym = node.outputs().only_one().out.sym;
+            self.buffer.write_fmt(format_args!("{}", sym));
+        }
     }
 }
 
@@ -422,8 +422,8 @@ endgenerate
                     "
 always @ ({sel} or {input1} or {input2}) begin
     case ({sel})
-        1'h0: {output} = {input1};
-        1'h1: {output} = {input2};
+        1'h0: {output} = {input2};
+        1'h1: {output} = {input1};
         default:
             {output} = 'h0;
     endcase
@@ -432,7 +432,7 @@ end
                 ));
             }
             Node::DFF(DFFNode {
-                inputs: (clk, data, rst),
+                inputs: (clk, data, rst, en),
                 output,
                 rst_val,
             }) => {
@@ -440,19 +440,20 @@ end
 
                 let clk = self.net_list[*clk].sym;
                 let data = self.net_list[*data].sym;
+                let rst = self.net_list[*rst].sym;
                 let width = output.ty.width();
                 let output = output.sym;
 
-                match rst {
-                    Some(rst) => {
-                        let rst = self.net_list[*rst].sym;
+                match en {
+                    Some(en) => {
+                        let en = self.net_list[*en].sym;
 
                         self.buffer.write_template(format_args!(
                             "
 always @ (posedge {clk} or posedge {rst}) begin
     if ({rst})
         {output} <= {width}'d{rst_val};
-    else
+    else if ({en})
         {output} <= {data};
 end
 "
@@ -461,8 +462,11 @@ end
                     None => {
                         self.buffer.write_template(format_args!(
                             "
-always @ (posedge {clk}) begin
-    {output} <= {data};
+always @ (posedge {clk} or posedge {rst}) begin
+    if ({rst})
+        {output} <= {width}'d{rst_val};
+    else
+        {output} <= {data};
 end
 "
                         ));

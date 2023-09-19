@@ -3,6 +3,8 @@ use std::{fmt::Debug, mem, ops::Index};
 use smallvec::SmallVec;
 
 use crate::{
+    bit_pack::{BitPack, BitSize},
+    bit_vec::{BitVec, BitVecInner},
     const_asserts::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue},
@@ -18,7 +20,7 @@ impl<const N: usize, T, U: Copy> CastInner<[U; N]> for Array<N, T>
 where
     T: CastInner<U>,
 {
-    fn cast(self) -> [U; N] {
+    fn cast_inner(self) -> [U; N] {
         unsafe {
             let res = mem::transmute::<*const T, *const U>(self.0.as_ptr());
             *(res as *const [U; N])
@@ -30,7 +32,7 @@ impl<const N: usize, T: Copy, U> CastInner<Array<N, T>> for [U; N]
 where
     U: CastInner<T>,
 {
-    fn cast(self) -> Array<N, T> {
+    fn cast_inner(self) -> Array<N, T> {
         unsafe {
             let res = mem::transmute::<*const U, *const T>(self.as_ptr());
             *(res as *const [T; N])
@@ -40,6 +42,55 @@ where
 }
 
 impl<const N: usize, T: SignalValue> SignalValue for Array<N, T> {}
+
+impl<const N: usize, T: BitSize> BitSize for Array<N, T> {
+    const BITS: usize = N * T::BITS;
+}
+
+impl<const N: usize, T: SignalValue> BitPack for Array<N, T>
+where
+    BitVec<{ N * T::BITS }>:,
+    BitVec<{ T::BITS }>:,
+    T: BitPack<Packed = BitVec<{ T::BITS }>>,
+{
+    type Packed = BitVec<{ N * T::BITS }>;
+
+    fn pack(&self) -> Self::Packed {
+        let width = T::BITS;
+        assert!(width * N <= 128);
+
+        let mut bitvec: BitVecInner = 0;
+        let mut offset = 0;
+
+        for item in &self.0 {
+            bitvec |= item.pack().inner() << offset;
+            offset += width;
+        }
+
+        bitvec.into()
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        let width = T::BITS;
+        assert!(width * N <= 128);
+        let mask = (1 << width) - 1;
+        let mut offset = 0;
+
+        let vec = (0 .. N)
+            .map(|_| {
+                let slice =
+                    BitVec::<{ T::BITS }>::from((bitvec.inner() >> offset) & mask);
+                offset += width;
+                T::unpack(slice)
+            })
+            .collect::<SmallVec<[T; 8]>>();
+
+        match <[T; N]>::try_from(vec.as_slice()) {
+            Ok(res) => Array(res),
+            Err(_) => unreachable!(),
+        }
+    }
+}
 
 impl<const N: usize, T> From<[T; N]> for Array<N, T> {
     fn from(value: [T; N]) -> Self {
@@ -131,7 +182,7 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle<D, T> for Array<N, T
     fn unbundle(signal: Signal<D, Self>) -> Self::Unbundled {
         let signals = (0 .. N)
             .map(|ind| signal.clone().map(move |s| s[ind]))
-            .collect::<Vec<_>>();
+            .collect::<Vec<_>>(); // TODO: smallvec
 
         Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
             Ok(res) => res,
@@ -159,8 +210,10 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for Array<N, Signa
 mod tests {
     use super::*;
     use crate::{
-        bit::{H, L},
+        bit::{Bit, H, L},
+        bit_vec::BitVec,
         signal::SignalIterExt,
+        Cast,
     };
 
     pub struct TestSystem;
@@ -215,5 +268,24 @@ mod tests {
             [H, L, H],
             [L, L, H]
         ]);
+    }
+
+    #[test]
+    fn pack() {
+        let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]].cast_inner();
+
+        assert_eq!(<Array<3, Array<2, Bit>> as BitSize>::BITS, 6);
+        assert_eq!(s.pack(), BitVec::<6>::from(0b101100));
+    }
+
+    #[test]
+    fn unpack() {
+        let b: BitVec<6> = BitVec::from(0b001101);
+        let s = Array::<3, Array<2, Bit>>::unpack(b);
+
+        assert_eq!(
+            s,
+            [[H, L], [H, H], [L, L]].cast::<Array<3, Array<2, Bit>>>()
+        );
     }
 }

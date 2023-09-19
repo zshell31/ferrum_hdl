@@ -8,8 +8,8 @@ use ferrum_netlist::{
     group_list::{Group, GroupKind, ItemId, Named},
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{
-        BinOp, BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node,
-        Node, NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node, Node,
+        NotNode, PassNode, Splitter,
     },
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
@@ -19,14 +19,15 @@ use rustc_ast::LitKind;
 use rustc_hir::{
     def::{DefKind, Res},
     def_id::{DefId, LocalDefId},
-    BinOpKind, Expr, ExprKind, Node as HirNode, Path, QPath, StmtKind, UnOp,
+    Expr, ExprKind, Node as HirNode, Path, QPath, StmtKind, UnOp,
 };
-use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef};
+use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, ParamEnv, UnevaluatedConst};
 use rustc_span::{source_map::Spanned, symbol::Ident, Span};
 use smallvec::SmallVec;
 
 use super::{
-    arg_matcher::ArgMatcher, EvalContext, Generator, MonoItem, TraitImpls, TraitKind,
+    arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator, MonoItem,
+    TraitImpls, TraitKind,
 };
 use crate::{
     blackbox::{self, bit_vec_trans, Blackbox, EvaluateExpr, StdConversion},
@@ -349,37 +350,60 @@ impl<'tcx> Generator<'tcx> {
                 let prim_ty =
                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
 
-                let bin_op = match bin_op.node {
-                    BinOpKind::BitAnd => BinOp::BitAnd,
-                    BinOpKind::BitOr => BinOp::BitOr,
-                    BinOpKind::BitXor => BinOp::BitXor,
-                    BinOpKind::And => BinOp::And,
-                    BinOpKind::Or => BinOp::Or,
-                    BinOpKind::Add => BinOp::Add,
-                    BinOpKind::Sub => BinOp::Sub,
-                    _ => {
-                        return Err(SpanError::new(
-                            SpanErrorKind::UnsupportedBinOp(bin_op.node),
-                            bin_op.span,
+                let bin_op = utils::to_bin_op(bin_op.node);
+
+                let lhs_ty = self.node_type(lhs.hir_id, ctx);
+                let lhs_prim_ty = self
+                    .find_sig_ty(lhs_ty, ctx.generic_args, expr.span)?
+                    .prim_ty();
+
+                let rhs_ty = self.node_type(rhs.hir_id, ctx);
+                let rhs_prim_ty = self
+                    .find_sig_ty(rhs_ty, ctx.generic_args, expr.span)?
+                    .prim_ty();
+
+                let subexpr_ty = PrimTy::ty_for_bin_expr(lhs_prim_ty, rhs_prim_ty)
+                    .ok_or_else(|| {
+                        SpanError::new(
+                            SpanErrorKind::IncompatibleTypes(
+                                lhs_ty.to_string(),
+                                rhs_ty.to_string(),
+                            ),
+                            expr.span,
                         )
-                        .into());
+                    })?;
+
+                let mut subnode = |expr: &'tcx Expr<'tcx>,
+                                   prim_ty: PrimTy|
+                 -> Result<NodeOutId, Error> {
+                    let span = expr.span;
+                    let node = self.evaluate_expr(expr, ctx)?;
+
+                    let item_id = if prim_ty != subexpr_ty {
+                        StdConversion::convert(
+                            prim_ty.into(),
+                            subexpr_ty.into(),
+                            self,
+                            node,
+                            span,
+                        )?
+                    } else {
+                        node
+                    };
+                    let node_id = item_id.node_id();
+
+                    if let Node::Const(node) = &mut self.net_list[node_id] {
+                        node.skip = true;
                     }
+
+                    Ok(self.net_list[node_id]
+                        .outputs()
+                        .only_one()
+                        .node_out_id(node_id))
                 };
 
-                let lhs = self.evaluate_expr(lhs, ctx)?.node_id();
-                if let Node::Const(node) = &mut self.net_list[lhs] {
-                    node.output.ty = prim_ty;
-                    node.skip = true;
-                }
-
-                let rhs = self.evaluate_expr(rhs, ctx)?.node_id();
-                if let Node::Const(node) = &mut self.net_list[rhs] {
-                    node.output.ty = prim_ty;
-                    node.skip = true;
-                }
-
-                let lhs = self.net_list.only_one_node_out_id(lhs);
-                let rhs = self.net_list.only_one_node_out_id(rhs);
+                let lhs = subnode(lhs, lhs_prim_ty)?;
+                let rhs = subnode(rhs, rhs_prim_ty)?;
 
                 Ok(self
                     .net_list
@@ -407,39 +431,7 @@ impl<'tcx> Generator<'tcx> {
                             let item_id = self.evaluate_expr(init, ctx)?;
 
                             let item_id = match item_id {
-                                ItemId::Node(node_id) => {
-                                    let outputs_len =
-                                        self.net_list[node_id].outputs().len();
-
-                                    if outputs_len > 1 {
-                                        // TODO: how to avoid allocating vec
-                                        let nodes = self.net_list[node_id]
-                                            .outputs()
-                                            .items()
-                                            .map(|out| {
-                                                PassNode::new(
-                                                    out.out.ty,
-                                                    out.node_out_id(node_id),
-                                                    self.idents
-                                                        .for_module(ctx.module_id)
-                                                        .tmp(),
-                                                )
-                                            })
-                                            .collect::<Vec<_>>();
-
-                                        self.make_tuple_group(
-                                            nodes,
-                                            |generator, node| {
-                                                Ok(generator
-                                                    .net_list
-                                                    .add_node(ctx.module_id, node)
-                                                    .into())
-                                            },
-                                        )?
-                                    } else {
-                                        item_id
-                                    }
-                                }
+                                ItemId::Node(node_id) => self.combine_outputs(node_id),
                                 ItemId::Group(_) => item_id,
                             };
 
@@ -465,7 +457,9 @@ impl<'tcx> Generator<'tcx> {
 
                             self.pattern_match(local.pat, item_id, ctx.module_id)?;
                         }
+                        StmtKind::Item(_) => {}
                         _ => {
+                            println!("{:#?}", stmt);
                             return Err(SpanError::new(
                                 SpanErrorKind::ExpectedLetBind,
                                 stmt.span,
@@ -560,6 +554,7 @@ impl<'tcx> Generator<'tcx> {
                     Err(SpanError::new(SpanErrorKind::NotSynthCall, expr.span).into())
                 }
             }
+            ExprKind::Cast(expr, _) => self.evaluate_expr(expr, ctx),
             ExprKind::Closure(closure) => {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
@@ -601,34 +596,33 @@ impl<'tcx> Generator<'tcx> {
                 res
             }
             ExprKind::If(cond, if_block, else_block) => {
-                let prim_ty =
-                    self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
+                let sig_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
 
                 let else_block = else_block.ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
                 })?;
 
                 let cond = self.evaluate_expr(cond, ctx)?.node_id();
-                let if_block = self.evaluate_expr(if_block, ctx)?.node_id();
-                let else_block = self.evaluate_expr(else_block, ctx)?.node_id();
+                let if_block = self.evaluate_expr(if_block, ctx)?;
+                let else_block = self.evaluate_expr(else_block, ctx)?;
 
                 let cond = self.net_list.only_one_node_out_id(cond);
-                let if_block = self.net_list.only_one_node_out_id(if_block);
-                let else_block = self.net_list.only_one_node_out_id(else_block);
+                let if_block = self.maybe_to_bitvec(ctx.module_id, if_block);
+                let else_block = self.maybe_to_bitvec(ctx.module_id, else_block);
 
-                Ok(self
-                    .net_list
-                    .add_node(
-                        ctx.module_id,
-                        Mux2Node::new(
-                            prim_ty,
-                            cond,
-                            if_block,
-                            else_block,
-                            self.idents.for_module(ctx.module_id).tmp(),
-                        ),
-                    )
-                    .into())
+                let mux = self.net_list.add_node(
+                    ctx.module_id,
+                    Mux2Node::new(
+                        sig_ty.maybe_to_bitvec(),
+                        cond,
+                        if_block,
+                        else_block,
+                        self.idents.for_module(ctx.module_id).tmp(),
+                    ),
+                );
+                let mux = self.net_list[mux].outputs().only_one().node_out_id(mux);
+
+                Ok(self.maybe_from_bitvec(ctx.module_id, mux, sig_ty))
             }
             ExprKind::Index(
                 expr,
@@ -769,17 +763,84 @@ impl<'tcx> Generator<'tcx> {
                         blackbox.evaluate_expr(self, expr, ctx)
                     }
                 }
+                Res::Def(DefKind::ConstParam, def_id) => {
+                    let prim_ty =
+                        self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
+
+                    let generics = self.tcx.generics_of(self.tcx.parent(*def_id));
+                    let value = generics
+                        .param_def_id_to_index(self.tcx, *def_id)
+                        .and_then(|ind| ctx.generic_args.get(ind as usize))
+                        .and_then(|arg| Generic::from_gen_arg(arg, self, expr.span).ok())
+                        .and_then(|gen| gen.as_const())
+                        .ok_or_else(|| {
+                            SpanError::new(SpanErrorKind::ExpectedConst, expr.span)
+                        })?;
+
+                    Ok(self
+                        .net_list
+                        .add_node(
+                            ctx.module_id,
+                            ConstNode::new(
+                                prim_ty,
+                                value,
+                                self.idents.for_module(ctx.module_id).tmp(),
+                            ),
+                        )
+                        .into())
+                }
                 _ => {
                     println!("{:#?}", expr);
                     Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
                 }
             },
-            ExprKind::Path(QPath::TypeRelative(_, _)) => {
+            ExprKind::Path(qpath @ QPath::TypeRelative(rel_ty, _)) => {
                 let ty = self.node_type(expr.hir_id, ctx);
                 if ty.is_fn() {
                     let fn_ty_did = utils::ty_def_id(ty).unwrap();
                     self.evaluate_closure_fn_without_params(fn_ty_did, expr, ctx)
                 } else {
+                    let def_id = self
+                        .tcx
+                        .typeck(expr.hir_id.owner)
+                        .qpath_res(&qpath, expr.hir_id)
+                        .opt_def_id();
+                    if let Some(def_id) = def_id {
+                        if let DefKind::AssocConst = self.tcx.def_kind(def_id) {
+                            let rel_ty = ctx.instantiate(
+                                self.tcx,
+                                self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
+                            );
+                            if let Ok(Some(val_tree)) =
+                                self.tcx.const_eval_resolve_for_typeck(
+                                    ParamEnv::reveal_all(),
+                                    UnevaluatedConst::new(def_id, utils::subst(rel_ty)),
+                                    Some(expr.span),
+                                )
+                            {
+                                if let Some(cons) = utils::eval_val_tree(val_tree) {
+                                    let sig_ty = self.find_sig_ty(
+                                        ty,
+                                        ctx.generic_args,
+                                        expr.span,
+                                    )?;
+                                    return Ok(self
+                                        .net_list
+                                        .add_node(
+                                            ctx.module_id,
+                                            ConstNode::new(
+                                                sig_ty.prim_ty(),
+                                                cons,
+                                                self.idents
+                                                    .for_module(ctx.module_id)
+                                                    .tmp(),
+                                            ),
+                                        )
+                                        .into());
+                                }
+                            }
+                        }
+                    }
                     println!("{:#?}", expr);
                     Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
                 }
@@ -944,7 +1005,7 @@ impl<'tcx> Generator<'tcx> {
         Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
     }
 
-    fn extract_generic_args_for_fn(
+    pub fn extract_generic_args_for_fn(
         &self,
         fn_id: DefId,
         expr: &Expr<'tcx>,

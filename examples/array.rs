@@ -39,7 +39,7 @@ mod tests {
     fn signals() {
         let s = [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 6]]
             .into_iter()
-            .map(CastInner::<Array<4, Unsigned<4>>>::cast)
+            .map(CastInner::<Array<4, Unsigned<4>>>::cast_inner)
             .into_signal();
 
         let res = top_module(s);

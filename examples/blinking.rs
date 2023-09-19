@@ -4,30 +4,43 @@
 use ferrum::{
     bit::Bit,
     bit_pack::BitPack,
-    const_asserts::{Assert, IsTrue},
+    const_asserts::IsConst,
     const_functions::clog2,
-    domain::{Clock, ClockDomain},
-    signal::{reg, Signal},
-    unsigned::{is_unsigned, Unsigned},
+    domain::{Clock, ClockDomain, PICOSECONDS},
+    signal::{reg, Reset, Signal},
+    unsigned::Unsigned,
 };
 
 pub const fn second_periods<D: ClockDomain>() -> usize {
-    D::PICOSECONDS / D::PERIOD
+    PICOSECONDS / D::PERIOD
 }
 
-pub const fn blinking_count<D: ClockDomain>() -> u8 {
-    clog2(second_periods::<D>()) as u8
+pub const fn blinking_count<D: ClockDomain>() -> usize {
+    clog2(second_periods::<D>())
 }
 
+pub const fn hz_to_period(freq: usize) -> usize {
+    PICOSECONDS / freq
+}
+
+pub const fn clock_divider<D: ClockDomain>(ps: usize) -> usize {
+    ps / D::PERIOD
+}
+
+// https://github.com/rust-lang/rust/issues/82509
 pub fn blinking<D: ClockDomain>(
     clk: Clock<D>,
+    rst: Reset<D>,
 ) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
-    Assert<{ is_unsigned(blinking_count::<D>()) }>: IsTrue,
+    IsConst<{ blinking_count::<D>() }>:,
 {
-    reg::<D, _>(clk, 0.into(), |r: Unsigned<{ blinking_count::<D>() }>| {
-        r + 1
-    })
+    reg::<D, _>(
+        clk,
+        rst,
+        0.into(),
+        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
+    )
     .map(|value| (value.msb(), value))
 }
 
@@ -38,13 +51,14 @@ impl ClockDomain for ZynqMiniDom {
 }
 
 #[cfg(not(test))]
-const BL_COUNT: u8 = blinking_count::<ZynqMiniDom>();
+const BL_COUNT: usize = blinking_count::<ZynqMiniDom>();
 
 #[cfg(not(test))]
 pub fn top_module(
     clk: Clock<ZynqMiniDom>,
+    rst: Reset<ZynqMiniDom>,
 ) -> Signal<ZynqMiniDom, (Bit, Unsigned<BL_COUNT>)> {
-    blinking(clk)
+    blinking(clk, rst)
 }
 
 #[cfg(test)]
@@ -61,14 +75,15 @@ mod tests {
 
     fn top_module(
         clk: Clock<TestSystem>,
+        rst: Reset<TestSystem>,
     ) -> Signal<TestSystem, (Bit, Unsigned<BL_COUNT>)> {
-        blinking(clk)
+        blinking(clk, rst)
     }
 
     #[test]
     fn signals() {
         assert_eq!(
-            top_module(Default::default())
+            top_module(Default::default(), Reset::reset())
                 .iter()
                 .take(8)
                 .map(|(led, count)| (bool::from(led), u128::from(count)))

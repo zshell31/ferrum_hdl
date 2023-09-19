@@ -9,7 +9,7 @@ use std::{
 use derive_where::derive_where;
 
 use crate::{
-    bit::{Bit, L},
+    bit::{Bit, H, L},
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
     simulation::Simulate,
@@ -96,15 +96,37 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 }
 
-impl<D: ClockDomain> Reset<D> {
-    pub fn reset() -> (Source<Bit>, Signal<D, Bit>) {
-        Self::source(L)
-    }
-
+impl<D: ClockDomain> Signal<D, Bit> {
     pub fn click(source: &Source<Bit>, f: impl FnOnce()) {
         source.revert();
         f();
         source.revert();
+    }
+}
+
+#[allow(type_alias_bounds)]
+pub type Reset<D: ClockDomain> = Signal<D, Bit>;
+
+impl<D: ClockDomain> Reset<D> {
+    pub fn reset() -> Self {
+        Self::lift(L)
+    }
+
+    pub fn reset_src() -> (Source<Bit>, Self) {
+        Self::source(L)
+    }
+}
+
+#[allow(type_alias_bounds)]
+pub type Enable<D: ClockDomain> = Signal<D, Bit>;
+
+impl<D: ClockDomain> Enable<D> {
+    pub fn enable() -> Self {
+        Self::lift(H)
+    }
+
+    pub fn enable_src() -> (Source<Bit>, Self) {
+        Self::source(H)
     }
 }
 
@@ -116,6 +138,7 @@ impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
     }
 }
 
+#[derive_where(Debug)]
 pub struct Wrapped<D: ClockDomain, T: SignalValue>(Signal<D, T>);
 
 impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
@@ -261,26 +284,7 @@ where
     }
 }
 
-#[inline(always)]
 pub fn reg<D: ClockDomain, T: SignalValue>(
-    _clock: Clock<D>,
-    rst_val: T,
-    comb_fn: impl Fn(T) -> T + Clone + 'static,
-) -> Signal<D, T> {
-    let mut next_val = rst_val;
-    Signal::new(move |_| {
-        let value = next_val;
-        next_val = (comb_fn)(value);
-
-        value
-    })
-}
-
-#[allow(type_alias_bounds)]
-pub type Reset<D: ClockDomain> = Signal<D, Bit>;
-
-#[inline(always)]
-pub fn reg_rst<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
     rst_val: T,
@@ -294,6 +298,29 @@ pub fn reg_rst<D: ClockDomain, T: SignalValue>(
             next_val
         };
         next_val = (comb_fn)(value);
+
+        value
+    })
+}
+
+pub fn reg_en<D: ClockDomain, T: SignalValue>(
+    _clock: Clock<D>,
+    mut rst: Reset<D>,
+    mut en: Enable<D>,
+    rst_val: T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    let mut next_val = rst_val;
+    Signal::new(move |cycle| {
+        let value = if rst.next(cycle).into() {
+            rst_val
+        } else {
+            next_val
+        };
+
+        if en.next(cycle).into() {
+            next_val = (comb_fn)(value);
+        }
 
         value
     })
@@ -334,7 +361,8 @@ mod tests {
     #[test]
     fn test_reg() {
         let clk = Clock::<TestSystem>::default();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, 0.into(), |val| val + 1);
+        let rst = Reset::reset();
+        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val| val + 1);
 
         assert_eq!(r.values().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7

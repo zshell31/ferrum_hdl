@@ -7,10 +7,10 @@ use ferrum_netlist::{
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
-use rustc_ast::Mutability;
+use rustc_ast::{Mutability, UintTy};
 use rustc_hir::{
     def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
-    Param, Pat, PatKind, QPath, Ty as HirTy, TyKind as HirTyKind,
+    Param, Pat, PatKind, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
 use rustc_middle::ty::GenericArgsRef;
 use rustc_span::symbol::Ident;
@@ -263,22 +263,25 @@ impl<'tcx> Generator<'tcx> {
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
-                let (is_self_param, def_id) = match path.res {
-                    Res::Def(_, def_id) => (false, def_id),
-                    Res::SelfTyAlias { alias_to, .. } => (true, alias_to),
+                let mut find_sig_ty = |def_id| {
+                    self.find_sig_ty(def_id, ctx.generic_args, input.span)
+                        .or_else(|_| {
+                            self.find_sig_ty_for_hir_ty(
+                                fn_id,
+                                input,
+                                ctx.generic_args,
+                                input.span,
+                            )
+                        })
+                };
+                let (is_self_param, sig_ty) = match path.res {
+                    Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
+                    Res::SelfTyAlias { alias_to, .. } => (true, find_sig_ty(alias_to)?),
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::Usize | UintTy::U128)) => {
+                        (false, PrimTy::U128.into())
+                    }
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
-
-                let sig_ty = self
-                    .find_sig_ty(def_id, ctx.generic_args, input.span)
-                    .or_else(|_| {
-                        self.find_sig_ty_for_hir_ty(
-                            fn_id,
-                            input,
-                            ctx.generic_args,
-                            input.span,
-                        )
-                    })?;
 
                 let input = self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy);
 

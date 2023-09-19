@@ -13,7 +13,7 @@ pub struct SignalFn<T: SignalValue> {
 impl<T: SignalValue> SignalFn<T> {
     pub(crate) fn new(f: impl FnMut(u16) -> T + 'static) -> Self {
         Self {
-            cycle: 0,
+            cycle: u16::MAX,
             cached: None,
             f: Box::new(f),
         }

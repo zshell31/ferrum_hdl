@@ -1,4 +1,5 @@
-mod arg_matcher;
+pub mod arg_matcher;
+pub mod bitvec;
 pub mod expr;
 pub mod func;
 pub mod generic;
@@ -20,7 +21,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def_id::{DefId, LocalDefId},
-    HirId, ItemId as HirItemId, ItemKind, Ty as HirTy,
+    Expr, HirId, ItemId as HirItemId, ItemKind, Ty as HirTy,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
@@ -29,7 +30,7 @@ use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
 use rustc_type_ir::fold::TypeFoldable;
 
-use self::ty_or_def_id::TyOrDefIdWithGen;
+use self::{generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
     blackbox::{Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
@@ -259,7 +260,7 @@ impl<'tcx> Generator<'tcx> {
             .map_err(Into::into)
     }
 
-    fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {
+    pub fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {
         let item_ctx = &ItemCtxt::new(self.tcx, fn_id);
         let astconv = item_ctx.astconv();
         astconv.ast_ty_to_ty(ty)
@@ -299,5 +300,21 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(())
             })
+    }
+
+    pub fn method_call_generics(
+        &mut self,
+        expr: &Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<Generics, Error> {
+        let fn_did = self
+            .tcx
+            .typeck(expr.hir_id.owner)
+            .type_dependent_def_id(expr.hir_id)
+            .ok_or_else(|| {
+                SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
+            })?;
+        let generic_args = self.extract_generic_args_for_fn(fn_did, expr, ctx)?;
+        self.eval_generic_args(generic_args, expr.span)
     }
 }

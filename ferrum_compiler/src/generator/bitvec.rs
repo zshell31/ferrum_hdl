@@ -2,11 +2,12 @@ use std::iter;
 
 use ferrum_netlist::{
     group_list::{GroupKind, ItemId, Named},
-    net_list::{ModuleId, NodeOutId},
-    node::{ConstNode, IsNode, Merger, Node, PassNode, Splitter},
+    net_list::{ModuleId, NodeId, NodeOutId},
+    node::{ConstNode, IsNode, Merger, ModInst, Node, PassNode, Splitter},
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
+use smallvec::SmallVec;
 
 use crate::generator::Generator;
 
@@ -47,25 +48,57 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
+    pub fn combine_outputs(&mut self, node_id: NodeId) -> ItemId {
+        let module_id = node_id.module_id();
+        let outputs_len = self.net_list[node_id].outputs().len();
+
+        if outputs_len > 1 {
+            let nodes = self.net_list[node_id]
+                .outputs()
+                .items()
+                .map(|out| {
+                    PassNode::new(
+                        out.out.ty,
+                        out.node_out_id(node_id),
+                        self.idents.for_module(module_id).tmp(),
+                    )
+                })
+                .collect::<SmallVec<[_; 8]>>();
+
+            self.make_tuple_group(nodes, |generator, node| {
+                Ok(generator.net_list.add_node(module_id, node).into())
+            })
+            .unwrap()
+        } else {
+            node_id.into()
+        }
+    }
+
     #[allow(clippy::wrong_self_convention)]
     pub fn to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
         match item_id {
             ItemId::Node(node_id) => {
-                let node_out = self.net_list[node_id].outputs().only_one();
-                let width = node_out.out.ty.width();
-                let node_out_id = node_out.node_out_id(node_id);
+                let node_outs = self.net_list[node_id].outputs();
+                if node_outs.len() > 1 {
+                    let item_id = self.combine_outputs(node_id);
+                    self.to_bitvec(module_id, item_id)
+                } else {
+                    let node_out = node_outs.only_one();
+                    let width = node_out.out.ty.width();
+                    let node_out_id = node_out.node_out_id(node_id);
 
-                let pass = PassNode::new(
-                    PrimTy::BitVec(width),
-                    node_out_id,
-                    self.idents.for_module(module_id).tmp(),
-                );
-                let node_id = self.net_list.add_node(module_id, pass);
+                    let pass = PassNode::new(
+                        PrimTy::BitVec(width),
+                        node_out_id,
+                        self.idents.for_module(module_id).tmp(),
+                    );
+                    let node_id = self.net_list.add_node(module_id, pass);
 
-                self.net_list[node_id]
-                    .outputs()
-                    .only_one()
-                    .node_out_id(node_id)
+                    self.net_list[node_id]
+                        .outputs()
+                        .only_one()
+                        .node_out_id(node_id)
+                }
             }
             ItemId::Group(group_id) => {
                 let group = &self.group_list[group_id];
@@ -198,9 +231,27 @@ impl<'tcx> Generator<'tcx> {
         match item_id {
             ItemId::Node(node_id) => {
                 let node = &self.net_list[node_id];
+                println!("{:?}", node);
                 match node {
                     Node::Const(ConstNode { value, output, .. }) => {
                         Some((*value, output.ty.width()))
+                    }
+                    Node::ModInst(ModInst { module_id, .. }) => {
+                        let module = &self.net_list[*module_id];
+                        if module.outputs_len() > 1 {
+                            None
+                        } else {
+                            let output = module.outputs().next()?;
+                            self.to_const_inner(output.node_id().into())
+                        }
+                    }
+                    Node::Pass(PassNode { input, .. }) => {
+                        let item_id = input.node_id().into();
+                        self.to_const_inner(item_id)
+                    }
+                    Node::Splitter(Splitter { input, .. }) => {
+                        let item_id = input.node_id().into();
+                        self.to_const_inner(item_id)
                     }
                     _ => None,
                 }
@@ -212,7 +263,12 @@ impl<'tcx> Generator<'tcx> {
                 for item_id in group.item_ids.iter().rev() {
                     let (val, width) = self.to_const_inner(item_id.inner)?;
                     // TODO: use long arithmetic instead
-                    res = (res << width) | val;
+                    println!("res = {}, width = {}, val = {}", res, width, val);
+                    if res == 0 {
+                        res = val;
+                    } else {
+                        res = (res << width) | val;
+                    }
                     total = total.checked_add(width).unwrap();
                 }
 

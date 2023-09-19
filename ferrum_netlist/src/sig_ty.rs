@@ -5,7 +5,7 @@ pub enum PrimTy {
     Bool,
     Bit,
     U128,
-    Unsigned(u8),
+    Unsigned(u128),
     BitVec(u128),
     Clock,
     ClockDomain,
@@ -21,20 +21,38 @@ impl PrimTy {
             Self::Bool => 1,
             Self::Bit => 1,
             Self::U128 => 128,
-            Self::Unsigned(n) => *n as u128,
+            Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,
             Self::Clock => 1,
             Self::ClockDomain => 1,
         }
     }
+
+    pub fn ty_for_bin_expr(lhs: PrimTy, rhs: PrimTy) -> Option<PrimTy> {
+        use PrimTy::*;
+
+        if lhs == rhs {
+            return Some(lhs);
+        }
+
+        match (lhs, rhs) {
+            (Bool, Bit) | (Bit, Bool) => Some(Bit),
+            (Unsigned(n), U128) | (U128, Unsigned(n)) => Some(Unsigned(n)),
+            _ => None,
+        }
+    }
 }
 
-pub trait IsPrimTy {
+pub trait IsPrimTy: Sized {
     const PRIM_TY: PrimTy;
 }
 
 impl IsPrimTy for bool {
     const PRIM_TY: PrimTy = PrimTy::Bool;
+}
+
+impl IsPrimTy for u128 {
+    const PRIM_TY: PrimTy = PrimTy::U128;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -88,6 +106,16 @@ impl SignalTy {
             Self::Prim(prim_ty) => prim_ty.width(),
             Self::Array(ArrayTy(n, ty)) => n * ty.width(),
             Self::Group(ty) => ty.iter().map(|ty| ty.inner.width()).sum(),
+        }
+    }
+
+    pub fn maybe_to_bitvec(&self) -> PrimTy {
+        match self {
+            SignalTy::Prim(prim_ty) => *prim_ty,
+            _ => {
+                let width = self.width();
+                PrimTy::BitVec(width)
+            }
         }
     }
 }

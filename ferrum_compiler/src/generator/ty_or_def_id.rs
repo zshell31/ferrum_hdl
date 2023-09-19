@@ -165,7 +165,7 @@ impl<'tcx> Generator<'tcx> {
                         TyKind::Bool => {
                             sig_ty = Some(PrimTy::Bool.into());
                         }
-                        TyKind::Uint(UintTy::U128) => {
+                        TyKind::Uint(UintTy::U128 | UintTy::Usize) => {
                             sig_ty = Some(PrimTy::U128.into());
                         }
                         TyKind::Tuple(ty) => {
@@ -231,5 +231,13 @@ impl<'tcx> Generator<'tcx> {
             ty_or_def_id,
             generics,
         })
+    }
+
+    pub fn eval_generic_args(
+        &mut self,
+        generic_args: GenericArgsRef<'tcx>,
+        span: Span,
+    ) -> Result<Generics, Error> {
+        Generics::from_args(self, generic_args.into_iter().map(Some), span)
     }
 }

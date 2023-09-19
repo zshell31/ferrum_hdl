@@ -3,7 +3,7 @@ use std::{borrow::Cow, iter};
 use ferrum_netlist::{
     group_list::ItemId,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{InputNode, IsNode, PassNode, Splitter},
+    node::{InputNode, IsNode, Node, PassNode, Splitter},
     params::Outputs,
     sig_ty::{ArrayTy, PrimTy, SignalTy},
 };
@@ -355,7 +355,7 @@ impl<'tcx> Generator<'tcx> {
     fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {
         let module_id = node_id.module_id();
         let node = &net_list[node_id];
-        let node_id = if node.is_input() || node.is_pass() {
+        let node_id = if node.is_input() {
             let out = node.outputs().only_one();
             let mut pass = PassNode::new(
                 out.out.ty,
@@ -366,14 +366,24 @@ impl<'tcx> Generator<'tcx> {
 
             net_list.add_node(node_id.module_id(), pass)
         } else {
+            let node = &mut net_list[node_id];
+            match node {
+                Node::Pass(pass) => {
+                    pass.inject = Some(false);
+                }
+                _ => {
+                    for out in node.outputs_mut().items_mut() {
+                        let sym = idents.for_module(module_id).out();
+                        out.out.sym = sym;
+                    }
+                }
+            }
+            if let Node::Pass(pass) = node {
+                pass.inject = Some(false);
+            }
+
             node_id
         };
-
-        let node = &mut net_list[node_id];
-        for out in node.outputs_mut().items_mut() {
-            let sym = idents.for_module(module_id).out();
-            out.out.sym = sym;
-        }
 
         net_list.add_all_outputs(node_id);
     }

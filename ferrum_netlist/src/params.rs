@@ -82,6 +82,7 @@ impl Inputs for [NodeOutId] {
     }
 }
 
+#[derive(Debug)]
 pub struct NodeOutWithId<'a> {
     pub out: &'a NodeOutput,
     pub id: OutId,

@@ -1,16 +1,16 @@
+pub mod adt;
 pub mod arg_matcher;
 pub mod bitvec;
 pub mod expr;
 pub mod func;
 pub mod generic;
-pub mod struc;
 pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
 use ferrum_netlist::{
     backend::Verilog,
-    group_list::{GroupList, ItemId},
+    group_list::ItemId,
     inject_pass::InjectPass,
     net_list::{ModuleId, NetList},
     node::{IsNode, PassNode},
@@ -122,7 +122,6 @@ pub struct Generator<'tcx> {
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     pub net_list: NetList,
-    pub group_list: GroupList,
     pub idents: Idents,
 }
 
@@ -145,7 +144,6 @@ impl<'tcx> Generator<'tcx> {
             local_trait_impls: FxHashMap::default(),
             evaluated_modules: FxHashMap::default(),
             net_list: NetList::default(),
-            group_list: GroupList::default(),
             idents: Idents::new(),
         }
     }
@@ -272,34 +270,40 @@ impl<'tcx> Generator<'tcx> {
         closure: ItemId,
         span: Span,
     ) -> Result<(), Error> {
-        let inputs_len = self.group_list.len(inputs);
         let dummy_inputs_len = self
             .net_list
             .dummy_inputs_len(closure)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
-        assert_eq!(inputs_len, dummy_inputs_len);
+        //
+        let mut n = 0;
 
-        self.group_list
-            .deep_iter::<Error, _>(inputs, &mut |ind, node_id| {
-                let dummy_input =
-                    self.net_list.dummy_input(closure, ind).ok_or_else(|| {
-                        SpanError::new(SpanErrorKind::ExpectedClosure, span)
-                    })?;
+        for (ind, node_id) in inputs
+            .iter()
+            .flat_map(|input| input.into_iter())
+            .enumerate()
+        {
+            n += 1;
+            let dummy_input = self
+                .net_list
+                .dummy_input(closure, ind)
+                .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
-                let node_out = self.net_list[node_id].outputs().only_one();
-                let dummy_out = self.net_list[dummy_input].outputs().only_one();
+            let node_out = self.net_list[node_id].outputs().only_one();
+            let dummy_out = self.net_list[dummy_input].outputs().only_one();
 
-                let pass = PassNode::new(
-                    node_out.out.ty,
-                    node_out.node_out_id(node_id),
-                    dummy_out.out.sym,
-                );
+            let pass = PassNode::new(
+                node_out.out.ty,
+                node_out.node_out_id(node_id),
+                dummy_out.out.sym,
+            );
 
-                self.net_list.replace(dummy_input, pass);
+            self.net_list.replace(dummy_input, pass);
+        }
 
-                Ok(())
-            })
+        assert_eq!(n, dummy_inputs_len);
+
+        Ok(())
     }
 
     pub fn method_call_generics(

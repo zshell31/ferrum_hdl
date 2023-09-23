@@ -4,7 +4,6 @@ use std::{
     marker::PhantomData,
     ops::{Add, BitAnd, BitOr, Not, Sub},
     rc::Rc,
-    sync::atomic::{AtomicUsize, Ordering},
 };
 
 use derive_where::derive_where;
@@ -15,7 +14,7 @@ use crate::{
     cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
-    simulation::{SimCtx, Simulate},
+    simulation::{SimCtx, Simulate, Watcher},
 };
 
 pub trait SignalValue: Debug + Copy + 'static {}
@@ -46,13 +45,10 @@ impl_signal_value_for_tuples!(10);
 impl_signal_value_for_tuples!(11);
 impl_signal_value_for_tuples!(12);
 
-static SIGNAL_ID: AtomicUsize = AtomicUsize::new(0);
-
 #[derive_where(Debug, Clone)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
     _dom: PhantomData<D>,
-    signal_id: usize,
     next: Rc<RefCell<SignalFn<T>>>,
     name: Option<&'static str>,
 }
@@ -61,7 +57,6 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     pub(crate) fn new(f: impl FnMut(&mut SimCtx) -> T + 'static) -> Self {
         Self {
             _dom: PhantomData,
-            signal_id: SIGNAL_ID.fetch_add(1, Ordering::Relaxed),
             next: Rc::new(RefCell::new(SignalFn::new(f))),
             name: None,
         }
@@ -71,7 +66,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     pub(crate) fn next(&mut self, ctx: &mut SimCtx) -> T {
         let value = self.next.borrow_mut().next_val(ctx);
         if let Some(name) = self.name.as_ref() {
-            ctx.watch(self.signal_id, name, &value);
+            ctx.watch(name, &value);
         }
 
         value
@@ -310,7 +305,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
     rst_val: T,
-    comb_fn: impl Fn(T) -> T + Clone + 'static,
+    comb_fn: impl Fn(T, Watcher<'_>) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
@@ -319,7 +314,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
         } else {
             next_val
         };
-        next_val = (comb_fn)(value);
+        next_val = (comb_fn)(value, ctx.watcher());
 
         value
     })
@@ -330,18 +325,20 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     mut rst: Reset<D>,
     mut en: Enable<D>,
     rst_val: T,
-    comb_fn: impl Fn(T) -> T + Clone + 'static,
+    comb_fn: impl Fn(T, Watcher<'_>) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
         if rst.next(ctx).into() {
             next_val = rst_val;
+            (comb_fn)(next_val, ctx.watcher());
             next_val
         } else if en.next(ctx).into() {
-            let val = (comb_fn)(next_val);
+            let val = (comb_fn)(next_val, ctx.watcher());
             next_val = val;
             val
         } else {
+            (comb_fn)(next_val, ctx.watcher());
             next_val
         }
     })
@@ -453,7 +450,7 @@ mod tests {
     fn test_reg() {
         let clk = Clock::<TestSystem>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val| val + 1);
+        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val, _| val + 1);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7

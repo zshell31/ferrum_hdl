@@ -1,16 +1,16 @@
-use std::collections::HashMap;
+// use std::collections::HashMap;
 
-use fnv::FnvBuildHasher;
+// use fnv::FnvBuildHasher;
 
-type FnvHashMap<K, V> = HashMap<K, V, FnvBuildHasher>;
+use std::fmt::Binary;
 
+// type FnvHashMap<K, V> = HashMap<K, V, FnvBuildHasher>;
 use crate::signal::SignalValue;
 
 #[derive(Debug, Default)]
 pub struct SimCtx {
     cycle_printed: bool,
     cycle: u16,
-    names: FnvHashMap<&'static str, usize>,
 }
 
 impl SimCtx {
@@ -28,28 +28,43 @@ impl SimCtx {
         self.cycle += 1;
     }
 
-    pub(crate) fn watch<T: SignalValue>(
-        &mut self,
-        signal_id: usize,
-        name: &'static str,
-        value: &T,
-    ) {
+    fn print_cycle(&mut self) {
         if !self.cycle_printed {
             println!("\ncycle = {}", self.cycle);
             self.cycle_printed = true;
         }
-        match self.names.get(&name) {
-            Some(id) => {
-                if *id != signal_id {
-                    panic!("Already registered signal with name '{}'", name);
-                }
-            }
-            None => {
-                self.names.insert(name, signal_id);
-            }
-        };
+    }
 
-        println!("['{}': {:?}]", name, value);
+    pub(crate) fn watch<T: SignalValue>(&mut self, name: &'static str, value: &T) {
+        self.print_cycle();
+        println!("'{}': {:?}", name, value);
+    }
+
+    pub(crate) fn watch_bin<T: SignalValue + Binary>(
+        &mut self,
+        name: &'static str,
+        value: &T,
+    ) {
+        self.print_cycle();
+        println!("'{}': {:b}", name, value);
+    }
+
+    pub(crate) fn watcher(&mut self) -> Watcher<'_> {
+        Watcher { ctx: self }
+    }
+}
+
+pub struct Watcher<'a> {
+    ctx: &'a mut SimCtx,
+}
+
+impl<'a> Watcher<'a> {
+    pub fn watch<T: SignalValue>(&mut self, name: &'static str, value: &T) {
+        self.ctx.watch(name, value);
+    }
+
+    pub fn watch_bin<T: SignalValue + Binary>(&mut self, name: &'static str, value: &T) {
+        self.ctx.watch_bin(name, value);
     }
 }
 

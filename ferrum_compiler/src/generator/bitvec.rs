@@ -1,50 +1,21 @@
-use std::iter;
-
 use ferrum_netlist::{
-    group_list::{GroupKind, ItemId, Named},
+    group_list::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{ConstNode, IsNode, Merger, ModInst, Node, PassNode, Splitter},
     params::Outputs,
-    sig_ty::{ArrayTy, PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy},
 };
 use smallvec::SmallVec;
 
 use crate::generator::Generator;
 
 impl<'tcx> Generator<'tcx> {
-    pub fn item_width(&self, item_id: ItemId) -> u128 {
-        let mut width = 0;
-        let _ = self
-            .group_list
-            .deep_iter::<(), _>(&[item_id], &mut |_, node_id| {
-                width += self.net_list[node_id].outputs().only_one().out.ty.width();
-
-                Ok(())
-            });
-
-        width
-    }
-
     pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
         match item_id {
             ItemId::Node(node_id) => {
                 self.net_list[node_id].outputs().only_one().out.ty.into()
             }
-            ItemId::Group(group_id) => {
-                let group = self.group_list[group_id];
-                match group.kind {
-                    GroupKind::Group => {
-                        SignalTy::mk_group(group.item_ids.iter().map(|item_id| {
-                            Named::new(self.item_ty(item_id.inner), item_id.name)
-                        }))
-                    }
-                    GroupKind::Array => {
-                        let n = group.item_ids.len();
-                        let sig_ty = self.item_ty(group.item_ids[0].inner);
-                        SignalTy::mk_array(n as u128, sig_ty)
-                    }
-                }
-            }
+            ItemId::Group(group) => group.sig_ty,
         }
     }
 
@@ -57,15 +28,22 @@ impl<'tcx> Generator<'tcx> {
                 .outputs()
                 .items()
                 .map(|out| {
-                    PassNode::new(
+                    (
                         out.out.ty,
-                        out.node_out_id(node_id),
-                        self.idents.for_module(module_id).tmp(),
+                        PassNode::new(
+                            out.out.ty,
+                            out.node_out_id(node_id),
+                            self.idents.for_module(module_id).tmp(),
+                        ),
                     )
                 })
                 .collect::<SmallVec<[_; 8]>>();
 
-            self.make_tuple_group(nodes, |generator, node| {
+            let ty = self
+                .make_tuple_ty(nodes.iter(), |_, (ty, _)| Ok((*ty).into()))
+                .unwrap();
+
+            self.make_tuple_group(ty, nodes, |generator, (_, node)| {
                 Ok(generator.net_list.add_node(module_id, node).into())
             })
             .unwrap()
@@ -100,29 +78,24 @@ impl<'tcx> Generator<'tcx> {
                         .node_out_id(node_id)
                 }
             }
-            ItemId::Group(group_id) => {
-                let group = &self.group_list[group_id];
+            ItemId::Group(group) => {
+                let width = group.width();
+                let sym = self.idents.for_module(module_id).tmp();
 
-                match group.kind {
-                    GroupKind::Array | GroupKind::Group => {
-                        let width = self.item_width(item_id);
-                        let sym = self.idents.for_module(module_id).tmp();
-                        let merger = Merger::new(
-                            width,
-                            group
-                                .item_ids
-                                .iter()
-                                .map(|item_id| self.to_bitvec(module_id, item_id.inner)),
-                            sym,
-                        );
+                let merger = Merger::new(
+                    width,
+                    group
+                        .item_ids()
+                        .iter()
+                        .map(|item_id| self.to_bitvec(module_id, item_id.inner)),
+                    sym,
+                );
 
-                        let node_id = self.net_list.add_node(module_id, merger);
-                        self.net_list[node_id]
-                            .outputs()
-                            .only_one()
-                            .node_out_id(node_id)
-                    }
-                }
+                let node_id = self.net_list.add_node(module_id, merger);
+                self.net_list[node_id]
+                    .outputs()
+                    .only_one()
+                    .node_out_id(node_id)
             }
         }
     }
@@ -160,20 +133,77 @@ impl<'tcx> Generator<'tcx> {
                 );
                 self.net_list.add_node(module_id, pass).into()
             }
-            SignalTy::Array(ArrayTy(n, sig_ty)) => {
-                let width = sig_ty.width();
+            SignalTy::Array(ty) => {
+                let item_width = ty.width();
 
-                self.to_bitvec_inner(
-                    module_id,
+                let mut n = 0;
+                let splitter = Splitter::new(
                     node_out_id,
-                    iter::repeat((width, *sig_ty)).take(n as usize),
+                    ty.tys().map(|_| {
+                        n += 1;
+                        let sym = self.idents.for_module(module_id).tmp();
+                        (PrimTy::BitVec(item_width), sym)
+                    }),
+                    None,
+                );
+
+                let node_id = self.net_list.add_node(module_id, splitter);
+                let outputs = self.net_list[node_id]
+                    .outputs()
+                    .items()
+                    .map(|out| out.node_out_id(node_id))
+                    .collect::<SmallVec<[_; 8]>>();
+
+                assert_eq!(outputs.len(), n);
+
+                self.make_array_group(
+                    ty,
+                    ty.tys().zip(outputs),
+                    |generator, (sig_ty, node_out_id)| {
+                        Ok(generator.from_bitvec(module_id, node_out_id, sig_ty))
+                    },
                 )
+                .unwrap()
             }
-            SignalTy::Group(ty) => self.to_bitvec_inner(
-                module_id,
-                node_out_id,
-                ty.iter().map(|ty| (ty.inner.width(), ty.inner)),
-            ),
+            SignalTy::Struct(ty) => {
+                let mut n = 0;
+                let splitter = Splitter::new(
+                    node_out_id,
+                    ty.tys().map(|ty| {
+                        n += 1;
+                        let sym = self.idents.for_module(module_id).tmp();
+                        (PrimTy::BitVec(ty.inner.width()), sym)
+                    }),
+                    None,
+                );
+
+                let node_id = self.net_list.add_node(module_id, splitter);
+                let outputs = self.net_list[node_id]
+                    .outputs()
+                    .items()
+                    .map(|out| out.node_out_id(node_id))
+                    .collect::<SmallVec<[_; 8]>>();
+
+                assert_eq!(outputs.len(), n);
+
+                self.make_struct_group(
+                    ty,
+                    ty.tys()
+                        .zip(outputs)
+                        .map(|(ty, node_out_id)| (ty.name, (ty.inner, node_out_id))),
+                    |generator, (sig_ty, node_out_id)| {
+                        Ok(generator.from_bitvec(module_id, node_out_id, sig_ty))
+                    },
+                )
+                .unwrap()
+            } // SignalTy::Enum(ty) => {
+              //     let pass = PassNode::new(
+              //         ty.descr_ty(),
+              //         node_out_id,
+              //         self.idents.for_module(module_id).tmp(),
+              //     );
+              //     self.net_list.add_node(module_id, pass).into()
+              // }
         }
     }
 
@@ -186,43 +216,6 @@ impl<'tcx> Generator<'tcx> {
         self.from_bitvec(module_id, node_out_id, sig_ty)
     }
 
-    #[allow(clippy::wrong_self_convention)]
-    fn to_bitvec_inner(
-        &mut self,
-        module_id: ModuleId,
-        node_out_id: NodeOutId,
-        sig_ty: impl Iterator<Item = (u128, SignalTy)> + Clone,
-    ) -> ItemId {
-        let mut n = 0;
-
-        let splitter = Splitter::new(
-            node_out_id,
-            sig_ty.clone().map(|(width, _)| {
-                n += 1;
-                let sym = self.idents.for_module(module_id).tmp();
-                (PrimTy::BitVec(width), sym)
-            }),
-            None,
-        );
-
-        let node_id = self.net_list.add_node(module_id, splitter);
-        let outputs = self.net_list[node_id]
-            .outputs()
-            .items()
-            .map(|out| out.node_out_id(node_id))
-            .collect::<Vec<_>>();
-
-        assert_eq!(outputs.len(), n);
-
-        self.make_array_group(
-            sig_ty.zip(outputs),
-            |generator, ((_, sig_ty), node_out_id)| {
-                Ok(generator.from_bitvec(module_id, node_out_id, sig_ty))
-            },
-        )
-        .unwrap()
-    }
-
     pub fn to_const(&self, item_id: ItemId) -> Option<u128> {
         self.to_const_inner(item_id).map(|(val, _)| val)
     }
@@ -231,7 +224,6 @@ impl<'tcx> Generator<'tcx> {
         match item_id {
             ItemId::Node(node_id) => {
                 let node = &self.net_list[node_id];
-                println!("{:?}", node);
                 match node {
                     Node::Const(ConstNode { value, output, .. }) => {
                         Some((*value, output.ty.width()))
@@ -256,14 +248,12 @@ impl<'tcx> Generator<'tcx> {
                     _ => None,
                 }
             }
-            ItemId::Group(group_id) => {
-                let group = &self.group_list[group_id];
+            ItemId::Group(group) => {
                 let mut res: u128 = 0;
                 let mut total: u128 = 0;
-                for item_id in group.item_ids.iter().rev() {
+                for item_id in group.item_ids().iter().rev() {
                     let (val, width) = self.to_const_inner(item_id.inner)?;
                     // TODO: use long arithmetic instead
-                    println!("res = {}, width = {}, val = {}", res, width, val);
                     if res == 0 {
                         res = val;
                     } else {

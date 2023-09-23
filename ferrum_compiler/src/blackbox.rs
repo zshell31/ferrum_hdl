@@ -179,6 +179,10 @@ pub fn ignore_ty(def_path: &DefPath) -> bool {
         return true;
     }
 
+    if def_path == &ItemPath(&["simulation", "Watcher"]) {
+        return true;
+    }
+
     false
 }
 

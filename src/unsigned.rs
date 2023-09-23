@@ -208,7 +208,7 @@ impl<const N: usize> Shr<u128> for Unsigned<N> {
     type Output = Self;
 
     fn shr(self, rhs: u128) -> Self::Output {
-        self.shl(Self::from(rhs))
+        self.shr(Self::from(rhs))
     }
 }
 

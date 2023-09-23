@@ -1,11 +1,7 @@
-use std::{
-    iter,
-    sync::atomic::{AtomicU8, Ordering},
-};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use ferrum_netlist::{
-    arena::with_arena,
-    group_list::{Group, GroupKind, ItemId, Named},
+    group_list::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{
         BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node, Node,
@@ -22,7 +18,7 @@ use rustc_hir::{
     Expr, ExprKind, Node as HirNode, Path, QPath, StmtKind, UnOp,
 };
 use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, ParamEnv, UnevaluatedConst};
-use rustc_span::{source_map::Spanned, symbol::Ident, Span};
+use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
 
 use super::{
@@ -146,97 +142,6 @@ impl<'tcx> ExprOrItemId<'tcx> {
 }
 
 impl<'tcx> Generator<'tcx> {
-    pub fn make_tuple_group<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
-    ) -> Result<ItemId, Error> {
-        let group = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().enumerate().map(
-                |(ind, item)| {
-                    f(self, item).map(|item_id| {
-                        Named::new(item_id, Some(Symbol::new_from_ind(ind)))
-                    })
-                },
-            ))?
-        };
-
-        Ok(self
-            .group_list
-            .add_group(Group::new_with_item_ids(GroupKind::Group, group))
-            .into())
-    }
-
-    pub fn make_tuple_sig_ty<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<SignalTy, Error>,
-    ) -> Result<SignalTy, Error> {
-        let ty = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().enumerate().map(
-                |(ind, item)| {
-                    f(self, item)
-                        .map(|sig_ty| Named::new(sig_ty, Some(Symbol::new_from_ind(ind))))
-                },
-            ))?
-        };
-
-        Ok(SignalTy::Group(ty))
-    }
-
-    pub fn make_array_group<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
-    ) -> Result<ItemId, Error> {
-        let group = unsafe {
-            with_arena().alloc_from_res_iter(
-                iter.into_iter()
-                    .map(|item| f(self, item).map(|item_id| Named::new(item_id, None))),
-            )?
-        };
-
-        Ok(self
-            .group_list
-            .add_group(Group::new_with_item_ids(GroupKind::Array, group))
-            .into())
-    }
-
-    pub fn make_struct_group<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = (Option<Symbol>, T)>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
-    ) -> Result<ItemId, Error> {
-        let group = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().map(|(sym, item)| {
-                f(self, item).map(|item_id| Named::new(item_id, sym))
-            }))?
-        };
-
-        Ok(self
-            .group_list
-            .add_group(Group::new_with_item_ids(GroupKind::Group, group))
-            .into())
-    }
-
-    pub fn make_struct_sig_ty<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = (Ident, T)>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<SignalTy, Error>,
-    ) -> Result<SignalTy, Error> {
-        let ty = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().map(
-                |(ident, item): (Ident, T)| {
-                    f(self, item).map(|sig_ty| {
-                        Named::new(sig_ty, Some(Symbol::new(ident.as_str())))
-                    })
-                },
-            ))?
-        };
-
-        Ok(SignalTy::Group(ty))
-    }
-
     pub fn make_struct_group_from_exprs(
         &mut self,
         expr: &Expr<'tcx>,
@@ -249,7 +154,7 @@ impl<'tcx> Generator<'tcx> {
             expr.span,
         )?;
         match sig_ty {
-            SignalTy::Group(ty) => {
+            SignalTy::Struct(ty) => {
                 let sub_exprs = sub_exprs
                     .into_iter()
                     .filter(|sub_expr| {
@@ -266,7 +171,8 @@ impl<'tcx> Generator<'tcx> {
                 assert_eq!(sub_exprs.len(), ty.len());
 
                 self.make_struct_group(
-                    ty.iter()
+                    ty,
+                    ty.tys()
                         .zip(sub_exprs)
                         .map(|(ty, sub_expr)| (ty.name, sub_expr)),
                     |generator, sub_expr| generator.evaluate_expr(sub_expr, ctx),
@@ -296,26 +202,27 @@ impl<'tcx> Generator<'tcx> {
         let module_id = ctx.module_id;
 
         match sig_ty {
-            SignalTy::Prim(prim_ty) => {
+            SignalTy::Prim(ty) => {
                 let dummy_input = self.net_list.add_dummy_node(
                     module_id,
-                    InputNode::new(prim_ty, self.idents.for_module(module_id).tmp()),
+                    InputNode::new(ty, self.idents.for_module(module_id).tmp()),
                 );
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
             }
-            SignalTy::Array(ArrayTy(n, sig_ty)) => self
-                .make_array_group(iter::repeat(n), |generator, _| {
+            SignalTy::Array(ty) => self
+                .make_array_group(ty, ty.tys(), |generator, sig_ty| {
                     Ok(generator.make_dummy_inputs_from_sig_ty_inner(
-                        *sig_ty,
+                        sig_ty,
                         ctx,
                         dummy_inputs,
                     ))
                 })
                 .unwrap(),
-            SignalTy::Group(tys) => self
+            SignalTy::Struct(ty) => self
                 .make_struct_group(
-                    tys.iter().map(|ty| (ty.name, ty.inner)),
+                    ty,
+                    ty.tys().map(|ty| (ty.name, ty.inner)),
                     |generator, sig_ty| {
                         Ok(generator.make_dummy_inputs_from_sig_ty_inner(
                             sig_ty,
@@ -325,6 +232,7 @@ impl<'tcx> Generator<'tcx> {
                     },
                 )
                 .unwrap(),
+            // SignalTy::Enum(ty) => todo!(),
         }
     }
 
@@ -342,10 +250,15 @@ impl<'tcx> Generator<'tcx> {
         let ty = self.node_type(expr.hir_id, ctx);
 
         let res = match expr.kind {
-            ExprKind::Array(items) => self
-                .make_array_group(items.iter(), |generator, item| {
+            ExprKind::Array(items) => {
+                let array_ty = self
+                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                    .array_ty();
+
+                self.make_array_group(array_ty, items.iter(), |generator, item| {
                     generator.evaluate_expr(item, ctx)
-                }),
+                })
+            }
             ExprKind::Binary(bin_op, lhs, rhs) => {
                 let prim_ty =
                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
@@ -559,37 +472,31 @@ impl<'tcx> Generator<'tcx> {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
 
-                let mut item_ids = vec![];
+                let mut item_ids = SmallVec::<[_; 8]>::new();
                 self.evaluate_inputs(inputs, ctx, true, &mut |item_id| {
                     item_ids.push(item_id);
                 })?;
 
-                let mut dummy_inputs = vec![];
-                self.group_list
-                    .deep_iter::<Error, _>(&item_ids, &mut |_, node_id| {
-                        if self.net_list[node_id].is_dummy_input() {
-                            dummy_inputs.push(node_id);
-                        }
-
-                        Ok(())
-                    })?;
-
                 let closure = self.evaluate_expr(body.value, ctx)?;
 
-                self.net_list.add_dummy_inputs(closure, dummy_inputs);
+                self.net_list.add_dummy_inputs(
+                    closure,
+                    item_ids
+                        .into_iter()
+                        .flat_map(|item_id| item_id.into_iter())
+                        .filter(|node_id| self.net_list[*node_id].is_dummy_input())
+                        .collect::<Vec<_>>(),
+                );
 
                 Ok(closure)
             }
             ExprKind::DropTemps(inner) => self.evaluate_expr(inner, ctx),
             ExprKind::Field(expr, ident) => {
-                let group_id = self.evaluate_expr(expr, ctx)?;
-                let group_id = group_id.group_id();
+                let group = self.evaluate_expr(expr, ctx)?.group();
 
-                let res = self.group_list[group_id]
-                    .by_field(ident.as_str())
-                    .ok_or_else(|| {
-                        SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()
-                    });
+                let res = group.by_field(ident.as_str()).ok_or_else(|| {
+                    SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()
+                });
                 if res.is_err() {
                     println!("field: {}", ident);
                 }
@@ -850,10 +757,15 @@ impl<'tcx> Generator<'tcx> {
                 fields.iter().map(|field| field.expr),
                 ctx,
             ),
-            ExprKind::Tup(exprs) => self
-                .make_tuple_group(exprs.iter(), |generator, expr| {
+            ExprKind::Tup(exprs) => {
+                let struct_ty = self
+                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                    .struct_ty();
+
+                self.make_tuple_group(struct_ty, exprs.iter(), |generator, expr| {
                     generator.evaluate_expr(expr, ctx)
-                }),
+                })
+            }
             ExprKind::Unary(UnOp::Not, inner) => {
                 let comb = self.evaluate_expr(inner, ctx)?.node_id();
                 let prim_ty =
@@ -1043,7 +955,7 @@ impl<'tcx> Generator<'tcx> {
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let mut inputs = Vec::new();
+        let mut inputs = SmallVec::new();
 
         if let Some(self_arg) = self_arg {
             let self_arg = self_arg.evaluate(self, ctx)?;
@@ -1079,18 +991,12 @@ impl<'tcx> Generator<'tcx> {
             .into())
     }
 
-    fn add_module_input(&self, item_id: ItemId, inputs: &mut Vec<NodeOutId>) {
-        let mut evaluate = |_, node_id: NodeId| {
+    fn add_module_input(&self, item_id: ItemId, inputs: &mut SmallVec<[NodeOutId; 8]>) {
+        for node_id in item_id.into_iter() {
             for out in self.net_list[node_id].outputs().items() {
                 inputs.push(out.node_out_id(node_id));
             }
-
-            Result::<(), Error>::Ok(())
-        };
-
-        self.group_list
-            .deep_iter(&[item_id], &mut evaluate)
-            .unwrap();
+        }
     }
 
     pub fn find_local_impl_id(

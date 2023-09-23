@@ -152,7 +152,7 @@ impl<'tcx> Generator<'tcx> {
 
             if let TyOrDefId::Ty(ty) = &key.ty_or_def_id {
                 if key.is_local() {
-                    sig_ty = self.evaluate_struct_ty(ty, generics, span)?;
+                    sig_ty = self.evaluate_adt_ty(ty, generics, span)?;
                 } else {
                     match ty.kind() {
                         TyKind::Array(..) => {
@@ -169,11 +169,11 @@ impl<'tcx> Generator<'tcx> {
                             sig_ty = Some(PrimTy::U128.into());
                         }
                         TyKind::Tuple(ty) => {
-                            sig_ty = Some(
-                                self.make_tuple_sig_ty(ty.iter(), |generator, ty| {
+                            sig_ty = Some(SignalTy::Struct(
+                                self.make_tuple_ty(ty.iter(), |generator, ty| {
                                     generator.find_sig_ty(ty, generics, span)
                                 })?,
-                            );
+                            ));
                         }
                         _ => {}
                     }

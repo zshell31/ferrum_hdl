@@ -38,7 +38,7 @@ where
         clk,
         rst,
         0.into(),
-        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
+        |r: Unsigned<{ blinking_count::<D>() }>, _| r + 1,
     )
     .map(|value| (value.msb(), value))
 }

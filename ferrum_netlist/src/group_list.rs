@@ -1,28 +1,45 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    iter::{self, Once},
+    slice::Iter,
+};
+
+use either::Either;
+use smallvec::SmallVec;
 
 use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct GroupId(usize);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
     Node(NodeId),
-    Group(GroupId),
+    Group(Group),
 }
 
-impl ItemId {
-    pub fn node_id(&self) -> NodeId {
+impl IntoIterator for ItemId {
+    type Item = NodeId;
+    type IntoIter = Either<Once<NodeId>, GroupIter>;
+
+    fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::Node(node_id) => *node_id,
-            Self::Group(_) => panic!("expected node_id ({:?})", self),
+            Self::Node(node_id) => Either::Left(iter::once(node_id)),
+            Self::Group(group) => Either::Right(group.into_iter()),
+        }
+    }
+}
+
+pub struct ItemIdIter(Either<Once<NodeId>, GroupIter>);
+
+impl ItemId {
+    pub fn node_id(self) -> NodeId {
+        match self {
+            Self::Node(node_id) => node_id,
+            _ => panic!("expected node_id"),
         }
     }
 
-    pub fn group_id(&self) -> GroupId {
+    pub fn group(self) -> Group {
         match self {
-            Self::Group(group_id) => *group_id,
-            Self::Node(_) => panic!("expected group_id ({:?})", self),
+            Self::Group(group) => group,
+            _ => panic!("expected group"),
         }
     }
 }
@@ -33,25 +50,9 @@ impl From<NodeId> for ItemId {
     }
 }
 
-impl From<GroupId> for ItemId {
-    fn from(group_id: GroupId) -> Self {
-        Self::Group(group_id)
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum GroupKind {
-    Group,
-    Array,
-}
-
-impl From<SignalTy> for GroupKind {
-    fn from(sig_ty: SignalTy) -> Self {
-        match sig_ty {
-            SignalTy::Group(_) => Self::Group,
-            SignalTy::Array(..) => Self::Array,
-            SignalTy::Prim(_) => panic!("expected non-primtive type"),
-        }
+impl From<Group> for ItemId {
+    fn from(group: Group) -> Self {
+        Self::Group(group)
     }
 }
 
@@ -74,28 +75,28 @@ impl<T> Named<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Group {
-    pub kind: GroupKind,
-    pub item_ids: &'static [Named<ItemId>],
+    pub sig_ty: SignalTy,
+    item_ids: &'static [Named<ItemId>],
 }
 
 impl !Sync for Group {}
 impl !Send for Group {}
 
 impl Group {
-    pub fn new(kind: GroupKind, iter: impl IntoIterator<Item = Named<ItemId>>) -> Self {
+    pub fn new(sig_ty: SignalTy, iter: impl IntoIterator<Item = Named<ItemId>>) -> Self {
         Self {
-            kind,
+            sig_ty,
             item_ids: unsafe { with_arena().alloc_from_iter(iter) },
         }
     }
 
     pub fn new_with_item_ids(
-        kind: GroupKind,
+        sig_ty: SignalTy,
         item_ids: &'static [Named<ItemId>],
     ) -> Self {
-        Self { kind, item_ids }
+        Self { sig_ty, item_ids }
     }
 
     pub fn by_field(&self, field: &str) -> Option<ItemId> {
@@ -105,112 +106,71 @@ impl Group {
             .map(|named| named.inner)
     }
 
-    pub fn len(&self) -> usize {
-        self.item_ids.len()
+    pub fn item_ids(&self) -> &'static [Named<ItemId>] {
+        self.item_ids
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.item_ids.is_empty()
-    }
-}
-
-#[derive(Debug)]
-pub struct GroupList {
-    groups: Vec<Group>,
-}
-
-impl !Sync for GroupList {}
-impl !Send for GroupList {}
-
-impl Index<GroupId> for GroupList {
-    type Output = Group;
-
-    fn index(&self, index: GroupId) -> &Self::Output {
-        &self.groups[index.0]
+    pub fn width(&self) -> u128 {
+        self.sig_ty.width()
     }
 }
 
-impl IndexMut<GroupId> for GroupList {
-    fn index_mut(&mut self, index: GroupId) -> &mut Self::Output {
-        &mut self.groups[index.0]
+impl<'a> IntoIterator for &'a Group {
+    type Item = NodeId;
+
+    type IntoIter = GroupIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        GroupIter::new(self)
     }
 }
 
-impl Default for GroupList {
-    fn default() -> Self {
-        Self::new()
+pub struct GroupIter {
+    stack: SmallVec<[Iter<'static, Named<ItemId>>; 8]>,
+}
+
+impl GroupIter {
+    fn new(group: &Group) -> Self {
+        let mut stack = SmallVec::new();
+        stack.push(group.item_ids.iter());
+        Self { stack }
     }
 }
 
-impl GroupList {
-    pub fn new() -> Self {
-        Self {
-            groups: Vec::with_capacity(16),
-        }
-    }
+impl Iterator for GroupIter {
+    type Item = NodeId;
 
-    pub fn add_group(&mut self, group: Group) -> GroupId {
-        let group_id = GroupId(self.groups.len());
-        self.groups.push(group);
-        group_id
-    }
-
-    pub fn len(&self, item_ids: &[ItemId]) -> usize {
-        item_ids
-            .iter()
-            .map(|&item_id| self.len_inner(item_id))
-            .sum()
-    }
-
-    fn len_inner(&self, item_id: ItemId) -> usize {
-        match item_id {
-            ItemId::Node(_) => 1,
-            ItemId::Group(group_id) => {
-                let group = &self[group_id];
-                group
-                    .item_ids
-                    .iter()
-                    .map(|named| self.len_inner(named.inner))
-                    .sum()
-            }
-        }
-    }
-
-    pub fn deep_iter<E, F: FnMut(usize, NodeId) -> Result<(), E>>(
-        &self,
-        item_ids: &[ItemId],
-        f: &mut F,
-    ) -> Result<(), E> {
-        let mut ind = 0;
-
-        #[allow(clippy::explicit_counter_loop)]
-        for item_id in item_ids {
-            self.deep_iter_inner(*item_id, &mut ind, f)?;
-        }
-
-        Ok(())
-    }
-
-    fn deep_iter_inner<E, F: FnMut(usize, NodeId) -> Result<(), E>>(
-        &self,
-        item_id: ItemId,
-        ind: &mut usize,
-        f: &mut F,
-    ) -> Result<(), E> {
-        match item_id {
-            ItemId::Node(node_id) => {
-                f(*ind, node_id)?;
-                *ind += 1;
-            }
-            ItemId::Group(group_id) => {
-                let group = &self[group_id];
-
-                for named in group.item_ids.iter() {
-                    self.deep_iter_inner(named.inner, ind, &mut *f)?;
+    fn next(&mut self) -> Option<Self::Item> {
+        let last = self.stack.last_mut();
+        match last {
+            Some(last) => match last.next() {
+                Some(res) => match res.inner {
+                    ItemId::Node(node_id) => Some(node_id),
+                    ItemId::Group(group) => {
+                        let iter = group.item_ids.iter();
+                        self.stack.push(iter);
+                        self.next()
+                    }
+                },
+                None => {
+                    self.stack.pop();
+                    self.next()
                 }
-            }
+            },
+            None => None,
         }
+    }
+}
 
-        Ok(())
+#[cfg(test)]
+mod tests {
+    use std::mem;
+
+    use super::*;
+
+    #[test]
+    fn memsize() {
+        println!("{}", mem::size_of::<ItemId>());
+        println!("{}", mem::size_of::<Group>());
     }
 }

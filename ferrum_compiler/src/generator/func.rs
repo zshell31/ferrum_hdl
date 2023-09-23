@@ -1,4 +1,4 @@
-use std::{borrow::Cow, iter};
+use std::borrow::Cow;
 
 use ferrum_netlist::{
     group_list::ItemId,
@@ -12,11 +12,12 @@ use rustc_hir::{
     def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
     Param, Pat, PatKind, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
-use rustc_middle::ty::GenericArgsRef;
+use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::symbol::Ident;
 
 use super::{EvalContext, Generator};
 use crate::{
+    blackbox,
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
     utils,
@@ -90,7 +91,7 @@ impl<'tcx> Generator<'tcx> {
 
         self.evaluate_inputs(inputs, &ctx, false, &mut |_| {})?;
         let item_id = self.evaluate_expr(body.value, &ctx)?;
-        self.evaluate_outputs(item_id)?;
+        self.evaluate_outputs(item_id);
 
         self.idents.for_module(module_id).pop_scope();
 
@@ -108,6 +109,13 @@ impl<'tcx> Generator<'tcx> {
         'tcx: 'a,
     {
         for (input, param) in inputs {
+            let ty = self.node_type(param.hir_id, ctx);
+            if let TyKind::Adt(adt, ..) = ty.kind() {
+                if blackbox::ignore_ty(&self.tcx.def_path(adt.did())) {
+                    continue;
+                }
+            }
+
             let item_id = self.make_input(input, ctx, is_dummy)?;
             self.pattern_match(param.pat, item_id, ctx.module_id)?;
 
@@ -131,9 +139,8 @@ impl<'tcx> Generator<'tcx> {
                         let sym = self.idents.for_module(module_id).ident(ident.as_str());
                         self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
                     }
-                    ItemId::Group(group_id) => {
-                        let item_ids = self.group_list[group_id].item_ids;
-                        for item_id in item_ids {
+                    ItemId::Group(group) => {
+                        for item_id in group.item_ids() {
                             self.pattern_match(pat, item_id.inner, module_id)?;
                         }
                     }
@@ -160,14 +167,13 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
             PatKind::Tuple(pats, dot_dot_pos) => {
-                let group_id = item_id.group_id();
+                let group = item_id.group();
                 match dot_dot_pos.as_opt_usize() {
                     Some(pos) => {
-                        let group = &self.group_list[group_id];
-                        let len = group.len();
+                        let len = group.item_ids().len();
                         assert!(pats.len() < len);
 
-                        let item_ids = group.item_ids;
+                        let item_ids = group.item_ids();
                         for (pat, item_id) in
                             pats[0 .. pos].iter().zip(item_ids[0 .. pos].iter())
                         {
@@ -182,10 +188,9 @@ impl<'tcx> Generator<'tcx> {
                         }
                     }
                     None => {
-                        let group = &self.group_list[group_id];
-                        assert_eq!(pats.len(), group.len());
+                        let item_ids = group.item_ids();
+                        assert_eq!(pats.len(), item_ids.len());
 
-                        let item_ids = group.item_ids;
                         for (pat, item_id) in pats.iter().zip(item_ids.iter()) {
                             self.pattern_match(pat, item_id.inner, module_id)?;
                         }
@@ -300,9 +305,19 @@ impl<'tcx> Generator<'tcx> {
                     mutbl: Mutability::Not,
                 },
             ) => self.make_input(ty, ctx, is_dummy),
-            HirTyKind::Tup(ty) => self.make_tuple_group(ty.iter(), |generator, ty| {
-                generator.make_input(ty, ctx, is_dummy)
-            }),
+            HirTyKind::Tup(ty) => {
+                let tuple_ty = self
+                    .find_sig_ty(
+                        self.node_type(input.hir_id, ctx),
+                        ctx.generic_args,
+                        input.span,
+                    )?
+                    .struct_ty();
+
+                self.make_tuple_group(tuple_ty, ty.iter(), |generator, ty| {
+                    generator.make_input(ty, ctx, is_dummy)
+                })
+            }
             _ => {
                 println!("input: {:#?}", input);
                 Err(SpanError::new(SpanErrorKind::NotSynthInput, input.span).into())
@@ -327,14 +342,15 @@ impl<'tcx> Generator<'tcx> {
                 })
                 .into()
             }
-            SignalTy::Array(ArrayTy(n, ty)) => self
-                .make_array_group(iter::repeat(ty).take(n as usize), |generator, ty| {
-                    Ok(generator.make_input_with_sig_ty(*ty, module_id, is_dummy))
+            SignalTy::Array(ty) => self
+                .make_array_group(ty, ty.tys(), |generator, ty| {
+                    Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
                 })
                 .unwrap(),
-            SignalTy::Group(ty) => self
+            SignalTy::Struct(ty) => self
                 .make_struct_group(
-                    ty.iter().map(|ty| (ty.name, ty.inner)),
+                    ty,
+                    ty.tys().map(|ty| (ty.name, ty.inner)),
                     |generator, ty| {
                         Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
                     },
@@ -343,13 +359,10 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn evaluate_outputs(&mut self, item_id: ItemId) -> Result<(), Error> {
-        self.group_list
-            .deep_iter::<Error, _>(&[item_id], &mut |_, node_id| {
-                Self::make_output(&mut self.net_list, &mut self.idents, node_id);
-
-                Ok(())
-            })
+    fn evaluate_outputs(&mut self, item_id: ItemId) {
+        for node_id in item_id.into_iter() {
+            Self::make_output(&mut self.net_list, &mut self.idents, node_id);
+        }
     }
 
     fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {

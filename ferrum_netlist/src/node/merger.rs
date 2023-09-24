@@ -10,6 +10,7 @@ use crate::{
 pub struct Merger {
     pub inputs: &'static [NodeOutId],
     pub output: NodeOutput,
+    pub rev: bool,
 }
 
 impl Merger {
@@ -17,6 +18,7 @@ impl Merger {
         width: u128,
         inputs: impl IntoIterator<Item = NodeOutId>,
         sym: Symbol,
+        rev: bool,
     ) -> Self {
         Self {
             inputs: unsafe { with_arena().alloc_from_iter(inputs) },
@@ -25,6 +27,7 @@ impl Merger {
                 sym,
                 kind: NetKind::Wire,
             },
+            rev,
         }
     }
 }

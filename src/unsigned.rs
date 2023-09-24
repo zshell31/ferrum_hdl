@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
-    fmt::{self, Binary, Display, LowerHex, Write},
-    mem,
+    fmt::{self, Binary, Display, LowerHex},
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
@@ -28,7 +27,7 @@ pub const fn unsigned_value(value: u128, width: u128) -> u128 {
     value & bit_mask(width)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(u128);
 
@@ -36,21 +35,17 @@ impl<const N: usize> Unsigned<N> {
     pub const fn new(n: u128) -> Self {
         Self(unsigned_value(n, N as u128))
     }
-
-    pub(crate) fn inner(self) -> u128 {
-        unsigned_value(self.0, N as u128)
-    }
 }
 
 impl<const N: usize> CastInner<u128> for Unsigned<N> {
     fn cast_inner(self) -> u128 {
-        unsafe { mem::transmute::<Unsigned<N>, u128>(self) }
+        self.0
     }
 }
 
 impl<const N: usize> CastInner<Unsigned<N>> for u128 {
     fn cast_inner(self) -> Unsigned<N> {
-        unsafe { mem::transmute::<u128, Unsigned<N>>(self) }
+        Unsigned::<N>::new(self)
     }
 }
 
@@ -82,55 +77,27 @@ impl<const N: usize> const From<u128> for Unsigned<N> {
     }
 }
 
-impl<const N: usize> const From<Unsigned<N>> for u128 {
-    fn from(value: Unsigned<N>) -> Self {
-        value.inner()
-    }
-}
-
 impl<const N: usize> Display for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unsigned({})", self.inner())
+        write!(f, "Unsigned({})", self.0)
     }
 }
 
 impl<const N: usize> Binary for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Unsigned(")?;
-        let bits = u128::BITS - self.inner().leading_zeros();
-        for _ in 0 .. (N - (bits as usize)) {
-            f.write_char('0')?;
-        }
-        if self.inner() != 0 {
-            Binary::fmt(&self.inner(), f)?;
-        }
-        f.write_str(")")?;
-
-        Ok(())
+        write!(f, "Unsigned({:0width$b})", self.0, width = N)
     }
 }
 
 impl<const N: usize> LowerHex for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self.inner())
-    }
-}
-
-impl<const N: usize> PartialEq for Unsigned<N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.inner() == other.inner()
+        write!(f, "{:x}", self.0)
     }
 }
 
 impl<const N: usize> PartialEq<u128> for Unsigned<N> {
     fn eq(&self, other: &u128) -> bool {
-        self.inner() == *other
-    }
-}
-
-impl<const N: usize> PartialOrd for Unsigned<N> {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+        self.0 == *other
     }
 }
 
@@ -140,19 +107,11 @@ impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
     }
 }
 
-impl<const N: usize> Ord for Unsigned<N> {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-
-impl<const N: usize> Eq for Unsigned<N> {}
-
 impl<const N: usize> BitAnd for Unsigned<N> {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        (self.inner() & rhs.inner()).into()
+        (self.0 & rhs.0).into()
     }
 }
 
@@ -168,7 +127,7 @@ impl<const N: usize> BitOr for Unsigned<N> {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        (self.inner() | rhs.inner()).into()
+        (self.0 | rhs.0).into()
     }
 }
 
@@ -184,7 +143,7 @@ impl<const N: usize> Shl for Unsigned<N> {
     type Output = Self;
 
     fn shl(self, rhs: Self) -> Self::Output {
-        (self.inner() << rhs.inner()).into()
+        (self.0 << rhs.0).into()
     }
 }
 
@@ -200,7 +159,7 @@ impl<const N: usize> Shr for Unsigned<N> {
     type Output = Self;
 
     fn shr(self, rhs: Self) -> Self::Output {
-        (self.inner() >> rhs.inner()).into()
+        (self.0 >> rhs.0).into()
     }
 }
 
@@ -216,7 +175,7 @@ impl<const N: usize> Add for Unsigned<N> {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        self.inner().wrapping_add(rhs.inner()).into()
+        self.0.wrapping_add(rhs.0).into()
     }
 }
 
@@ -232,7 +191,7 @@ impl<const N: usize> Sub for Unsigned<N> {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        self.inner().wrapping_sub(rhs.inner()).into()
+        self.0.wrapping_sub(rhs.0).into()
     }
 }
 
@@ -248,7 +207,7 @@ impl<const N: usize> Mul for Unsigned<N> {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        self.inner().wrapping_mul(rhs.inner()).into()
+        self.0.wrapping_mul(rhs.0).into()
     }
 }
 
@@ -264,7 +223,7 @@ impl<const N: usize> Div for Unsigned<N> {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        self.inner().wrapping_div(rhs.inner()).into()
+        self.0.wrapping_div(rhs.0).into()
     }
 }
 

@@ -11,6 +11,7 @@ pub struct Splitter {
     pub input: NodeOutId,
     pub outputs: &'static mut [NodeOutput],
     pub start: Option<u128>,
+    pub rev: bool,
 }
 
 impl Splitter {
@@ -18,6 +19,7 @@ impl Splitter {
         input: NodeOutId,
         outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
         start: Option<u128>,
+        rev: bool,
     ) -> Self {
         Self {
             input,
@@ -31,6 +33,7 @@ impl Splitter {
                 }))
             },
             start,
+            rev,
         }
     }
 }

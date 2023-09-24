@@ -3,13 +3,13 @@ use ferrum::{
     unsigned::{unsigned_value, Unsigned},
 };
 use ferrum_netlist::{
-    group_list::ItemId,
+    group::ItemId,
     net_list::{NodeId, NodeOutId},
     node::{
         ConstNode, DFFNode, Expr as ExprNode, IsNode, LoopEnd, LoopStart, Node, Splitter,
     },
     params::Outputs,
-    sig_ty::{ArrayTy, PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy},
     symbol::Symbol,
 };
 use rustc_ast::LitKind;
@@ -624,7 +624,6 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         bit_vec_trans(generator, rec, ctx, |generator, ctx, bit_vec| {
-            let start = generator.net_list[bit_vec].ty.width() - 1;
             let ty = PrimTy::Bit;
 
             Ok((
@@ -633,7 +632,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
                     Splitter::new(
                         bit_vec,
                         [(ty, generator.idents.for_module(ctx.module_id).tmp())],
-                        Some(start),
+                        None,
+                        true,
                     ),
                 ),
                 ty.into(),
@@ -672,6 +672,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
                         generator.idents.for_module(ctx.module_id).tmp(),
                     )],
                     None,
+                    false,
                 ),
             )
             .into())
@@ -710,6 +711,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
                         generator.idents.for_module(ctx.module_id).tmp(),
                     )],
                     Some(start),
+                    false,
                 ),
             )
             .into())
@@ -764,14 +766,16 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
     ) -> Result<ItemId, Error> {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
-        let ArrayTy(count, sig_ty) = generator
+        let array_ty = generator
             .find_sig_ty(
                 generator.node_type(rec.hir_id, ctx),
                 ctx.generic_args,
                 rec.span,
             )?
             .array_ty();
-        let width = sig_ty.width();
+        let item_ty = array_ty.item_ty();
+        let width = item_ty.width();
+        let count = array_ty.count();
 
         let rec = generator.evaluate_expr(rec, ctx)?;
 
@@ -793,7 +797,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
                     buffer.write_template(format_args!("assign {output}[{count} - 1 - {loop_var}*{width} +: {width}] = {input}[{loop_var}*{width} +: {width}];"));
                 }));
 
-                Ok(*sig_ty)
+                Ok(*item_ty)
             },
         )
     }
@@ -811,14 +815,16 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
         let span = rec.span;
 
-        let ArrayTy(count, sig_ty) = generator
+        let array_ty = generator
             .find_sig_ty(
                 generator.node_type(rec.hir_id, ctx),
                 ctx.generic_args,
                 rec.span,
             )?
             .array_ty();
-        let width = sig_ty.width();
+        let item_ty = array_ty.item_ty();
+        let width = item_ty.width();
+        let count = array_ty.count();
 
         let rec = generator.evaluate_expr(rec, ctx)?;
 
@@ -844,7 +850,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
                     .outputs()
                     .only_one()
                     .node_out_id(input);
-                let input = generator.from_bitvec(ctx.module_id, input, *sig_ty);
+                let input = generator.from_bitvec(ctx.module_id, input, *item_ty);
 
                 let closure = generator.evaluate_expr(closure, ctx)?;
                 generator.link_dummy_inputs(&[input], closure, span)?;
@@ -951,6 +957,7 @@ impl StdConversion {
                                 generator.idents.for_module(module_id).tmp(),
                             )],
                             None,
+                            false,
                         ),
                     )
                     .into())

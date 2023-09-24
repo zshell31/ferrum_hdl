@@ -71,6 +71,10 @@ pub enum SpanErrorKind {
     ExpectedArray,
     #[error("expected Struct type")]
     ExpectedStructType,
+    #[error("expected Enum type")]
+    ExpectedEnumType,
+    #[error("expected Enum variant")]
+    ExpectedEnumVariant,
     #[error("expected const value")]
     ExpectedConst,
 
@@ -84,6 +88,10 @@ pub enum SpanErrorKind {
     MultipleTraitImpls(String),
     #[error("incompatible types ('{0}' and '{1}') in binary expression")]
     IncompatibleTypes(String, String),
+    #[error("guards for match are not supported")]
+    UnsupportedGuard,
+    #[error("invalid pattern")]
+    InvalidPattern,
 
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,

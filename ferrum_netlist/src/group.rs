@@ -6,12 +6,12 @@ use std::{
 use either::Either;
 use smallvec::SmallVec;
 
-use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy, symbol::Symbol};
+use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
     Node(NodeId),
-    Group(Group),
+    Group(&'static Group),
 }
 
 impl IntoIterator for ItemId {
@@ -36,11 +36,22 @@ impl ItemId {
         }
     }
 
-    pub fn group(self) -> Group {
+    pub fn group(self) -> &'static Group {
         match self {
             Self::Group(group) => group,
             _ => panic!("expected group"),
         }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Node(_) => 1,
+            Self::Group(group) => group.len,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -52,61 +63,50 @@ impl From<NodeId> for ItemId {
 
 impl From<Group> for ItemId {
     fn from(group: Group) -> Self {
-        Self::Group(group)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Named<T> {
-    pub inner: T,
-    pub name: Option<Symbol>,
-}
-
-impl<T> Named<T> {
-    pub fn new(inner: T, name: Option<Symbol>) -> Self {
-        Self { inner, name }
-    }
-
-    pub fn is(&self, s: &str) -> bool {
-        match &self.name {
-            Some(name) => name.as_str() == s,
-            None => false,
-        }
+        Self::Group(unsafe { with_arena().alloc(group) })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Group {
     pub sig_ty: SignalTy,
-    item_ids: &'static [Named<ItemId>],
+    pub len: usize,
+    item_ids: &'static [ItemId],
 }
 
 impl !Sync for Group {}
 impl !Send for Group {}
 
 impl Group {
-    pub fn new(sig_ty: SignalTy, iter: impl IntoIterator<Item = Named<ItemId>>) -> Self {
+    pub fn new(sig_ty: SignalTy, iter: impl IntoIterator<Item = ItemId>) -> Self {
+        let item_ids = unsafe { with_arena().alloc_from_iter(iter) };
+        let len = item_ids.iter().map(|item_id| item_id.len()).sum();
+
         Self {
             sig_ty,
-            item_ids: unsafe { with_arena().alloc_from_iter(iter) },
+            len,
+            item_ids,
         }
     }
 
-    pub fn new_with_item_ids(
-        sig_ty: SignalTy,
-        item_ids: &'static [Named<ItemId>],
-    ) -> Self {
-        Self { sig_ty, item_ids }
+    pub fn new_with_item_ids(sig_ty: SignalTy, item_ids: &'static [ItemId]) -> Self {
+        let len = item_ids.iter().map(|item_id| item_id.len()).sum();
+
+        Self {
+            sig_ty,
+            len,
+            item_ids,
+        }
     }
 
     pub fn by_field(&self, field: &str) -> Option<ItemId> {
-        self.item_ids
-            .iter()
-            .find(|named| named.is(field))
-            .map(|named| named.inner)
+        let struct_ty = self.sig_ty.struct_ty();
+        struct_ty
+            .get_idx_by_field(field)
+            .map(|idx| self.item_ids[idx])
     }
 
-    pub fn item_ids(&self) -> &'static [Named<ItemId>] {
+    pub fn item_ids(&self) -> &'static [ItemId] {
         self.item_ids
     }
 
@@ -126,14 +126,18 @@ impl<'a> IntoIterator for &'a Group {
 }
 
 pub struct GroupIter {
-    stack: SmallVec<[Iter<'static, Named<ItemId>>; 8]>,
+    len: usize,
+    stack: SmallVec<[Iter<'static, ItemId>; 8]>,
 }
 
 impl GroupIter {
     fn new(group: &Group) -> Self {
         let mut stack = SmallVec::new();
         stack.push(group.item_ids.iter());
-        Self { stack }
+        Self {
+            len: group.len,
+            stack,
+        }
     }
 }
 
@@ -144,8 +148,8 @@ impl Iterator for GroupIter {
         let last = self.stack.last_mut();
         match last {
             Some(last) => match last.next() {
-                Some(res) => match res.inner {
-                    ItemId::Node(node_id) => Some(node_id),
+                Some(res) => match res {
+                    ItemId::Node(node_id) => Some(*node_id),
                     ItemId::Group(group) => {
                         let iter = group.item_ids.iter();
                         self.stack.push(iter);
@@ -160,17 +164,8 @@ impl Iterator for GroupIter {
             None => None,
         }
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::mem;
-
-    use super::*;
-
-    #[test]
-    fn memsize() {
-        println!("{}", mem::size_of::<ItemId>());
-        println!("{}", mem::size_of::<Group>());
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len, Some(self.len))
     }
 }

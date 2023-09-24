@@ -1,12 +1,11 @@
 use ferrum_netlist::{
     arena::with_arena,
-    group_list::{Group, ItemId, Named},
-    sig_ty::{ArrayTy, SignalTy, StructTy},
+    group::{Group, ItemId},
+    sig_ty::{ArrayTy, EnumTy, Named, SignalTy, StructTy},
     symbol::Symbol,
 };
-use rustc_middle::ty::{GenericArgsRef, Ty, TyKind};
+use rustc_middle::ty::{FieldDef, GenericArgsRef, Ty, TyKind};
 use rustc_span::Span;
-use smallvec::SmallVec;
 
 use crate::{
     blackbox,
@@ -15,82 +14,75 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
+    fn make_struct_ty_from_fields(
+        &mut self,
+        fields: impl IntoIterator<Item = &'tcx FieldDef>,
+        adt_generics: GenericArgsRef<'tcx>,
+        generics: GenericArgsRef<'tcx>,
+        span: Span,
+    ) -> Result<SignalTy, Error> {
+        let tcx = self.tcx;
+        let fields = fields
+            .into_iter()
+            .map(|field| {
+                (
+                    Symbol::new(field.ident(tcx).as_str()),
+                    field.ty(tcx, adt_generics),
+                )
+            })
+            .filter(|(_, ty)| match ty.kind() {
+                TyKind::Adt(adt, _) => {
+                    let def_path = tcx.def_path(adt.did());
+                    !blackbox::ignore_ty(&def_path)
+                }
+                _ => true,
+            })
+            .map(|(sym, ty)| {
+                self.find_sig_ty(ty, generics, span)
+                    .map(|sig_ty| Named::new(sig_ty, sym))
+            });
+
+        let tys = unsafe { with_arena().alloc_from_res_iter(fields)? };
+
+        Ok(SignalTy::Struct(StructTy::new(tys)))
+    }
+
     pub fn evaluate_adt_ty(
         &mut self,
         ty: &Ty<'tcx>,
         generics: GenericArgsRef<'tcx>,
         span: Span,
-    ) -> Result<Option<SignalTy>, Error> {
-        let tcx = self.tcx;
+    ) -> Result<SignalTy, Error> {
         match ty.kind() {
-            TyKind::Adt(adt, adt_generics) if adt.is_struct() => {
-                let fields = adt
-                    .all_fields()
-                    .map(|field| {
-                        (
-                            Some(Symbol::new(field.ident(tcx).as_str())),
-                            field.ty(tcx, adt_generics),
-                        )
-                    })
-                    .filter(|(_, ty)| match ty.kind() {
-                        TyKind::Adt(adt, _) => {
-                            let def_path = self.tcx.def_path(adt.did());
-                            !blackbox::ignore_ty(&def_path)
-                        }
-                        _ => true,
-                    })
-                    .collect::<SmallVec<[_; 8]>>();
+            TyKind::Adt(adt, adt_generics) if adt.is_struct() => self
+                .make_struct_ty_from_fields(
+                    adt.all_fields(),
+                    adt_generics,
+                    generics,
+                    span,
+                ),
+            TyKind::Adt(adt, adt_generics) if adt.is_enum() => {
+                let variants = unsafe {
+                    with_arena().alloc_from_res_iter(adt.variants().iter().map(
+                        |variant| {
+                            self.make_struct_ty_from_fields(
+                                variant.fields.iter(),
+                                adt_generics,
+                                generics,
+                                span,
+                            )
+                            .map(|ty| Named::new(ty, Symbol::new(variant.name.as_str())))
+                        },
+                    ))?
+                };
 
-                self.make_struct_ty(fields, |generator, ty| {
-                    generator.find_sig_ty(ty, generics, span)
-                })
-                .map(Some)
-            }
-            TyKind::Adt(adt, _) if adt.is_enum() => {
-                println!("{:#?}", adt.variants());
-
-                Err(SpanError::new(SpanErrorKind::ExpectedStructType, span).into())
+                Ok(SignalTy::Enum(EnumTy::new(variants)))
             }
             _ => {
                 println!("{:#?}", ty.kind());
                 Err(SpanError::new(SpanErrorKind::ExpectedStructType, span).into())
             }
         }
-    }
-
-    pub fn make_array_group<T>(
-        &mut self,
-        ty: ArrayTy,
-        iter: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
-    ) -> Result<ItemId, Error> {
-        let group = unsafe {
-            with_arena().alloc_from_res_iter(
-                iter.into_iter()
-                    .map(|item| f(self, item).map(|item_id| Named::new(item_id, None))),
-            )?
-        };
-
-        Ok(Group::new_with_item_ids(SignalTy::Array(ty), group).into())
-    }
-
-    pub fn make_tuple_group<T>(
-        &mut self,
-        ty: StructTy,
-        iter: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
-    ) -> Result<ItemId, Error> {
-        let group = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().enumerate().map(
-                |(ind, item)| {
-                    f(self, item).map(|item_id| {
-                        Named::new(item_id, Some(Symbol::new_from_ind(ind)))
-                    })
-                },
-            ))?
-        };
-
-        Ok(Group::new_with_item_ids(SignalTy::Struct(ty), group).into())
     }
 
     pub fn make_tuple_ty<T>(
@@ -102,7 +94,7 @@ impl<'tcx> Generator<'tcx> {
             with_arena().alloc_from_res_iter(iter.into_iter().enumerate().map(
                 |(ind, item)| {
                     f(self, item)
-                        .map(|sig_ty| Named::new(sig_ty, Some(Symbol::new_from_ind(ind))))
+                        .map(|sig_ty| Named::new(sig_ty, Symbol::new_from_ind(ind)))
                 },
             ))?
         };
@@ -110,33 +102,31 @@ impl<'tcx> Generator<'tcx> {
         Ok(StructTy::new(ty))
     }
 
-    pub fn make_struct_group<T>(
+    pub fn make_array_group<T>(
         &mut self,
-        ty: StructTy,
-        iter: impl IntoIterator<Item = (Option<Symbol>, T)>,
+        ty: ArrayTy,
+        iter: impl IntoIterator<Item = T>,
         mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
     ) -> Result<ItemId, Error> {
         let group = unsafe {
-            with_arena().alloc_from_res_iter(iter.into_iter().map(|(sym, item)| {
-                f(self, item).map(|item_id| Named::new(item_id, sym))
-            }))?
+            with_arena()
+                .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
+        };
+
+        Ok(Group::new_with_item_ids(SignalTy::Array(ty), group).into())
+    }
+
+    pub fn make_struct_group<T>(
+        &mut self,
+        ty: StructTy,
+        iter: impl IntoIterator<Item = T>,
+        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<ItemId, Error>,
+    ) -> Result<ItemId, Error> {
+        let group = unsafe {
+            with_arena()
+                .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
         };
 
         Ok(Group::new_with_item_ids(SignalTy::Struct(ty), group).into())
-    }
-
-    pub fn make_struct_ty<T>(
-        &mut self,
-        iter: impl IntoIterator<Item = (Option<Symbol>, T)>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<SignalTy, Error>,
-    ) -> Result<SignalTy, Error> {
-        let ty =
-            unsafe {
-                with_arena().alloc_from_res_iter(iter.into_iter().map(
-                    |(sym, item)| f(self, item).map(|sig_ty| Named::new(sig_ty, sym)),
-                ))?
-            };
-
-        Ok(SignalTy::Struct(StructTy::new(ty)))
     }
 }

@@ -1,12 +1,15 @@
-use std::collections::BTreeSet;
+use std::{cmp, collections::BTreeSet};
+
+use either::Either;
 
 use crate::{
     buffer::Buffer,
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, BitVecTrans, ConstNode, DFFNode, Expr, IsNode, LoopStart,
-        Merger, ModInst, Mux2Node, Node, NodeOutput, NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, BitVecMask, BitVecTrans, Case, ConstNode, DFFNode, Expr,
+        IsNode, LoopStart, Merger, ModInst, Mux2Node, Node, NodeOutput, NotNode,
+        PassNode, Splitter,
     },
     params::Outputs,
     symbol::Symbol,
@@ -316,9 +319,14 @@ endgenerate
                 input,
                 outputs,
                 start,
+                rev,
             }) => {
-                let input = self.net_list[*input].sym;
-                let mut start = start.unwrap_or_default();
+                let input = self.net_list[*input];
+                let input_width = input.ty.width();
+                let mut start =
+                    start.unwrap_or_else(|| if !rev { 0 } else { input_width });
+                let input = input.sym;
+
                 for output in outputs.iter() {
                     self.write_local(output, None);
 
@@ -327,18 +335,46 @@ endgenerate
 
                     self.buffer.write_tab();
                     if width == 1 {
+                        let start = if !rev { start } else { start - 1 };
+
                         self.buffer.write_fmt(format_args!(
                             "assign {output} = {input}[{start}];\n\n"
                         ));
                     } else {
+                        #[allow(clippy::collapsible_else_if)]
+                        let (start, width) = if !rev {
+                            if start <= input_width - width {
+                                (start, width)
+                            } else {
+                                (start, input_width - start)
+                            }
+                        } else {
+                            if start >= width {
+                                (start - width, width)
+                            } else {
+                                (0, start)
+                            }
+                        };
+                        if width == 0 {
+                            continue;
+                        }
+
                         self.buffer.write_fmt(format_args!(
                             "assign {output} = {input}[{start} +: {width}];\n\n"
                         ));
                     }
-                    start += width;
+                    if !rev {
+                        start = cmp::min(start + width, input_width);
+                    } else {
+                        start = start.saturating_sub(width);
+                    }
                 }
             }
-            Node::Merger(Merger { inputs, output }) => {
+            Node::Merger(Merger {
+                inputs,
+                output,
+                rev,
+            }) => {
                 self.write_local(output, None);
                 let output = output.sym;
 
@@ -347,18 +383,123 @@ endgenerate
                     .write_fmt(format_args!("assign {output} = {{\n"));
 
                 let net_list = &self.net_list;
+                let inputs = if !rev {
+                    Either::Left(inputs.iter())
+                } else {
+                    Either::Right(inputs.iter().rev())
+                };
+
                 self.buffer.push_tab();
-                self.buffer
-                    .intersperse(SEP, inputs.iter().rev(), |buffer, input| {
-                        let input = net_list[*input].sym;
-                        buffer.write_tab();
-                        buffer.write_fmt(format_args!("{}", input));
-                    });
+                self.buffer.intersperse(SEP, inputs, |buffer, input| {
+                    let input = net_list[*input].sym;
+                    buffer.write_tab();
+                    buffer.write_fmt(format_args!("{}", input));
+                });
                 self.buffer.pop_tab();
 
                 self.buffer.write_eol();
                 self.buffer.write_tab();
                 self.buffer.write_str("};\n\n");
+            }
+            Node::Case(Case {
+                inputs: (sel, inputs, default),
+                output,
+            }) => {
+                if !inputs.is_empty() {
+                    self.write_local(output, None);
+                    let output = output.sym;
+
+                    let sel_sym = self.net_list[*sel].sym;
+                    let sel_width = self.net_list[*sel].ty.width();
+
+                    let has_mask = inputs.iter().any(|(mask, _)| mask.mask != 0);
+                    let small_mask = inputs
+                        .iter()
+                        .map(|(mask, _)| mask.mask)
+                        .min()
+                        .unwrap_or_default();
+                    let small_mask_ones = small_mask.trailing_ones();
+
+                    self.buffer.write_tab();
+                    self.buffer.write_fmt(format_args!("always @(*) begin\n"));
+
+                    self.buffer.push_tab();
+
+                    self.buffer.write_tab();
+
+                    if !has_mask {
+                        self.buffer.write_fmt(format_args!("case ({sel_sym})\n"));
+                    } else if small_mask != 0 && small_mask_ones > 0 {
+                        let end = sel_width - 1;
+                        let start = small_mask_ones;
+                        self.buffer.write_fmt(format_args!(
+                            "casez ({sel_sym}[{end}:{start}])\n"
+                        ));
+                    } else {
+                        self.buffer.write_fmt(format_args!("casez ({sel_sym})\n"));
+                    }
+
+                    self.buffer.push_tab();
+
+                    let mut write_case = |mut mask: BitVecMask, input: NodeOutId| {
+                        let input = self.net_list[input].sym;
+
+                        self.buffer.write_tab();
+                        if small_mask != 0 && small_mask_ones > 0 {
+                            let ones = small_mask_ones as u128;
+                            let width = sel_width - ones;
+                            mask.shiftr(ones);
+                            let mask = mask.to_bitstr(width, '?');
+                            self.buffer.write_fmt(format_args!(
+                                "{width}'b{mask} : {output} = {input};\n"
+                            ));
+                        } else {
+                            let mask = mask.to_bitstr(sel_width, '?');
+
+                            self.buffer.write_fmt(format_args!(
+                                "{sel_width}'b{mask} : {output} = {input};\n",
+                            ));
+                        }
+                    };
+
+                    for i in 0 .. (inputs.len() - 1) {
+                        let (mask, input) = inputs[i];
+                        write_case(mask, input);
+                    }
+
+                    match default {
+                        Some(default) => {
+                            let (mask, input) = inputs.last().unwrap();
+                            write_case(*mask, *input);
+
+                            let default = self.net_list[*default].sym;
+
+                            self.buffer.write_tab();
+                            self.buffer.write_fmt(format_args!(
+                                "default: {output} = {default};\n"
+                            ));
+                        }
+                        None => {
+                            let (_, input) = inputs.last().unwrap();
+                            let default = self.net_list[*input].sym;
+
+                            self.buffer.write_tab();
+                            self.buffer.write_fmt(format_args!(
+                                "default: {output} = {default};\n"
+                            ));
+                        }
+                    };
+
+                    self.buffer.pop_tab();
+
+                    self.buffer.write_tab();
+                    self.buffer.write_str("endcase\n");
+
+                    self.buffer.pop_tab();
+
+                    self.buffer.write_tab();
+                    self.buffer.write_str("end\n\n");
+                }
             }
             Node::BitVecTrans(BitVecTrans {
                 input,
@@ -407,8 +548,7 @@ endgenerate
                 self.buffer.write_str(";\n\n");
             }
             Node::Mux2(Mux2Node {
-                sel,
-                inputs: (input1, input2),
+                inputs: (sel, (input1, input2)),
                 output,
             }) => {
                 self.write_local(output, None);

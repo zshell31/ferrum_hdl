@@ -1,4 +1,4 @@
-use ferrum_netlist::{group_list::ItemId, net_list::ModuleId, symbol::Symbol};
+use ferrum_netlist::{group::ItemId, net_list::ModuleId, symbol::Symbol};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_span::symbol::Ident;
 

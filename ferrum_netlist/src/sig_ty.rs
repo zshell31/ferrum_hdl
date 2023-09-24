@@ -1,7 +1,20 @@
-use std::iter;
+use crate::{arena::with_arena, const_functions::clog2, symbol::Symbol};
 
-use crate::{arena::with_arena, const_functions::clog2, group_list::Named};
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Named<T> {
+    pub inner: T,
+    pub name: Symbol,
+}
 
+impl<T> Named<T> {
+    pub fn new(inner: T, name: Symbol) -> Self {
+        Self { inner, name }
+    }
+
+    pub fn is(&self, s: &str) -> bool {
+        self.name.as_str() == s
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PrimTy {
     Bool,
@@ -46,64 +59,179 @@ impl PrimTy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ArrayTy(pub u128, pub &'static SignalTy);
+pub struct ArrayTy {
+    count: u128,
+    ty: &'static SignalTy,
+}
 
 impl ArrayTy {
+    pub fn new(count: u128, ty: &'static SignalTy) -> Self {
+        Self { count, ty }
+    }
+
+    #[inline(always)]
     pub fn width(&self) -> u128 {
-        self.0 * self.1.width()
+        self.count * self.ty.width()
     }
 
+    #[inline(always)]
+    pub fn count(&self) -> u128 {
+        self.count
+    }
+
+    #[inline(always)]
     pub fn item_width(&self) -> u128 {
-        self.1.width()
+        self.ty.width()
     }
 
-    pub fn tys(&self) -> impl Iterator<Item = SignalTy> + Clone {
-        iter::repeat(*self.1).take(self.0 as usize)
+    #[inline(always)]
+    pub fn tys(&self) -> ArrayTyIter<'_> {
+        ArrayTyIter { ind: 0, ty: self }
+    }
+
+    #[inline(always)]
+    pub fn item_ty(&self) -> &'static SignalTy {
+        self.ty
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StructTy(&'static [Named<SignalTy>]);
+// combines `repeat` + `take` but additionally implements size_hint
+pub struct ArrayTyIter<'a> {
+    ind: u128,
+    ty: &'a ArrayTy,
+}
 
-#[allow(clippy::len_without_is_empty)]
+impl<'a> Iterator for ArrayTyIter<'a> {
+    type Item = SignalTy;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ind < self.ty.count {
+            self.ind += 1;
+            Some(*self.ty.ty)
+        } else {
+            None
+        }
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let len = self.ty.count as usize;
+        (len, Some(len))
+    }
+}
+
+impl<'a> ExactSizeIterator for ArrayTyIter<'a> {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StructTy {
+    width: u128,
+    tys: &'static [Named<SignalTy>],
+}
+
 impl StructTy {
     pub fn new(tys: &'static [Named<SignalTy>]) -> Self {
-        Self(tys)
+        let width = tys.iter().map(|ty| ty.inner.width()).sum();
+        Self { width, tys }
     }
 
+    #[inline(always)]
     pub fn width(&self) -> u128 {
-        self.0.iter().map(|ty| ty.inner.width()).sum()
+        self.width
     }
 
+    #[inline(always)]
     pub fn len(&self) -> usize {
-        self.0.len()
+        self.tys.len()
     }
 
-    pub fn tys(&self) -> impl Iterator<Item = Named<SignalTy>> {
-        self.0.iter().copied()
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.tys.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn tys(&self) -> &[Named<SignalTy>] {
+        self.tys
+    }
+
+    #[inline(always)]
+    pub fn by_field(&self, field: &str) -> Option<SignalTy> {
+        self.tys
+            .iter()
+            .find(|named| named.is(field))
+            .map(|named| named.inner)
+    }
+
+    pub(crate) fn get_idx_by_field(&self, field: &str) -> Option<usize> {
+        self.tys
+            .iter()
+            .enumerate()
+            .find(|(_, named)| named.is(field))
+            .map(|(idx, _)| idx)
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EnumTy(&'static [Named<SignalTy>]);
+pub struct EnumTy {
+    data_width: u128,
+    discr_width: u128,
+    variants: &'static [Named<SignalTy>],
+}
+
+fn data_width(variants: &'static [Named<SignalTy>]) -> u128 {
+    variants
+        .iter()
+        .map(|ty| ty.inner.width())
+        .max()
+        .unwrap_or(0)
+}
+
+fn discr_width(variants: &'static [Named<SignalTy>]) -> u128 {
+    if variants.is_empty() {
+        0
+    } else {
+        clog2(variants.len() - 1) as u128
+    }
+}
 
 impl EnumTy {
+    pub fn new(variants: &'static [Named<SignalTy>]) -> Self {
+        Self {
+            data_width: data_width(variants),
+            discr_width: discr_width(variants),
+            variants,
+        }
+    }
+
+    #[inline(always)]
     pub fn width(&self) -> u128 {
-        let descr_width = self.descr_width();
-
-        self.0.iter().map(|ty| ty.inner.width()).max().unwrap_or(0) + descr_width
+        self.discr_width() + self.data_width()
     }
 
-    pub fn descr_width(&self) -> u128 {
-        clog2(self.0.len()) as u128
+    #[inline(always)]
+    pub fn discr_width(&self) -> u128 {
+        self.discr_width
     }
 
-    pub fn descr_ty(&self) -> PrimTy {
-        PrimTy::BitVec(self.descr_width())
+    #[inline(always)]
+    pub fn data_width(&self) -> u128 {
+        self.data_width
     }
 
-    pub fn tys(&self) -> impl Iterator<Item = SignalTy> + Clone {
-        self.0.iter().map(|ty| ty.inner)
+    #[inline(always)]
+    pub fn discr_val(&self, idx: usize) -> u128 {
+        (idx as u128) & ((1 << self.discr_width()) - 1)
+    }
+
+    pub fn prim_ty(&self) -> PrimTy {
+        PrimTy::BitVec(self.width())
+    }
+
+    pub fn variants(&self) -> &[Named<SignalTy>] {
+        self.variants
+    }
+
+    pub fn variant(&self, idx: usize) -> Named<SignalTy> {
+        self.variants[idx]
     }
 }
 
@@ -112,7 +240,7 @@ pub enum SignalTy {
     Prim(PrimTy),
     Array(ArrayTy),
     Struct(StructTy),
-    // Enum(EnumTy),
+    Enum(EnumTy),
 }
 
 impl !Sync for SignalTy {}
@@ -126,17 +254,17 @@ impl From<PrimTy> for SignalTy {
 
 impl SignalTy {
     pub fn mk_array(n: u128, sig_ty: SignalTy) -> Self {
-        Self::Array(ArrayTy(n, unsafe { with_arena().alloc(sig_ty) }))
+        Self::Array(ArrayTy::new(n, unsafe { with_arena().alloc(sig_ty) }))
     }
 
     pub fn mk_struct(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
-        Self::Struct(StructTy(unsafe { with_arena().alloc_from_iter(iter) }))
+        Self::Struct(StructTy::new(unsafe { with_arena().alloc_from_iter(iter) }))
     }
 
     pub fn prim_ty(&self) -> PrimTy {
         match self {
             Self::Prim(prim_ty) => *prim_ty,
-            _ => panic!("expected prim type"),
+            _ => panic!("expected Prim type"),
         }
     }
 
@@ -148,29 +276,41 @@ impl SignalTy {
     }
 
     pub fn array_ty(&self) -> ArrayTy {
-        self.opt_array_ty().expect("expected array type")
+        self.opt_array_ty().expect("expected Array type")
     }
 
-    pub fn struct_ty(&self) -> StructTy {
+    pub fn opt_struct_ty(&self) -> Option<StructTy> {
         match self {
-            Self::Struct(ty) => *ty,
-            _ => panic!("expected struct type"),
+            Self::Struct(ty) => Some(*ty),
+            _ => None,
         }
     }
 
-    // pub fn enum_ty(&self) -> EnumTy {
-    //     match self {
-    //         Self::Enum(ty) => *ty,
-    //         _ => panic!("expected enum type"),
-    //     }
-    // }
+    pub fn struct_ty(&self) -> StructTy {
+        self.opt_struct_ty().expect("expected Struct type")
+    }
+
+    pub fn opt_enum_ty(&self) -> Option<EnumTy> {
+        match self {
+            Self::Enum(enum_ty) => Some(*enum_ty),
+            _ => None,
+        }
+    }
+
+    pub fn enum_ty(&self) -> EnumTy {
+        self.opt_enum_ty().expect("expected Enum type")
+    }
+
+    pub fn is_enum_ty(&self) -> bool {
+        matches!(self, Self::Enum(_))
+    }
 
     pub fn width(&self) -> u128 {
         match self {
             Self::Prim(ty) => ty.width(),
             Self::Array(ty) => ty.width(),
             Self::Struct(ty) => ty.width(),
-            // Self::Enum(ty) => ty.width(),
+            Self::Enum(ty) => ty.width(),
         }
     }
 

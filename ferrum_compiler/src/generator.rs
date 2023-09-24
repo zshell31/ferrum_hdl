@@ -4,13 +4,14 @@ pub mod bitvec;
 pub mod expr;
 pub mod func;
 pub mod generic;
+pub mod pattern_match;
 pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
 use ferrum_netlist::{
     backend::Verilog,
-    group_list::ItemId,
+    group::ItemId,
     inject_pass::InjectPass,
     net_list::{ModuleId, NetList},
     node::{IsNode, PassNode},
@@ -25,7 +26,10 @@ use rustc_hir::{
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
-use rustc_middle::ty::{AssocKind, EarlyBinder, GenericArgsRef, List, Ty, TyCtxt};
+use rustc_middle::{
+    mir::UnevaluatedConst,
+    ty::{AssocKind, EarlyBinder, GenericArgsRef, List, ParamEnv, Ty, TyCtxt},
+};
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{symbol::Ident, Span};
 use rustc_type_ir::fold::TypeFoldable;
@@ -35,6 +39,7 @@ use crate::{
     blackbox::{Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
+    utils,
 };
 
 pub struct CompilerCallbacks {}
@@ -320,5 +325,23 @@ impl<'tcx> Generator<'tcx> {
             })?;
         let generic_args = self.extract_generic_args_for_fn(fn_did, expr, ctx)?;
         self.eval_generic_args(generic_args, expr.span)
+    }
+
+    pub fn eval_const_val(
+        &self,
+        def_id: DefId,
+        generic_args: GenericArgsRef<'tcx>,
+        span: Option<Span>,
+    ) -> Option<u128> {
+        let const_val = self
+            .tcx
+            .const_eval_resolve(
+                ParamEnv::reveal_all(),
+                UnevaluatedConst::new(def_id, generic_args),
+                span,
+            )
+            .ok()?;
+
+        utils::eval_const_val(const_val)
     }
 }

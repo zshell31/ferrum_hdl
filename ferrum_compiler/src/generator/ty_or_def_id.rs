@@ -152,7 +152,7 @@ impl<'tcx> Generator<'tcx> {
 
             if let TyOrDefId::Ty(ty) = &key.ty_or_def_id {
                 if key.is_local() {
-                    sig_ty = self.evaluate_adt_ty(ty, generics, span)?;
+                    sig_ty = Some(self.evaluate_adt_ty(ty, generics, span)?);
                 } else {
                     match ty.kind() {
                         TyKind::Array(..) => {

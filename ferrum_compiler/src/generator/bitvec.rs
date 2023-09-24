@@ -1,9 +1,9 @@
 use ferrum_netlist::{
-    group_list::ItemId,
+    group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{ConstNode, IsNode, Merger, ModInst, Node, PassNode, Splitter},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{EnumTy, PrimTy, SignalTy},
 };
 use smallvec::SmallVec;
 
@@ -43,7 +43,7 @@ impl<'tcx> Generator<'tcx> {
                 .make_tuple_ty(nodes.iter(), |_, (ty, _)| Ok((*ty).into()))
                 .unwrap();
 
-            self.make_tuple_group(ty, nodes, |generator, (_, node)| {
+            self.make_struct_group(ty, nodes, |generator, (_, node)| {
                 Ok(generator.net_list.add_node(module_id, node).into())
             })
             .unwrap()
@@ -87,8 +87,9 @@ impl<'tcx> Generator<'tcx> {
                     group
                         .item_ids()
                         .iter()
-                        .map(|item_id| self.to_bitvec(module_id, item_id.inner)),
+                        .map(|item_id| self.to_bitvec(module_id, *item_id)),
                     sym,
+                    false,
                 );
 
                 let node_id = self.net_list.add_node(module_id, merger);
@@ -145,6 +146,7 @@ impl<'tcx> Generator<'tcx> {
                         (PrimTy::BitVec(item_width), sym)
                     }),
                     None,
+                    true,
                 );
 
                 let node_id = self.net_list.add_node(module_id, splitter);
@@ -169,12 +171,13 @@ impl<'tcx> Generator<'tcx> {
                 let mut n = 0;
                 let splitter = Splitter::new(
                     node_out_id,
-                    ty.tys().map(|ty| {
+                    ty.tys().iter().map(|ty| {
                         n += 1;
                         let sym = self.idents.for_module(module_id).tmp();
                         (PrimTy::BitVec(ty.inner.width()), sym)
                     }),
                     None,
+                    true,
                 );
 
                 let node_id = self.net_list.add_node(module_id, splitter);
@@ -189,21 +192,23 @@ impl<'tcx> Generator<'tcx> {
                 self.make_struct_group(
                     ty,
                     ty.tys()
+                        .iter()
                         .zip(outputs)
-                        .map(|(ty, node_out_id)| (ty.name, (ty.inner, node_out_id))),
+                        .map(|(ty, node_out_id)| (ty.inner, node_out_id)),
                     |generator, (sig_ty, node_out_id)| {
                         Ok(generator.from_bitvec(module_id, node_out_id, sig_ty))
                     },
                 )
                 .unwrap()
-            } // SignalTy::Enum(ty) => {
-              //     let pass = PassNode::new(
-              //         ty.descr_ty(),
-              //         node_out_id,
-              //         self.idents.for_module(module_id).tmp(),
-              //     );
-              //     self.net_list.add_node(module_id, pass).into()
-              // }
+            }
+            SignalTy::Enum(ty) => {
+                let pass = PassNode::new(
+                    ty.prim_ty(),
+                    node_out_id,
+                    self.idents.for_module(module_id).tmp(),
+                );
+                self.net_list.add_node(module_id, pass).into()
+            }
         }
     }
 
@@ -214,6 +219,82 @@ impl<'tcx> Generator<'tcx> {
         sig_ty: SignalTy,
     ) -> ItemId {
         self.from_bitvec(module_id, node_out_id, sig_ty)
+    }
+
+    pub fn enum_variant_from_bitvec(
+        &mut self,
+        module_id: ModuleId,
+        scrutinee: NodeId,
+        enum_ty: EnumTy,
+        variant_idx: usize,
+    ) -> ItemId {
+        let sig_ty = enum_ty.variant(variant_idx).inner;
+
+        if let Some(struct_ty) = sig_ty.opt_struct_ty() {
+            if struct_ty.is_empty() {
+                return scrutinee.into();
+            }
+        }
+
+        let scrutinee = self.net_list[scrutinee]
+            .outputs()
+            .only_one()
+            .node_out_id(scrutinee);
+
+        let data_part = self.net_list.add_node(
+            module_id,
+            Splitter::new(
+                scrutinee,
+                [(
+                    PrimTy::BitVec(sig_ty.width()),
+                    self.idents.for_module(module_id).tmp(),
+                )],
+                Some(enum_ty.data_width()),
+                true,
+            ),
+        );
+        let data_part = self.net_list[data_part]
+            .outputs()
+            .only_one()
+            .node_out_id(data_part);
+
+        self.from_bitvec(module_id, data_part, sig_ty)
+    }
+
+    pub fn enum_variant_to_bitvec(
+        &mut self,
+        module_id: ModuleId,
+        enum_ty: EnumTy,
+        variant_idx: usize,
+        data_part: ItemId,
+    ) -> ItemId {
+        let discr_val = enum_ty.discr_val(variant_idx);
+        let discr_val = self.net_list.add_node(
+            module_id,
+            ConstNode::new(
+                PrimTy::BitVec(enum_ty.discr_width()),
+                discr_val,
+                self.idents.for_module(module_id).tmp(),
+            ),
+        );
+        let discr_val = self.net_list[discr_val]
+            .outputs()
+            .only_one()
+            .node_out_id(discr_val);
+
+        let data_part = self.to_bitvec(module_id, data_part);
+
+        self.net_list
+            .add_node(
+                module_id,
+                Merger::new(
+                    enum_ty.width(),
+                    [discr_val, data_part],
+                    self.idents.for_module(module_id).tmp(),
+                    false,
+                ),
+            )
+            .into()
     }
 
     pub fn to_const(&self, item_id: ItemId) -> Option<u128> {
@@ -251,8 +332,8 @@ impl<'tcx> Generator<'tcx> {
             ItemId::Group(group) => {
                 let mut res: u128 = 0;
                 let mut total: u128 = 0;
-                for item_id in group.item_ids().iter().rev() {
-                    let (val, width) = self.to_const_inner(item_id.inner)?;
+                for item_id in group.item_ids().iter() {
+                    let (val, width) = self.to_const_inner(*item_id)?;
                     // TODO: use long arithmetic instead
                     if res == 0 {
                         res = val;

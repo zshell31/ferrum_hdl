@@ -1,6 +1,7 @@
 mod bin_op;
 mod bit_not;
 mod bit_vec_trans;
+mod case;
 mod consta;
 mod dff;
 mod expr;
@@ -21,6 +22,7 @@ pub use self::{
     bin_op::{BinOp, BinOpNode},
     bit_not::BitNotNode,
     bit_vec_trans::BitVecTrans,
+    case::{BitVecMask, Case},
     consta::ConstNode,
     dff::DFFNode,
     expr::Expr,
@@ -124,18 +126,18 @@ macro_rules! define_nodes {
                 }
             }
 
-            fn by_ind(&self, out: OutId) -> &NodeOutput {
+            fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_> {
                 match self {
                     $(
-                        Self::$kind(node) => Outputs::by_ind(node.outputs(), out),
+                        Self::$kind(node) => Outputs::by_ind(node.outputs(), ind),
                     )+
                 }
             }
 
-            fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
+            fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_> {
                 match self {
                     $(
-                        Self::$kind(node) => Outputs::by_ind_mut(node.outputs_mut(), out),
+                        Self::$kind(node) => Outputs::by_ind_mut(node.outputs_mut(), ind),
                     )+
                 }
             }
@@ -185,6 +187,7 @@ define_nodes!(
     Const => ConstNode,
     Splitter => Splitter,
     Merger => Merger,
+    Case => Case,
     BitVecTrans => BitVecTrans,
     BinOp => BinOpNode,
     BitNot => BitNotNode,
@@ -208,5 +211,36 @@ impl Node {
 
     pub fn is_pass(&self) -> bool {
         matches!(self, Self::Pass(_))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn print_mem_size<T>() {
+        use std::any;
+        println!("{} {}", any::type_name::<T>(), mem::size_of::<T>());
+    }
+
+    #[test]
+    fn maxsize() {
+        print_mem_size::<Node>();
+        print_mem_size::<InputNode>();
+        print_mem_size::<ModInst>();
+        print_mem_size::<LoopStart>();
+        print_mem_size::<LoopEnd>();
+        print_mem_size::<Expr>();
+        print_mem_size::<PassNode>();
+        print_mem_size::<ConstNode>();
+        print_mem_size::<Splitter>();
+        print_mem_size::<Merger>();
+        print_mem_size::<Case>();
+        print_mem_size::<BitVecTrans>();
+        print_mem_size::<BinOpNode>();
+        print_mem_size::<BitNotNode>();
+        print_mem_size::<NotNode>();
+        print_mem_size::<Mux2Node>();
+        print_mem_size::<DFFNode>();
     }
 }

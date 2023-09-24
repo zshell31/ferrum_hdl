@@ -1,5 +1,5 @@
 use std::{
-    fmt::{self, Binary, Display, LowerHex, Write},
+    fmt::{self, Binary, Display, LowerHex},
     ops::{BitAnd, BitOr, BitOrAssign, Not, Shl},
 };
 
@@ -80,15 +80,7 @@ impl<const N: usize> Display for BitVec<N> {
 
 impl<const N: usize> Binary for BitVec<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let bits = u128::BITS - self.inner().leading_zeros();
-        for _ in 0 .. (N - (bits as usize)) {
-            f.write_char('0')?;
-        }
-        if self.inner() != 0 {
-            Binary::fmt(&self.inner(), f)?;
-        }
-
-        Ok(())
+        write!(f, "Unsigned({:0width$b})", self.0, width = N)
     }
 }
 

@@ -55,12 +55,12 @@ mod tests {
         let u: Unsigned<6> = 0b011011.into();
         assert_eq!(
             u.repack::<Array<3, Unsigned<2>>>(),
-            [0b11, 0b10, 0b01].cast::<Array<3, Unsigned<2>>>()
+            [0b01, 0b10, 0b11].cast::<Array<3, Unsigned<2>>>()
         );
 
         assert_eq!(
             u.repack::<Array<2, Array<1, Array<3, Bit>>>>(),
-            [[[H, H, L]], [[H, H, L]]].cast::<Array<2, Array<1, Array<3, Bit>>>>()
+            [[[L, H, H]], [[L, H, H]]].cast::<Array<2, Array<1, Array<3, Bit>>>>()
         );
     }
 }

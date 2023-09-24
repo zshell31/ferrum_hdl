@@ -8,7 +8,7 @@ pub mod arena;
 pub mod backend;
 pub mod buffer;
 pub mod const_functions;
-pub mod group_list;
+pub mod group;
 pub mod inject_pass;
 pub mod net_kind;
 pub mod net_list;

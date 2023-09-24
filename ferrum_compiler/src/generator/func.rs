@@ -1,16 +1,16 @@
 use std::borrow::Cow;
 
 use ferrum_netlist::{
-    group_list::ItemId,
-    net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{InputNode, IsNode, Node, PassNode, Splitter},
+    group::ItemId,
+    net_list::{ModuleId, NetList, NodeId},
+    node::{InputNode, IsNode, Node, PassNode},
     params::Outputs,
-    sig_ty::{ArrayTy, PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy},
 };
 use rustc_ast::{Mutability, UintTy};
 use rustc_hir::{
     def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
-    Param, Pat, PatKind, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
+    Param, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::symbol::Ident;
@@ -20,7 +20,6 @@ use crate::{
     blackbox,
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
-    utils,
 };
 
 impl<'tcx> Generator<'tcx> {
@@ -125,131 +124,6 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
-    pub fn pattern_match(
-        &mut self,
-        pat: &Pat<'tcx>,
-        item_id: ItemId,
-        module_id: ModuleId,
-    ) -> Result<(), Error> {
-        match pat.kind {
-            PatKind::Binding(..) => {
-                let ident = utils::pat_ident(pat)?;
-                match item_id {
-                    ItemId::Node(node_id) => {
-                        let sym = self.idents.for_module(module_id).ident(ident.as_str());
-                        self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
-                    }
-                    ItemId::Group(group) => {
-                        for item_id in group.item_ids() {
-                            self.pattern_match(pat, item_id.inner, module_id)?;
-                        }
-                    }
-                }
-
-                self.idents
-                    .for_module(module_id)
-                    .add_local_ident(ident, item_id);
-            }
-            PatKind::Slice(before, wild, after) => {
-                let ArrayTy(count, sig_ty) =
-                    self.item_ty(item_id).opt_array_ty().ok_or_else(|| {
-                        SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
-                    })?;
-                let width = sig_ty.width();
-
-                let to = self.to_bitvec(module_id, item_id);
-
-                self.slice_pattern_match(to, width, *sig_ty, before, None)?;
-
-                if wild.is_some() {
-                    let start = (count - (after.len() as u128)) * width;
-                    self.slice_pattern_match(to, width, *sig_ty, after, Some(start))?;
-                }
-            }
-            PatKind::Tuple(pats, dot_dot_pos) => {
-                let group = item_id.group();
-                match dot_dot_pos.as_opt_usize() {
-                    Some(pos) => {
-                        let len = group.item_ids().len();
-                        assert!(pats.len() < len);
-
-                        let item_ids = group.item_ids();
-                        for (pat, item_id) in
-                            pats[0 .. pos].iter().zip(item_ids[0 .. pos].iter())
-                        {
-                            self.pattern_match(pat, item_id.inner, module_id)?;
-                        }
-
-                        for (pat, item_id) in pats[pos ..]
-                            .iter()
-                            .zip(item_ids[(len - (pats.len() - pos)) ..].iter())
-                        {
-                            self.pattern_match(pat, item_id.inner, module_id)?;
-                        }
-                    }
-                    None => {
-                        let item_ids = group.item_ids();
-                        assert_eq!(pats.len(), item_ids.len());
-
-                        for (pat, item_id) in pats.iter().zip(item_ids.iter()) {
-                            self.pattern_match(pat, item_id.inner, module_id)?;
-                        }
-                    }
-                }
-            }
-            PatKind::Wild => {}
-            _ => {
-                println!("{:#?}", pat);
-                return Err(
-                    SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span).into()
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn slice_pattern_match(
-        &mut self,
-        node_out_id: NodeOutId,
-        width: u128,
-        sig_ty: SignalTy,
-        pat: &[Pat<'tcx>],
-        start: Option<u128>,
-    ) -> Result<(), Error> {
-        if pat.is_empty() {
-            return Ok(());
-        }
-
-        let module_id = node_out_id.node_id().module_id();
-        let splitter = Splitter::new(
-            node_out_id,
-            (0 .. pat.len()).map(|_| {
-                (
-                    PrimTy::BitVec(width),
-                    self.idents.for_module(module_id).tmp(),
-                )
-            }),
-            start,
-        );
-        let node_id = self.net_list.add_node(module_id, splitter);
-
-        let outputs = self.net_list[node_id].outputs();
-        assert_eq!(outputs.len(), pat.len());
-
-        let node_out_ids = outputs
-            .items()
-            .map(|out| out.node_out_id(node_id))
-            .collect::<Vec<_>>();
-
-        for (node_out_id, before_pat) in node_out_ids.into_iter().zip(pat) {
-            let from = self.from_bitvec(module_id, node_out_id, sig_ty);
-            self.pattern_match(before_pat, from, module_id)?;
-        }
-
-        Ok(())
-    }
-
     fn make_input(
         &mut self,
         input: &HirTy<'tcx>,
@@ -314,7 +188,7 @@ impl<'tcx> Generator<'tcx> {
                     )?
                     .struct_ty();
 
-                self.make_tuple_group(tuple_ty, ty.iter(), |generator, ty| {
+                self.make_struct_group(tuple_ty, ty.iter(), |generator, ty| {
                     generator.make_input(ty, ctx, is_dummy)
                 })
             }
@@ -350,12 +224,22 @@ impl<'tcx> Generator<'tcx> {
             SignalTy::Struct(ty) => self
                 .make_struct_group(
                     ty,
-                    ty.tys().map(|ty| (ty.name, ty.inner)),
+                    ty.tys().iter().map(|ty| ty.inner),
                     |generator, ty| {
                         Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
                     },
                 )
                 .unwrap(),
+            SignalTy::Enum(ty) => {
+                let input =
+                    InputNode::new(ty.prim_ty(), self.idents.for_module(module_id).tmp());
+                (if is_dummy {
+                    self.net_list.add_dummy_node(module_id, input)
+                } else {
+                    self.net_list.add_node(module_id, input)
+                })
+                .into()
+            }
         }
     }
 

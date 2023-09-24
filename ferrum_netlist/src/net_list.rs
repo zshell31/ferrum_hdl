@@ -7,7 +7,7 @@ use fnv::FnvBuildHasher;
 use indexmap::IndexSet;
 
 use crate::{
-    group_list::ItemId,
+    group::ItemId,
     node::{InputNode, IsNode, Node, NodeOutput},
     params::{Inputs, Outputs},
     symbol::Symbol,
@@ -73,14 +73,14 @@ impl Index<NodeOutId> for Module {
 
     fn index(&self, index: NodeOutId) -> &Self::Output {
         let node = &self[index.node_id()];
-        node.outputs().by_ind(index.1)
+        node.outputs().by_ind(index.1).out
     }
 }
 
 impl IndexMut<NodeOutId> for Module {
     fn index_mut(&mut self, index: NodeOutId) -> &mut Self::Output {
         let node = &mut self[index.node_id()];
-        node.outputs_mut().by_ind_mut(index.1)
+        node.outputs_mut().by_ind_mut(index.1).out
     }
 }
 
@@ -214,14 +214,14 @@ impl Index<NodeOutId> for NetList {
 
     fn index(&self, index: NodeOutId) -> &Self::Output {
         let node = &self[index.0];
-        node.outputs().by_ind(index.1)
+        node.outputs().by_ind(index.1).out
     }
 }
 
 impl IndexMut<NodeOutId> for NetList {
     fn index_mut(&mut self, index: NodeOutId) -> &mut Self::Output {
         let node = &mut self[index.0];
-        node.outputs_mut().by_ind_mut(index.1)
+        node.outputs_mut().by_ind_mut(index.1).out
     }
 }
 

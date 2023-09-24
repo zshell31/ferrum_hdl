@@ -85,23 +85,23 @@ impl Inputs for [NodeOutId] {
 #[derive(Debug)]
 pub struct NodeOutWithId<'a> {
     pub out: &'a NodeOutput,
-    pub id: OutId,
+    pub ind: OutId,
 }
 
 impl<'a> NodeOutWithId<'a> {
     pub fn node_out_id(&self, node_id: NodeId) -> NodeOutId {
-        NodeOutId::new(node_id, self.id)
+        NodeOutId::new(node_id, self.ind)
     }
 }
 
 pub struct NodeOutWithIdMut<'a> {
     pub out: &'a mut NodeOutput,
-    pub id: OutId,
+    pub ind: OutId,
 }
 
 impl<'a> NodeOutWithIdMut<'a> {
     pub fn node_out_id(&self, node_id: NodeId) -> NodeOutId {
-        NodeOutId::new(node_id, self.id)
+        NodeOutId::new(node_id, self.ind)
     }
 }
 
@@ -111,26 +111,20 @@ pub trait Outputs {
 
     fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_;
 
-    fn by_ind(&self, out: OutId) -> &NodeOutput;
+    fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_>;
 
-    fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput;
+    fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_>;
 
     fn len(&self) -> usize;
 
     fn only_one(&self) -> NodeOutWithId<'_> {
         assert_eq!(self.len(), 1);
-        NodeOutWithId {
-            out: self.by_ind(0),
-            id: 0,
-        }
+        self.by_ind(0)
     }
 
     fn only_one_mut(&mut self) -> NodeOutWithIdMut<'_> {
         assert_eq!(self.len(), 1);
-        NodeOutWithIdMut {
-            out: self.by_ind_mut(0),
-            id: 0,
-        }
+        self.by_ind_mut(0)
     }
 }
 
@@ -149,11 +143,11 @@ impl Outputs for () {
         iter::empty()
     }
 
-    fn by_ind(&self, _out: OutId) -> &NodeOutput {
+    fn by_ind(&self, _ind: OutId) -> NodeOutWithId<'_> {
         panic!("no outputs")
     }
 
-    fn by_ind_mut(&mut self, _out: OutId) -> &mut NodeOutput {
+    fn by_ind_mut(&mut self, _ind: OutId) -> NodeOutWithIdMut<'_> {
         panic!("no outputs")
     }
 
@@ -167,9 +161,9 @@ impl Outputs for NodeOutput {
         [self]
             .into_iter()
             .enumerate()
-            .map(move |(id, out)| NodeOutWithId {
+            .map(move |(ind, out)| NodeOutWithId {
                 out,
-                id: id as OutId,
+                ind: ind as OutId,
             })
     }
 
@@ -177,23 +171,23 @@ impl Outputs for NodeOutput {
         [self]
             .into_iter()
             .enumerate()
-            .map(move |(id, out)| NodeOutWithIdMut {
+            .map(move |(ind, out)| NodeOutWithIdMut {
                 out,
-                id: id as OutId,
+                ind: ind as OutId,
             })
     }
 
-    fn by_ind(&self, out: OutId) -> &NodeOutput {
-        match out {
-            0 => self,
-            _ => no_output!(out),
+    fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_> {
+        match ind {
+            0 => NodeOutWithId { out: self, ind },
+            _ => no_output!(ind),
         }
     }
 
-    fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
-        match out {
-            0 => self,
-            _ => no_output!(out),
+    fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_> {
+        match ind {
+            0 => NodeOutWithIdMut { out: self, ind },
+            _ => no_output!(ind),
         }
     }
 
@@ -217,17 +211,17 @@ impl Outputs for Option<NodeOutput> {
         }
     }
 
-    fn by_ind(&self, out: OutId) -> &NodeOutput {
+    fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_> {
         match self {
-            Some(output) => output.by_ind(out),
-            None => no_output!(out),
+            Some(output) => output.by_ind(ind),
+            None => no_output!(ind),
         }
     }
 
-    fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
+    fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_> {
         match self {
-            Some(output) => output.by_ind_mut(out),
-            None => no_output!(out),
+            Some(output) => output.by_ind_mut(ind),
+            None => no_output!(ind),
         }
     }
 
@@ -241,32 +235,40 @@ impl Outputs for Option<NodeOutput> {
 
 impl Outputs for [NodeOutput] {
     fn items(&self) -> impl Iterator<Item = NodeOutWithId<'_>> + '_ {
-        self.iter().enumerate().map(move |(id, out)| NodeOutWithId {
-            out,
-            id: id as OutId,
-        })
+        self.iter()
+            .enumerate()
+            .map(move |(ind, out)| NodeOutWithId {
+                out,
+                ind: ind as OutId,
+            })
     }
 
     fn items_mut(&mut self) -> impl Iterator<Item = NodeOutWithIdMut<'_>> + '_ {
         self.iter_mut()
             .enumerate()
-            .map(move |(id, out)| NodeOutWithIdMut {
+            .map(move |(ind, out)| NodeOutWithIdMut {
                 out,
-                id: id as OutId,
+                ind: ind as OutId,
             })
     }
 
-    fn by_ind(&self, out: OutId) -> &NodeOutput {
-        match out {
-            n if n < self.len() => &self[out],
-            _ => no_output!(out),
+    fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_> {
+        match ind {
+            n if n < self.len() => NodeOutWithId {
+                out: &self[ind],
+                ind,
+            },
+            _ => no_output!(ind),
         }
     }
 
-    fn by_ind_mut(&mut self, out: OutId) -> &mut NodeOutput {
-        match out {
-            n if n < self.len() => &mut self[out],
-            _ => no_output!(out),
+    fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_> {
+        match ind {
+            n if n < self.len() => NodeOutWithIdMut {
+                out: &mut self[ind],
+                ind,
+            },
+            _ => no_output!(ind),
         }
     }
 

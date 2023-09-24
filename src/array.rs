@@ -89,11 +89,10 @@ where
         assert!(width * N <= 128);
 
         let mut bitvec: BitVecInner = 0;
-        let mut offset = 0;
 
         for item in &self.0 {
-            bitvec |= item.pack().inner() << offset;
-            offset += width;
+            bitvec <<= width;
+            bitvec |= item.pack().inner();
         }
 
         bitvec.into()
@@ -103,13 +102,13 @@ where
         let width = T::BITS;
         assert!(width * N <= 128);
         let mask = (1 << width) - 1;
-        let mut offset = 0;
+        let mut offset = (N - 1) * width;
 
         let vec = (0 .. N)
             .map(|_| {
                 let slice =
                     BitVec::<{ T::BITS }>::from((bitvec.inner() >> offset) & mask);
-                offset += width;
+                offset = offset.saturating_sub(width);
                 T::unpack(slice)
             })
             .collect::<SmallVec<[T; 8]>>();
@@ -308,7 +307,7 @@ mod tests {
         let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]].cast_inner();
 
         assert_eq!(<Array<3, Array<2, Bit>> as BitSize>::BITS, 6);
-        assert_eq!(s.pack(), BitVec::<6>::from(0b101100));
+        assert_eq!(s.pack(), BitVec::<6>::from(0b001101));
     }
 
     #[test]
@@ -318,7 +317,7 @@ mod tests {
 
         assert_eq!(
             s,
-            [[H, L], [H, H], [L, L]].cast::<Array<3, Array<2, Bit>>>()
+            [[L, L], [H, H], [L, H]].cast::<Array<3, Array<2, Bit>>>()
         );
     }
 }

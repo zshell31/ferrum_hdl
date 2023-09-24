@@ -1,23 +1,27 @@
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::{
+    collections::hash_map::Entry,
+    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+};
 
 use ferrum_netlist::{
-    group_list::ItemId,
+    group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, ConstNode, InputNode, IsNode, ModInst, Mux2Node, Node,
-        NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, Case, ConstNode, InputNode, IsNode, ModInst, Mux2Node,
+        Node, NotNode, PassNode, Splitter,
     },
     params::Outputs,
-    sig_ty::{ArrayTy, PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy},
     symbol::Symbol,
 };
 use rustc_ast::LitKind;
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::{
-    def::{DefKind, Res},
+    def::{CtorOf, DefKind, Res},
     def_id::{DefId, LocalDefId},
-    Expr, ExprKind, Node as HirNode, Path, QPath, StmtKind, UnOp,
+    Expr, ExprKind, Node as HirNode, PatKind, Path, QPath, StmtKind, UnOp,
 };
-use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, ParamEnv, UnevaluatedConst};
+use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, Ty};
 use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
 
@@ -32,6 +36,7 @@ use crate::{
 };
 
 static IDENT: AtomicU8 = AtomicU8::new(0);
+static MOST_INNER_ERR_SCOPE: AtomicBool = AtomicBool::new(false);
 
 struct Scope<'tcx> {
     module: Symbol,
@@ -70,6 +75,12 @@ impl<'tcx> Scope<'tcx> {
             self.module,
             self.generic_args
         );
+    }
+
+    fn inner_most_error(&self, f: impl FnOnce()) {
+        if !MOST_INNER_ERR_SCOPE.swap(true, Ordering::Relaxed) {
+            f();
+        }
     }
 
     fn to_str(kind: &'tcx ExprKind<'tcx>) -> &'static str {
@@ -172,9 +183,7 @@ impl<'tcx> Generator<'tcx> {
 
                 self.make_struct_group(
                     ty,
-                    ty.tys()
-                        .zip(sub_exprs)
-                        .map(|(ty, sub_expr)| (ty.name, sub_expr)),
+                    ty.tys().iter().zip(sub_exprs).map(|(_, sub_expr)| sub_expr),
                     |generator, sub_expr| generator.evaluate_expr(sub_expr, ctx),
                 )
             }
@@ -222,7 +231,7 @@ impl<'tcx> Generator<'tcx> {
             SignalTy::Struct(ty) => self
                 .make_struct_group(
                     ty,
-                    ty.tys().map(|ty| (ty.name, ty.inner)),
+                    ty.tys().iter().map(|ty| ty.inner),
                     |generator, sig_ty| {
                         Ok(generator.make_dummy_inputs_from_sig_ty_inner(
                             sig_ty,
@@ -232,7 +241,14 @@ impl<'tcx> Generator<'tcx> {
                     },
                 )
                 .unwrap(),
-            // SignalTy::Enum(ty) => todo!(),
+            SignalTy::Enum(ty) => {
+                let dummy_input = self.net_list.add_dummy_node(
+                    module_id,
+                    InputNode::new(ty.prim_ty(), self.idents.for_module(module_id).tmp()),
+                );
+                dummy_inputs.push(dummy_input);
+                dummy_input.into()
+            }
         }
     }
 
@@ -409,25 +425,57 @@ impl<'tcx> Generator<'tcx> {
                                 ..
                             },
                         ) => self.make_struct_group_from_exprs(expr, args, ctx),
-                        QPath::Resolved(_, Path { span, res, .. })
-                            if res.opt_def_id().is_some() =>
-                        {
-                            let fn_id = res.def_id();
-                            if fn_id.is_local() {
+                        QPath::Resolved(
+                            _,
+                            Path {
+                                span,
+                                res: Res::Def(DefKind::Fn, fn_did),
+                                ..
+                            },
+                        ) => {
+                            if fn_did.is_local() {
                                 let fn_ty = self.node_type(fn_item.hir_id, ctx);
                                 let generic_args = utils::subst(fn_ty);
 
                                 self.evaluate_fn_call(
-                                    fn_id.expect_local(),
+                                    fn_did.expect_local(),
                                     generic_args,
                                     args.iter().map(Into::into),
                                     ctx,
                                 )
                             } else {
                                 let blackbox =
-                                    self.find_blackbox(fn_id, ctx.generic_args, *span)?;
+                                    self.find_blackbox(*fn_did, ctx.generic_args, *span)?;
                                 blackbox.evaluate_expr(self, expr, ctx)
                             }
+                        }
+                        QPath::Resolved(
+                            _,
+                            Path {
+                                res:
+                                    Res::Def(
+                                        DefKind::Ctor(CtorOf::Variant, _),
+                                        variant_ctor_did,
+                                    ),
+                                ..
+                            },
+                        ) if variant_ctor_did.is_local() => self
+                            .evaluate_enum_variant_ctor(
+                                *variant_ctor_did,
+                                ty,
+                                ctx,
+                                args,
+                                expr.span,
+                            ),
+                        QPath::Resolved(
+                            _,
+                            Path {
+                                res:
+                                    Res::Def(DefKind::Ctor(CtorOf::Struct, _), struct_did),
+                                ..
+                            },
+                        ) if struct_did.is_local() => {
+                            self.make_struct_group_from_exprs(expr, args, ctx)
                         }
                         QPath::TypeRelative(_, _) => {
                             let fn_ty = self.node_type(fn_item.hir_id, ctx);
@@ -458,7 +506,6 @@ impl<'tcx> Generator<'tcx> {
                             }
                         }
                         _ => {
-                            println!("{:#?}", expr);
                             Err(SpanError::new(SpanErrorKind::NotSynthCall, fn_item.span)
                                 .into())
                         }
@@ -494,13 +541,9 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::Field(expr, ident) => {
                 let group = self.evaluate_expr(expr, ctx)?.group();
 
-                let res = group.by_field(ident.as_str()).ok_or_else(|| {
+                group.by_field(ident.as_str()).ok_or_else(|| {
                     SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()
-                });
-                if res.is_err() {
-                    println!("field: {}", ident);
-                }
-                res
+                })
             }
             ExprKind::If(cond, if_block, else_block) => {
                 let sig_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
@@ -543,11 +586,11 @@ impl<'tcx> Generator<'tcx> {
                 },
                 span,
             ) => {
-                let ArrayTy(_, sig_ty) = self
+                let array_ty = self
                     .find_sig_ty(ty, ctx.generic_args, expr.span)?
                     .opt_array_ty()
                     .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedArray, span))?;
-                let width = sig_ty.width();
+                let width = array_ty.item_ty().width();
 
                 let expr = self.evaluate_expr(expr, ctx)?;
 
@@ -561,6 +604,7 @@ impl<'tcx> Generator<'tcx> {
                                 bit_vec,
                                 [(ty, generator.idents.for_module(ctx.module_id).tmp())],
                                 Some(start),
+                                true,
                             ),
                         ),
                         ty.into(),
@@ -578,6 +622,78 @@ impl<'tcx> Generator<'tcx> {
                         ConstNode::new(
                             prim_ty,
                             value,
+                            self.idents.for_module(ctx.module_id).tmp(),
+                        ),
+                    )
+                    .into())
+            }
+            ExprKind::Match(sel, arms, _) => {
+                let expr_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+
+                let sel_sig_ty = self.find_sig_ty(
+                    self.node_type(sel.hir_id, ctx),
+                    ctx.generic_args,
+                    sel.span,
+                )?;
+                let enum_ty = sel_sig_ty.opt_enum_ty().ok_or_else(|| {
+                    SpanError::new(SpanErrorKind::ExpectedEnumType, expr.span)
+                })?;
+
+                let sel = self.evaluate_expr(sel, ctx)?.node_id();
+
+                let mut variants_map = FxHashMap::default();
+                let mut default = None;
+                let mut inputs = SmallVec::<[_; 8]>::new();
+                for arm in arms {
+                    if arm.guard.is_some() {
+                        return Err(SpanError::new(
+                            SpanErrorKind::UnsupportedGuard,
+                            arm.span,
+                        )
+                        .into());
+                    }
+                    if let PatKind::Wild = arm.pat.kind {
+                        let item_id = self.evaluate_expr(arm.body, ctx)?;
+                        let node_out_id = self.maybe_to_bitvec(ctx.module_id, item_id);
+                        default = Some(node_out_id);
+
+                        continue;
+                    }
+
+                    let (variant_def, variant_idx) =
+                        self.pattern_to_variant_def(arm.pat)?;
+                    let def_id = variant_def.def_id;
+
+                    if let Entry::Vacant(e) = variants_map.entry(def_id) {
+                        let variant = self.enum_variant_from_bitvec(
+                            ctx.module_id,
+                            sel,
+                            enum_ty,
+                            variant_idx,
+                        );
+                        e.insert(variant);
+                    }
+
+                    let variant = *variants_map.get(&def_id).unwrap();
+                    self.pattern_match(arm.pat, variant, ctx.module_id)?;
+
+                    let item_id = self.evaluate_expr(arm.body, ctx)?;
+                    let discr =
+                        self.pattern_to_bitvec(arm.pat, sel_sig_ty, ctx.generic_args)?;
+                    let node_out_id = self.maybe_to_bitvec(ctx.module_id, item_id);
+
+                    inputs.push((discr, node_out_id));
+                }
+
+                Ok(self
+                    .net_list
+                    .add_node(
+                        ctx.module_id,
+                        Case::new(
+                            expr_ty.maybe_to_bitvec(),
+                            self.net_list[sel].outputs().only_one().node_out_id(sel),
+                            inputs,
+                            default,
                             self.idents.for_module(ctx.module_id).tmp(),
                         ),
                     )
@@ -646,24 +762,29 @@ impl<'tcx> Generator<'tcx> {
                 }
                 Res::Def(DefKind::Const, def_id) => {
                     if def_id.is_local() {
-                        let (_, generics, body_id) = self
-                            .tcx
-                            .hir()
-                            .expect_item(def_id.expect_local())
-                            .expect_const();
-
-                        if !generics.params.is_empty() {
-                            println!("{:#?}", expr);
-                            return Err(SpanError::new(
-                                SpanErrorKind::NotSynthExpr,
-                                expr.span,
-                            )
-                            .into());
+                        if let Some(const_val) = self.eval_const_val(
+                            *def_id,
+                            ctx.generic_args,
+                            Some(expr.span),
+                        ) {
+                            let sig_ty = self
+                                .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                                .prim_ty();
+                            Ok(self
+                                .net_list
+                                .add_node(
+                                    ctx.module_id,
+                                    ConstNode::new(
+                                        sig_ty,
+                                        const_val,
+                                        self.idents.for_module(ctx.module_id).tmp(),
+                                    ),
+                                )
+                                .into())
+                        } else {
+                            Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span)
+                                .into())
                         }
-
-                        let body = self.tcx.hir().body(body_id);
-
-                        self.evaluate_expr(body.value, ctx)
                     } else {
                         let blackbox =
                             self.find_blackbox(*def_id, ctx.generic_args, expr.span)?;
@@ -696,10 +817,18 @@ impl<'tcx> Generator<'tcx> {
                         )
                         .into())
                 }
-                _ => {
-                    println!("{:#?}", expr);
-                    Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
+                Res::Def(DefKind::Ctor(CtorOf::Variant, ..), variant_ctor_did)
+                    if variant_ctor_did.is_local() =>
+                {
+                    self.evaluate_enum_variant_ctor(
+                        *variant_ctor_did,
+                        ty,
+                        ctx,
+                        &[],
+                        expr.span,
+                    )
                 }
+                _ => Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()),
             },
             ExprKind::Path(qpath @ QPath::TypeRelative(rel_ty, _)) => {
                 let ty = self.node_type(expr.hir_id, ctx);
@@ -718,51 +847,70 @@ impl<'tcx> Generator<'tcx> {
                                 self.tcx,
                                 self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
                             );
-                            if let Ok(Some(val_tree)) =
-                                self.tcx.const_eval_resolve_for_typeck(
-                                    ParamEnv::reveal_all(),
-                                    UnevaluatedConst::new(def_id, utils::subst(rel_ty)),
-                                    Some(expr.span),
-                                )
-                            {
-                                if let Some(cons) = utils::eval_val_tree(val_tree) {
-                                    let sig_ty = self.find_sig_ty(
-                                        ty,
-                                        ctx.generic_args,
-                                        expr.span,
-                                    )?;
-                                    return Ok(self
-                                        .net_list
-                                        .add_node(
-                                            ctx.module_id,
-                                            ConstNode::new(
-                                                sig_ty.prim_ty(),
-                                                cons,
-                                                self.idents
-                                                    .for_module(ctx.module_id)
-                                                    .tmp(),
-                                            ),
-                                        )
-                                        .into());
-                                }
+
+                            if let Some(const_val) = self.eval_const_val(
+                                def_id,
+                                utils::subst(rel_ty),
+                                Some(expr.span),
+                            ) {
+                                let sig_ty =
+                                    self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+                                return Ok(self
+                                    .net_list
+                                    .add_node(
+                                        ctx.module_id,
+                                        ConstNode::new(
+                                            sig_ty.prim_ty(),
+                                            const_val,
+                                            self.idents.for_module(ctx.module_id).tmp(),
+                                        ),
+                                    )
+                                    .into());
                             }
                         }
                     }
-                    println!("{:#?}", expr);
                     Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
                 }
             }
-            ExprKind::Struct(_, fields, ..) => self.make_struct_group_from_exprs(
-                expr,
-                fields.iter().map(|field| field.expr),
+            ExprKind::Struct(
+                QPath::Resolved(
+                    _,
+                    Path {
+                        res: Res::Def(DefKind::Struct, struct_did),
+                        ..
+                    },
+                ),
+                fields,
+                base,
+            ) if struct_did.is_local() && base.is_none() => self
+                .make_struct_group_from_exprs(
+                    expr,
+                    fields.iter().map(|field| field.expr),
+                    ctx,
+                ),
+            ExprKind::Struct(
+                QPath::Resolved(
+                    _,
+                    Path {
+                        res: Res::Def(DefKind::Variant, variant_did),
+                        ..
+                    },
+                ),
+                fields,
+                base,
+            ) if variant_did.is_local() && base.is_none() => self.evaluate_enum_variant(
+                *variant_did,
+                ty,
                 ctx,
+                fields.iter().map(|field| field.expr),
+                expr.span,
             ),
             ExprKind::Tup(exprs) => {
                 let struct_ty = self
                     .find_sig_ty(ty, ctx.generic_args, expr.span)?
                     .struct_ty();
 
-                self.make_tuple_group(struct_ty, exprs.iter(), |generator, expr| {
+                self.make_struct_group(struct_ty, exprs.iter(), |generator, expr| {
                     generator.evaluate_expr(expr, ctx)
                 })
             }
@@ -783,14 +931,15 @@ impl<'tcx> Generator<'tcx> {
                 })
                 .into())
             }
-            _ => {
-                println!("{:#?}", expr);
-                Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
-            }
+            _ => Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()),
         };
 
         if res.is_ok() {
             scope.exit();
+        } else {
+            scope.inner_most_error(|| {
+                println!("{:#?}", expr);
+            });
         }
 
         res
@@ -1189,5 +1338,48 @@ impl<'tcx> Generator<'tcx> {
         let module_id = self.evaluated_modules.get(&mono_item).unwrap();
 
         self.instantiate_module(*module_id, self_arg, args, ctx)
+    }
+
+    fn evaluate_enum_variant_ctor(
+        &mut self,
+        variant_ctor_did: DefId,
+        ty: Ty<'tcx>,
+        ctx: &EvalContext<'tcx>,
+        args: &'tcx [Expr<'tcx>],
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let variant_did = self.tcx.parent(variant_ctor_did);
+        self.evaluate_enum_variant(variant_did, ty, ctx, args, span)
+    }
+
+    fn evaluate_enum_variant(
+        &mut self,
+        variant_did: DefId,
+        ty: Ty<'tcx>,
+        ctx: &EvalContext<'tcx>,
+        fields: impl IntoIterator<Item = &'tcx Expr<'tcx>>,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let sig_ty = self.find_sig_ty(ty, ctx.generic_args, span)?;
+        let enum_ty = sig_ty.enum_ty();
+
+        let enum_did = self.tcx.parent(variant_did);
+        let variant_idx = self
+            .tcx
+            .adt_def(enum_did)
+            .variant_index_with_id(variant_did)
+            .as_usize();
+
+        let sig_ty = enum_ty.variant(variant_idx);
+        let struct_ty = sig_ty
+            .inner
+            .opt_struct_ty()
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedStructType, span))?;
+
+        let group = self.make_struct_group(struct_ty, fields, |generator, field| {
+            generator.evaluate_expr(field, ctx)
+        })?;
+
+        Ok(self.enum_variant_to_bitvec(ctx.module_id, enum_ty, variant_idx, group))
     }
 }

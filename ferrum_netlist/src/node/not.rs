@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ impl NotNode {
     }
 }
 
-impl From<NotNode> for Node {
+impl From<NotNode> for NodeKind {
     fn from(node: NotNode) -> Self {
         Self::Not(node)
     }

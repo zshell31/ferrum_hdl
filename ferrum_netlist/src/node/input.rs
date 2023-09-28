@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ impl InputNode {
     }
 }
 
-impl From<InputNode> for Node {
+impl From<InputNode> for NodeKind {
     fn from(node: InputNode) -> Self {
         Self::Input(node)
     }

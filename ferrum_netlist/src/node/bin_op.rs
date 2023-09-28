@@ -1,6 +1,6 @@
 use std::fmt::{self, Display};
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
@@ -77,7 +77,7 @@ impl BinOpNode {
     }
 }
 
-impl From<BinOpNode> for Node {
+impl From<BinOpNode> for NodeKind {
     fn from(node: BinOpNode) -> Self {
         Self::BinOp(node)
     }

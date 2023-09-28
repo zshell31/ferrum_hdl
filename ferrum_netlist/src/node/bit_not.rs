@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ impl BitNotNode {
     }
 }
 
-impl From<BitNotNode> for Node {
+impl From<BitNotNode> for NodeKind {
     fn from(node: BitNotNode) -> Self {
         Self::BitNot(node)
     }

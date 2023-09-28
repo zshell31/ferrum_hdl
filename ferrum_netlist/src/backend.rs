@@ -8,7 +8,7 @@ use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
         BinOpNode, BitNotNode, BitVecMask, BitVecTrans, Case, ConstNode, DFFNode, Expr,
-        IsNode, LoopStart, Merger, ModInst, Mux2Node, Node, NodeOutput, NotNode,
+        IsNode, LoopStart, Merger, ModInst, Mux2Node, NodeKind, NodeOutput, NotNode,
         PassNode, Splitter,
     },
     params::Outputs,
@@ -75,7 +75,7 @@ impl<'n> Verilog<'n> {
     fn inject_const(&mut self, node_out_id: NodeOutId) {
         let node = &self.net_list[node_out_id.node_id()];
 
-        if let Node::Const(ConstNode {
+        if let NodeKind::Const(ConstNode {
             value,
             skip: true,
             output,
@@ -192,8 +192,8 @@ impl<'n> Visitor for Verilog<'n> {
         let node = &self.net_list[node_id];
 
         match node {
-            Node::DummyInput(_) | Node::Input(_) => {}
-            Node::ModInst(ModInst {
+            NodeKind::DummyInput(_) | NodeKind::Input(_) => {}
+            NodeKind::ModInst(ModInst {
                 name,
                 module_id,
                 inputs,
@@ -247,7 +247,7 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_str(");\n\n");
             }
-            Node::LoopStart(LoopStart {
+            NodeKind::LoopStart(LoopStart {
                 genvar,
                 count,
                 output,
@@ -265,7 +265,7 @@ for ({genvar} = 0; {genvar} < {count}; {genvar} = {genvar} + 1) begin
                 ));
                 self.buffer.push_tab();
             }
-            Node::LoopEnd(_) => {
+            NodeKind::LoopEnd(_) => {
                 self.buffer.pop_tab();
                 self.buffer.write_template(format_args!(
                     r#"
@@ -274,7 +274,7 @@ endgenerate
                 "#,
                 ));
             }
-            Node::Expr(Expr {
+            NodeKind::Expr(Expr {
                 input,
                 output,
                 skip_output_def,
@@ -288,7 +288,7 @@ endgenerate
 
                 expr(&mut self.buffer, input, output);
             }
-            Node::Pass(PassNode {
+            NodeKind::Pass(PassNode {
                 inject,
                 input,
                 output,
@@ -302,7 +302,7 @@ endgenerate
                         .write_template(format_args!("assign {output} = {input};"));
                 }
             }
-            Node::Const(ConstNode {
+            NodeKind::Const(ConstNode {
                 value,
                 output,
                 skip,
@@ -315,7 +315,7 @@ endgenerate
                         .write_template(format_args!("assign {output} = {value};"));
                 }
             }
-            Node::Splitter(Splitter {
+            NodeKind::Splitter(Splitter {
                 input,
                 outputs,
                 start,
@@ -370,7 +370,7 @@ endgenerate
                     }
                 }
             }
-            Node::Merger(Merger {
+            NodeKind::Merger(Merger {
                 inputs,
                 output,
                 rev,
@@ -401,7 +401,7 @@ endgenerate
                 self.buffer.write_tab();
                 self.buffer.write_str("};\n\n");
             }
-            Node::Case(Case {
+            NodeKind::Case(Case {
                 inputs: (sel, inputs, default),
                 output,
             }) => {
@@ -501,7 +501,7 @@ endgenerate
                     self.buffer.write_str("end\n\n");
                 }
             }
-            Node::BitVecTrans(BitVecTrans {
+            NodeKind::BitVecTrans(BitVecTrans {
                 input,
                 output,
                 trans,
@@ -512,7 +512,7 @@ endgenerate
 
                 trans(self, input, output);
             }
-            Node::BitNot(BitNotNode { input, output }) => {
+            NodeKind::BitNot(BitNotNode { input, output }) => {
                 self.write_local(output, None);
                 let input = self.net_list[*input].sym;
                 let output = output.sym;
@@ -520,7 +520,7 @@ endgenerate
                 self.buffer
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
-            Node::Not(NotNode { input, output }) => {
+            NodeKind::Not(NotNode { input, output }) => {
                 self.write_local(output, None);
                 let input = self.net_list[*input].sym;
                 let output = output.sym;
@@ -528,7 +528,7 @@ endgenerate
                 self.buffer
                     .write_template(format_args!("assign {output} = !{input};",));
             }
-            Node::BinOp(BinOpNode {
+            NodeKind::BinOp(BinOpNode {
                 bin_op,
                 inputs: (input1, input2),
                 output,
@@ -547,7 +547,7 @@ endgenerate
 
                 self.buffer.write_str(";\n\n");
             }
-            Node::Mux2(Mux2Node {
+            NodeKind::Mux2(Mux2Node {
                 inputs: (sel, (input1, input2)),
                 output,
             }) => {
@@ -571,7 +571,7 @@ end
 "
                 ));
             }
-            Node::DFF(DFFNode {
+            NodeKind::DFF(DFFNode {
                 inputs: (clk, data, rst, en),
                 output,
                 rst_val,

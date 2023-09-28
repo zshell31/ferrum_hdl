@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -30,7 +30,7 @@ impl DFFNode {
     }
 }
 
-impl From<DFFNode> for Node {
+impl From<DFFNode> for NodeKind {
     fn from(node: DFFNode) -> Self {
         Self::DFF(node)
     }

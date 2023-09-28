@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl PassNode {
     }
 }
 
-impl From<PassNode> for Node {
+impl From<PassNode> for NodeKind {
     fn from(node: PassNode) -> Self {
         Self::Pass(node)
     }

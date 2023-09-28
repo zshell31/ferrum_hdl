@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::with_arena,
     net_kind::NetKind,
@@ -39,7 +39,7 @@ impl ModInst {
     }
 }
 
-impl From<ModInst> for Node {
+impl From<ModInst> for NodeKind {
     fn from(node: ModInst) -> Self {
         Self::ModInst(node)
     }

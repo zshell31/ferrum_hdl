@@ -1,6 +1,6 @@
 use derive_where::derive_where;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     buffer::Buffer, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
     symbol::Symbol,
@@ -38,7 +38,7 @@ impl Expr {
     }
 }
 
-impl From<Expr> for Node {
+impl From<Expr> for NodeKind {
     fn from(node: Expr) -> Self {
         Self::Expr(node)
     }

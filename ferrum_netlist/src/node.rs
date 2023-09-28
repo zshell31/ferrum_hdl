@@ -2,7 +2,7 @@ mod bin_op;
 mod bit_not;
 mod bit_vec_trans;
 mod case;
-mod consta;
+mod cons;
 mod dff;
 mod expr;
 mod input;
@@ -23,7 +23,7 @@ pub use self::{
     bit_not::BitNotNode,
     bit_vec_trans::BitVecTrans,
     case::{BitVecMask, Case},
-    consta::ConstNode,
+    cons::ConstNode,
     dff::DFFNode,
     expr::Expr,
     input::InputNode,
@@ -50,7 +50,7 @@ pub struct NodeOutput {
     pub kind: NetKind,
 }
 
-pub trait IsNode: Into<Node> {
+pub trait IsNode: Into<NodeKind> {
     type Inputs: Inputs + ?Sized;
     type Outputs: Outputs + ?Sized;
 
@@ -66,7 +66,7 @@ macro_rules! define_nodes {
         $( $kind:ident => $node:ident ),+ $(,)?
     ) => {
         #[derive(Debug)]
-        pub enum Node {
+        pub enum NodeKind {
             $(
                 $kind($node),
             )+
@@ -152,7 +152,7 @@ macro_rules! define_nodes {
 
         }
 
-        impl IsNode for Node {
+        impl IsNode for NodeKind {
             type Inputs = NodeInputs;
             type Outputs = NodeOutputs;
 
@@ -173,8 +173,8 @@ macro_rules! define_nodes {
     };
 }
 
-impl !Sync for Node {}
-impl !Send for Node {}
+impl !Sync for NodeKind {}
+impl !Send for NodeKind {}
 
 define_nodes!(
     DummyInput => InputNode,
@@ -196,7 +196,7 @@ define_nodes!(
     DFF => DFFNode,
 );
 
-impl Node {
+impl NodeKind {
     pub fn is_input(&self) -> bool {
         matches!(self, Self::Input(_))
     }
@@ -225,7 +225,7 @@ mod tests {
 
     #[test]
     fn maxsize() {
-        print_mem_size::<Node>();
+        print_mem_size::<NodeKind>();
         print_mem_size::<InputNode>();
         print_mem_size::<ModInst>();
         print_mem_size::<LoopStart>();

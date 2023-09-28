@@ -2,7 +2,7 @@ use std::{fmt::Debug, iter};
 
 use either::Either;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::with_arena, net_kind::NetKind, net_list::NodeOutId, params::Inputs,
     sig_ty::PrimTy, symbol::Symbol,
@@ -87,7 +87,7 @@ impl Case {
     }
 }
 
-impl From<Case> for Node {
+impl From<Case> for NodeKind {
     fn from(node: Case) -> Self {
         Self::Case(node)
     }

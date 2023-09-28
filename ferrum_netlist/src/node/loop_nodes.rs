@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug)]
@@ -30,7 +30,7 @@ impl LoopStart {
     }
 }
 
-impl From<LoopStart> for Node {
+impl From<LoopStart> for NodeKind {
     fn from(node: LoopStart) -> Self {
         Self::LoopStart(node)
     }
@@ -56,7 +56,7 @@ impl IsNode for LoopStart {
 #[derive(Debug)]
 pub struct LoopEnd {}
 
-impl From<LoopEnd> for Node {
+impl From<LoopEnd> for NodeKind {
     fn from(node: LoopEnd) -> Self {
         Self::LoopEnd(node)
     }

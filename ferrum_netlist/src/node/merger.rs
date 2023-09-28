@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::with_arena, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
     symbol::Symbol,
@@ -32,7 +32,7 @@ impl Merger {
     }
 }
 
-impl From<Merger> for Node {
+impl From<Merger> for NodeKind {
     fn from(node: Merger) -> Self {
         Self::Merger(node)
     }

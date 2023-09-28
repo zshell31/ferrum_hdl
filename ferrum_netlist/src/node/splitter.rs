@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::with_arena, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
     symbol::Symbol,
@@ -38,7 +38,7 @@ impl Splitter {
     }
 }
 
-impl From<Splitter> for Node {
+impl From<Splitter> for NodeKind {
     fn from(node: Splitter) -> Self {
         Self::Splitter(node)
     }

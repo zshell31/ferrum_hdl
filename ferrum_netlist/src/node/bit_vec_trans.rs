@@ -1,6 +1,6 @@
 use derive_where::derive_where;
 
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     backend::Verilog, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
     symbol::Symbol,
@@ -35,7 +35,7 @@ impl BitVecTrans {
     }
 }
 
-impl From<BitVecTrans> for Node {
+impl From<BitVecTrans> for NodeKind {
     fn from(node: BitVecTrans) -> Self {
         Self::BitVecTrans(node)
     }

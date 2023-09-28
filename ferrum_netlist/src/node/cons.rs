@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,7 @@ impl ConstNode {
     }
 }
 
-impl From<ConstNode> for Node {
+impl From<ConstNode> for NodeKind {
     fn from(node: ConstNode) -> Self {
         Self::Const(node)
     }

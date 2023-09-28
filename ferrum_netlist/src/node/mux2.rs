@@ -1,4 +1,4 @@
-use super::{IsNode, Node, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_kind::NetKind, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
     symbol::Symbol,
@@ -29,7 +29,7 @@ impl Mux2Node {
     }
 }
 
-impl From<Mux2Node> for Node {
+impl From<Mux2Node> for NodeKind {
     fn from(node: Mux2Node) -> Self {
         Self::Mux2(node)
     }

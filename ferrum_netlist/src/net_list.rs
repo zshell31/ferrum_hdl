@@ -8,7 +8,7 @@ use indexmap::IndexSet;
 
 use crate::{
     group::ItemId,
-    node::{InputNode, IsNode, Node, NodeOutput},
+    node::{InputNode, IsNode, NodeKind, NodeOutput},
     params::{Inputs, Outputs},
     symbol::Symbol,
 };
@@ -47,13 +47,13 @@ type FnvHashMap<K, V> = HashMap<K, V, FnvBuildHasher>;
 pub struct Module {
     pub name: Symbol,
     module_id: ModuleId,
-    nodes: Vec<Node>,
+    nodes: Vec<NodeKind>,
     inputs: FnvIndexSet<NodeId>,
     outputs: FnvIndexSet<NodeOutId>,
 }
 
 impl Index<NodeId> for Module {
-    type Output = Node;
+    type Output = NodeKind;
 
     fn index(&self, index: NodeId) -> &Self::Output {
         assert_eq!(self.module_id, index.module_id());
@@ -98,7 +98,7 @@ impl Module {
     fn add_node<N: IsNode>(&mut self, node: N) -> NodeId {
         let node_id = NodeId(self.module_id, self.nodes.len());
 
-        let node: Node = node.into();
+        let node: NodeKind = node.into();
         if node.is_input() {
             self.inputs.insert(node_id);
         }
@@ -114,7 +114,7 @@ impl Module {
         if old_node.is_input() {
             self.inputs.remove(&node_id);
         }
-        let node: Node = node.into();
+        let node: NodeKind = node.into();
         if node.is_input() {
             self.inputs.insert(node_id);
         }
@@ -194,7 +194,7 @@ impl IndexMut<ModuleId> for NetList {
 }
 
 impl Index<NodeId> for NetList {
-    type Output = Node;
+    type Output = NodeKind;
 
     fn index(&self, index: NodeId) -> &Self::Output {
         let module = &self[index.0];
@@ -243,7 +243,7 @@ impl NetList {
     }
 
     pub fn add_dummy_node(&mut self, module_id: ModuleId, node: InputNode) -> NodeId {
-        let node = Node::DummyInput(node);
+        let node = NodeKind::DummyInput(node);
         self.add_node(module_id, node)
     }
 
@@ -278,7 +278,7 @@ impl NetList {
     pub fn find_node(
         &self,
         node_id: NodeId,
-        f: impl Fn(&Node) -> bool + Copy,
+        f: impl Fn(&NodeKind) -> bool + Copy,
     ) -> Vec<NodeId> {
         let mut res = vec![];
         self.find_node_inner(node_id, f, &mut res);
@@ -288,7 +288,7 @@ impl NetList {
     fn find_node_inner(
         &self,
         node_id: NodeId,
-        f: impl Fn(&Node) -> bool + Copy,
+        f: impl Fn(&NodeKind) -> bool + Copy,
         res: &mut Vec<NodeId>,
     ) {
         let node = &self[node_id];

@@ -4,14 +4,15 @@ use either::Either;
 use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NodeOutId},
-    node::{BitVecMask, IsNode, Splitter},
+    node::{BitVecMask, Splitter},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
 use rustc_hir::{
     def::{DefKind, Res},
-    DotDotPos, Pat, PatKind, Path, QPath,
+    DotDotPos, Pat, PatKind, Path, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
+use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{GenericArgsRef, VariantDef};
 
 use super::Generator;
@@ -33,7 +34,13 @@ impl<'tcx> Generator<'tcx> {
                 match item_id {
                     ItemId::Node(node_id) => {
                         let sym = self.idents.for_module(module_id).ident(ident.as_str());
-                        self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
+
+                        if self.net_list[node_id].is_pass() {
+                            self.propagate_sym_down(node_id, sym)
+                        } else {
+                            self.net_list[node_id].outputs_mut().only_one_mut().out.sym =
+                                sym;
+                        }
                     }
                     ItemId::Group(group) => {
                         for item_id in group.item_ids() {
@@ -84,6 +91,9 @@ impl<'tcx> Generator<'tcx> {
                     Self::zip_tuple_pats_with(pats, dot_dot_pos, group.item_ids())
                         .filter(|(pat, _)| pat.is_some())
                 {
+                    if let ItemId::Node(node_id) = *item_id {
+                        println!("{:?}", self.net_list[node_id]);
+                    }
                     self.pattern_match(pat.unwrap(), *item_id, module_id)?;
                 }
             }
@@ -195,7 +205,8 @@ impl<'tcx> Generator<'tcx> {
                     return Ok(());
                 }
                 _ => {
-                    let (_, variant_idx) = self.pattern_to_variant_def(pat)?;
+                    let (_, variant_idx) =
+                        self.pattern_to_variant_def(pat, generic_args)?;
                     let width = enum_ty.discr_width();
                     bvm.shiftl(width);
                     bvm.set_val(enum_ty.discr_val(variant_idx), width);
@@ -234,10 +245,9 @@ impl<'tcx> Generator<'tcx> {
                     return Ok(());
                 }
 
-                println!("{:#?}", pat);
                 Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
             }
-            PatKind::Struct(QPath::Resolved(..), fields, _) => {
+            PatKind::Struct(_, fields, _) => {
                 let struct_ty = sig_ty.struct_ty();
 
                 for sig_ty in struct_ty.tys() {
@@ -259,7 +269,7 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(())
             }
-            PatKind::TupleStruct(QPath::Resolved(..), pats, dot_dot_pos) => {
+            PatKind::TupleStruct(_, pats, dot_dot_pos) => {
                 let struct_ty = sig_ty.struct_ty();
                 for (pat, sig_ty) in
                     Self::zip_tuple_pats_with(pats, dot_dot_pos, struct_ty.tys())
@@ -278,10 +288,7 @@ impl<'tcx> Generator<'tcx> {
                 }
                 Ok(())
             }
-            _ => {
-                println!("{:#?}", pat);
-                Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
-            }
+            _ => Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into()),
         };
 
         if res.is_ok() {
@@ -289,6 +296,8 @@ impl<'tcx> Generator<'tcx> {
                 bvm.shiftl(offset);
                 bvm.set_mask(offset);
             }
+        } else {
+            println!("{:#?}", pat);
         }
 
         res
@@ -297,6 +306,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn pattern_to_variant_def(
         &self,
         pat: &Pat<'tcx>,
+        generic_args: GenericArgsRef<'tcx>,
     ) -> Result<(&'tcx VariantDef, usize), Error> {
         let variant_def = match pat.kind {
             PatKind::Path(QPath::Resolved(_, path))
@@ -304,17 +314,63 @@ impl<'tcx> Generator<'tcx> {
             | PatKind::Struct(QPath::Resolved(_, path), ..) => {
                 Ok(self.tcx.expect_variant_res(path.res))
             }
-            _ => {
-                println!("{:#?}", pat);
-                Err(SpanError::new(SpanErrorKind::ExpectedEnumVariant, pat.span).into())
+            PatKind::TupleStruct(
+                QPath::TypeRelative(
+                    qself @ HirTy {
+                        kind:
+                            HirTyKind::Path(QPath::Resolved(
+                                _,
+                                Path {
+                                    res: Res::SelfTyAlias { alias_to, .. },
+                                    ..
+                                },
+                            )),
+                        ..
+                    },
+                    assoc_segment,
+                ),
+                ..,
+            ) => {
+                let ty = self
+                    .tcx
+                    .type_of(alias_to)
+                    .instantiate(self.tcx, generic_args);
+                let item_ctx = &ItemCtxt::new(self.tcx, pat.hir_id.owner.def_id);
+                let astconv = item_ctx.astconv();
+                if let Ok((_, _, variant_did)) = astconv.associated_path_to_ty(
+                    pat.hir_id,
+                    pat.span,
+                    ty,
+                    qself,
+                    assoc_segment,
+                    true,
+                ) {
+                    Ok(self
+                        .tcx
+                        .adt_def(self.tcx.parent(variant_did))
+                        .variant_with_id(variant_did))
+                } else {
+                    Err(SpanError::new(SpanErrorKind::ExpectedEnumVariant, pat.span)
+                        .into())
+                }
+                // let adt_def = self.tcx.adt_def(alias_to);
+                // if let TyKind::Adt(adt, _) = ty.kind() {
+                //     println!("{:#?}", self.tcx.adt_def(adt.did()).variants());
+                // }
             }
+            _ => Err(SpanError::new(SpanErrorKind::ExpectedEnumVariant, pat.span).into()),
         };
 
-        variant_def.map(|variant_def| {
-            let adt = self.tcx.adt_def(self.tcx.parent(variant_def.def_id));
-            let idx = adt.variant_index_with_id(variant_def.def_id);
+        variant_def
+            .map(|variant_def| {
+                let adt = self.tcx.adt_def(self.tcx.parent(variant_def.def_id));
+                let idx = adt.variant_index_with_id(variant_def.def_id);
 
-            (variant_def, idx.as_usize())
-        })
+                (variant_def, idx.as_usize())
+            })
+            .map_err(|e| {
+                println!("{:#?}", pat);
+                e
+            })
     }
 }

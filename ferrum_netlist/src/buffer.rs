@@ -68,10 +68,10 @@ impl Buffer {
     pub fn intersperse<T>(
         &mut self,
         sep: &str,
-        iter: impl Iterator<Item = T>,
+        iter: impl IntoIterator<Item = T>,
         f: impl Fn(&mut Self, T),
     ) {
-        let mut peekable = iter.peekable();
+        let mut peekable = iter.into_iter().peekable();
         while let Some(item) = peekable.next() {
             f(self, item);
             if peekable.peek().is_some() {

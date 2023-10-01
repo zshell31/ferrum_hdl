@@ -1,5 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
+use crate::{sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug)]
 pub struct LoopStart {
@@ -13,20 +13,12 @@ impl LoopStart {
         Self {
             genvar,
             count,
-            output: out.map(|(ty, sym)| NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            }),
+            output: out.map(|(ty, sym)| NodeOutput::wire(ty, sym)),
         }
     }
 
     pub fn set_out(&mut self, out: Option<(PrimTy, Symbol)>) {
-        self.output = out.map(|(ty, sym)| NodeOutput {
-            ty,
-            sym,
-            kind: NetKind::Wire,
-        });
+        self.output = out.map(|(ty, sym)| NodeOutput::wire(ty, sym))
     }
 }
 

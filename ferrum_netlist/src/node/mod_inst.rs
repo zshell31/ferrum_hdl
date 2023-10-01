@@ -1,7 +1,6 @@
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::with_arena,
-    net_kind::NetKind,
     net_list::{ModuleId, NodeOutId},
     sig_ty::PrimTy,
     symbol::Symbol,
@@ -27,13 +26,11 @@ impl ModInst {
             module_id,
             inputs: unsafe { with_arena().alloc_from_iter(inputs) },
             outputs: unsafe {
-                with_arena().alloc_from_iter(outputs.into_iter().map(|(ty, sym)| {
-                    NodeOutput {
-                        ty,
-                        sym,
-                        kind: NetKind::Wire,
-                    }
-                }))
+                with_arena().alloc_from_iter(
+                    outputs
+                        .into_iter()
+                        .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+                )
             },
         }
     }

@@ -1,6 +1,7 @@
 use std::{
     cmp::Ordering,
     fmt::{self, Binary, Display, LowerHex},
+    mem,
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
@@ -39,13 +40,13 @@ impl<const N: usize> Unsigned<N> {
 
 impl<const N: usize> CastInner<u128> for Unsigned<N> {
     fn cast_inner(self) -> u128 {
-        self.0
+        unsafe { mem::transmute::<Unsigned<N>, u128>(self) }
     }
 }
 
 impl<const N: usize> CastInner<Unsigned<N>> for u128 {
     fn cast_inner(self) -> Unsigned<N> {
-        Unsigned::<N>::new(self)
+        unsafe { mem::transmute::<u128, Unsigned<N>>(self) }
     }
 }
 

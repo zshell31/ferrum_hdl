@@ -1,8 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    net_kind::NetKind, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
-    symbol::Symbol,
-};
+use crate::{net_list::NodeOutId, params::Inputs, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Mux2Node {
@@ -20,11 +17,7 @@ impl Mux2Node {
     ) -> Self {
         Self {
             inputs: (sel, (input1, input2)),
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
+            output: NodeOutput::wire(ty, sym),
         }
     }
 }

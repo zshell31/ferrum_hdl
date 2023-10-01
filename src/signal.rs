@@ -14,7 +14,7 @@ use crate::{
     cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
-    simulation::{SimCtx, Simulate, Watcher},
+    simulation::{SimCtx, Simulate},
 };
 
 pub trait SignalValue: Debug + Copy + 'static {}
@@ -305,7 +305,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
     rst_val: T,
-    comb_fn: impl Fn(T, Watcher<'_>) -> T + Clone + 'static,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
@@ -314,7 +314,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
         } else {
             next_val
         };
-        next_val = (comb_fn)(value, ctx.watcher());
+        next_val = (comb_fn)(value);
 
         value
     })
@@ -325,20 +325,20 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     mut rst: Reset<D>,
     mut en: Enable<D>,
     rst_val: T,
-    comb_fn: impl Fn(T, Watcher<'_>) -> T + Clone + 'static,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
         if rst.next(ctx).into() {
             next_val = rst_val;
-            (comb_fn)(next_val, ctx.watcher());
+            (comb_fn)(next_val);
             next_val
         } else if en.next(ctx).into() {
-            let val = (comb_fn)(next_val, ctx.watcher());
+            let val = (comb_fn)(next_val);
             next_val = val;
             val
         } else {
-            (comb_fn)(next_val, ctx.watcher());
+            (comb_fn)(next_val);
             next_val
         }
     })
@@ -450,7 +450,7 @@ mod tests {
     fn test_reg() {
         let clk = Clock::<TestSystem>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val, _| val + 1);
+        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val| val + 1);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7

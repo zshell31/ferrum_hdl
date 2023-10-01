@@ -12,11 +12,11 @@ use std::{env, fs, path::Path as StdPath};
 use ferrum_netlist::{
     backend::Verilog,
     group::ItemId,
-    inject_pass::InjectPass,
-    net_list::{ModuleId, NetList},
-    node::{IsNode, PassNode},
+    net_list::{ModuleId, NetList, NodeId},
+    node::{IsNode, NodeKind, Pass},
     params::Outputs,
     sig_ty::SignalTy,
+    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -175,7 +175,7 @@ impl<'tcx> Generator<'tcx> {
         let item = self.tcx.hir().item(self.top_module);
         self.evaluate_fn_item(item, List::empty(), true)?;
 
-        InjectPass::new(&mut self.net_list).inject();
+        self.net_list.run_stages();
 
         let verilog = Verilog::new(&self.net_list).generate();
 
@@ -280,7 +280,6 @@ impl<'tcx> Generator<'tcx> {
             .dummy_inputs_len(closure)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
-        //
         let mut n = 0;
 
         for (ind, node_id) in inputs
@@ -294,21 +293,30 @@ impl<'tcx> Generator<'tcx> {
                 .dummy_input(closure, ind)
                 .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
-            let node_out = self.net_list[node_id].outputs().only_one();
-            let dummy_out = self.net_list[dummy_input].outputs().only_one();
+            let node_out = self.net_list[node_id].kind.outputs().only_one();
+            let dummy_out = self.net_list[dummy_input].kind.outputs().only_one();
+            let sym = dummy_out.out.sym;
 
-            let pass = PassNode::new(
-                node_out.out.ty,
-                node_out.node_out_id(node_id),
-                dummy_out.out.sym,
-            );
-
+            let pass = Pass::new(node_out.out.ty, node_out.node_out_id(node_id), sym);
             self.net_list.replace(dummy_input, pass);
+
+            self.propagate_sym_down(dummy_input, sym);
         }
 
         assert_eq!(n, dummy_inputs_len);
 
         Ok(())
+    }
+
+    pub fn propagate_sym_down(&mut self, node_id: NodeId, sym: Symbol) {
+        let mut id = node_id;
+        while let NodeKind::Pass(Pass { input, output }) = &mut self.net_list[id].kind {
+            output.sym = sym;
+            let input = *input;
+            self.net_list[input].sym = sym;
+
+            id = input.node_id();
+        }
     }
 
     pub fn method_call_generics(

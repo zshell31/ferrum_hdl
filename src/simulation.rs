@@ -48,10 +48,6 @@ impl SimCtx {
         self.print_cycle();
         println!("'{}': {:b}", name, value);
     }
-
-    pub(crate) fn watcher(&mut self) -> Watcher<'_> {
-        Watcher { ctx: self }
-    }
 }
 
 pub struct Watcher<'a> {

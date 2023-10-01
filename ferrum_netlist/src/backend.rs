@@ -1,15 +1,17 @@
-use std::{cmp, collections::BTreeSet};
+use std::{borrow::Cow, cmp};
 
 use either::Either;
+use fnv::FnvHashSet;
+use smallvec::SmallVec;
 
 use crate::{
     buffer::Buffer,
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, BitVecMask, BitVecTrans, Case, ConstNode, DFFNode, Expr,
-        IsNode, LoopStart, Merger, ModInst, Mux2Node, NodeKind, NodeOutput, NotNode,
-        PassNode, Splitter,
+        BinOpNode, BitNotNode, BitVecMask, Case, Const, DFFInputs, Expr, IsNode,
+        LoopStart, Merger, ModInst, MultiConst, MultiPass, Mux2Node, NodeKind,
+        NodeOutput, NotNode, Pass, Splitter, DFF,
     },
     params::Outputs,
     symbol::Symbol,
@@ -20,7 +22,7 @@ pub trait Backend {}
 
 pub struct Verilog<'n> {
     pub buffer: Buffer,
-    pub locals: BTreeSet<Symbol>,
+    pub locals: FnvHashSet<Symbol>,
     pub net_list: &'n NetList,
 }
 
@@ -28,7 +30,7 @@ impl<'n> Verilog<'n> {
     pub fn new(net_list: &'n NetList) -> Self {
         Self {
             buffer: Buffer::new(),
-            locals: BTreeSet::new(),
+            locals: Default::default(),
             net_list,
         }
     }
@@ -39,13 +41,7 @@ impl<'n> Verilog<'n> {
         self.buffer.buffer
     }
 
-    fn write_value(&mut self, out: &NodeOutput, value: u128) {
-        let width = out.ty.width();
-
-        self.buffer.write_fmt(format_args!("{}'d{}", width, value));
-    }
-
-    fn write_local(&mut self, out: &NodeOutput, init: Option<u128>) {
+    fn write_local(&mut self, out: &NodeOutput, init: Option<NodeOutId>) {
         if !self.locals.contains(&out.sym) {
             // TODO: don't write if node is output
             self.buffer.write_tab();
@@ -54,37 +50,171 @@ impl<'n> Verilog<'n> {
             self.buffer.write_str(";\n");
 
             if let Some(init) = init {
-                self.buffer.write_tab();
-                self.buffer.write_str("initial begin\n");
-                self.buffer.push_tab();
+                let node = &self.net_list[init.node_id()];
+                if node.from_const {
+                    let sym = out.sym;
+                    let init = self.inject_const(init);
 
-                self.buffer.write_tab();
-                self.buffer.write_fmt(format_args!("{} = ", out.sym));
-                self.write_value(out, init);
-                self.buffer.write_str(";\n");
+                    self.buffer.write_tab();
+                    self.buffer.write_str("initial begin\n");
+                    self.buffer.push_tab();
 
-                self.buffer.pop_tab();
-                self.buffer.write_tab();
-                self.buffer.write_str("end\n");
+                    self.buffer.write_tab();
+                    self.buffer.write_fmt(format_args!("{sym} = {init};\n"));
+
+                    self.buffer.pop_tab();
+                    self.buffer.write_tab();
+                    self.buffer.write_str("end\n");
+                }
             }
 
             self.locals.insert(out.sym);
         }
     }
 
-    fn inject_const(&mut self, node_out_id: NodeOutId) {
-        let node = &self.net_list[node_out_id.node_id()];
+    fn inject_input(&self, node_out_id: NodeOutId) -> Cow<'static, str> {
+        self.inject_node(node_out_id, false)
+    }
 
-        if let NodeKind::Const(ConstNode {
-            value,
-            skip: true,
-            output,
-        }) = node
-        {
-            self.write_value(output, *value);
+    fn inject_const(&self, node_out_id: NodeOutId) -> Cow<'static, str> {
+        self.inject_node(node_out_id, true)
+    }
+
+    fn inject_node(&self, node_out_id: NodeOutId, from_const: bool) -> Cow<'static, str> {
+        let node_out = &self.net_list[node_out_id];
+        let node_id = node_out_id.node_id();
+        let node = &self.net_list[node_id];
+
+        let should_be_injected = if !from_const {
+            node.inject || node_out.inject
         } else {
-            let sym = node.outputs().only_one().out.sym;
-            self.buffer.write_fmt(format_args!("{}", sym));
+            node.from_const
+        };
+
+        if should_be_injected {
+            let mut buf = Buffer::new();
+            self.inject_node_(
+                node_out_id.node_id().module_id(),
+                node_out_id,
+                &mut buf,
+                false,
+                from_const,
+            );
+            return buf.buffer.into();
+        }
+
+        self.net_list[node_out_id].sym.as_str().into()
+    }
+
+    fn inject_node_(
+        &self,
+        module_id: ModuleId,
+        node_out_id: NodeOutId,
+        expr: &mut Buffer,
+        nested_expr: bool,
+        from_const: bool,
+    ) {
+        let node_out = &self.net_list[node_out_id];
+        let node_id = node_out_id.node_id();
+        let node = &self.net_list[node_id];
+
+        if !from_const {
+            if !node_out.inject {
+                let mod_id = node_id.module_id();
+                if module_id != mod_id {
+                    panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", self.net_list[module_id].name, self.net_list[mod_id].name);
+                }
+                expr.write_str(self.net_list[node_out_id].sym.as_str());
+                return;
+            }
+        } else if !node.from_const {
+            panic!("Node {:#?} is not const", node);
+        }
+
+        if let Some(const_val) = self.net_list.to_const(node_out_id) {
+            expr.write_fmt(format_args!("{const_val}"));
+            return;
+        }
+
+        match &node.kind {
+            NodeKind::Pass(Pass { input, .. }) => {
+                self.inject_node_(module_id, *input, expr, false, from_const);
+            }
+            NodeKind::MultiPass(MultiPass { inputs, .. }) => {
+                let input = inputs[node_out_id.out_id()];
+                self.inject_node_(module_id, input, expr, false, from_const);
+            }
+            NodeKind::BitNot(BitNotNode { input, .. }) => {
+                expr.write_str("~");
+                self.inject_node_(module_id, *input, expr, true, from_const);
+            }
+            NodeKind::Not(NotNode { input, .. }) => {
+                expr.write_str("!");
+                self.inject_node_(module_id, *input, expr, true, from_const);
+            }
+            NodeKind::BinOp(BinOpNode {
+                bin_op,
+                inputs: (left, right),
+                ..
+            }) => {
+                if nested_expr {
+                    expr.write_str("( ");
+                }
+
+                self.inject_node_(module_id, *left, expr, true, from_const);
+                expr.write_fmt(format_args!(" {bin_op} "));
+                self.inject_node_(module_id, *right, expr, true, from_const);
+
+                if nested_expr {
+                    expr.write_str(" )");
+                }
+            }
+            NodeKind::Splitter(
+                splitter @ Splitter {
+                    input,
+                    outputs,
+                    rev,
+                    ..
+                },
+            ) => {
+                let out_id = node_out_id.out_id();
+                let mut start = splitter.start(self.net_list);
+                if !rev {
+                    for output in outputs.iter().take(out_id) {
+                        start += output.width();
+                    }
+                } else {
+                    for output in outputs.iter().take(out_id) {
+                        start -= output.width();
+                    }
+                }
+
+                self.inject_node_(module_id, *input, expr, false, from_const);
+                let width = outputs[out_id].width();
+
+                if *rev {
+                    start -= width;
+                }
+
+                if width == 1 {
+                    expr.write_fmt(format_args!("[{start}]"));
+                } else {
+                    expr.write_fmt(format_args!("[{start} +: {width}]"));
+                }
+            }
+            NodeKind::Merger(Merger { inputs, rev, .. }) => {
+                expr.write_str("{ ");
+                let inputs = if !rev {
+                    Either::Left(inputs.iter())
+                } else {
+                    Either::Right(inputs.iter().rev())
+                };
+                expr.intersperse(", ", inputs, |expr, input| {
+                    self.inject_node_(module_id, *input, expr, false, from_const);
+                });
+                expr.write_str(" }");
+            }
+            _ => {}
         }
     }
 }
@@ -122,13 +252,20 @@ const SEP: &str = ",\n";
 
 impl<'n> Visitor for Verilog<'n> {
     fn visit_modules(&mut self) {
+        self.buffer
+            .write_str("/* Automatically generated by Ferrum. */\n\n");
+
         for module_id in self.net_list.modules() {
+            let module = &self.net_list[module_id];
+            if module.is_skip || module.inject {
+                continue;
+            }
             self.visit_module(module_id);
         }
     }
 
     fn visit_module(&mut self, module_id: ModuleId) {
-        self.locals = BTreeSet::new();
+        self.locals = Default::default();
 
         let module = &self.net_list[module_id];
 
@@ -145,16 +282,20 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, inputs, |buffer, input| {
-                let node = &module[input];
-                buffer.intersperse(SEP, node.outputs().items(), |buffer, node_out_id| {
-                    buffer.write_tab();
-                    write_param(
-                        net_list,
-                        buffer,
-                        node_out_id.node_out_id(input),
-                        ParamKind::Input,
-                    );
-                });
+                let node = &self.net_list[input];
+                buffer.intersperse(
+                    SEP,
+                    node.kind.outputs().items(),
+                    |buffer, node_out_id| {
+                        buffer.write_tab();
+                        write_param(
+                            net_list,
+                            buffer,
+                            node_out_id.node_out_id(input),
+                            ParamKind::Input,
+                        );
+                    },
+                );
             });
         }
         self.buffer.pop_tab();
@@ -180,8 +321,12 @@ impl<'n> Visitor for Verilog<'n> {
         self.buffer.write_eol();
 
         self.buffer.push_tab();
-        for node in module.nodes() {
-            self.visit_node(node);
+        for node_id in module.nodes() {
+            let node = &self.net_list[node_id];
+            if node.is_skip || node.inject {
+                continue;
+            }
+            self.visit_node(node_id);
         }
         self.buffer.pop_tab();
 
@@ -191,7 +336,7 @@ impl<'n> Visitor for Verilog<'n> {
     fn visit_node(&mut self, node_id: NodeId) {
         let node = &self.net_list[node_id];
 
-        match node {
+        match &node.kind {
             NodeKind::DummyInput(_) | NodeKind::Input(_) => {}
             NodeKind::ModInst(ModInst {
                 name,
@@ -200,7 +345,6 @@ impl<'n> Visitor for Verilog<'n> {
                 outputs,
             }) => {
                 let module = &self.net_list[*module_id];
-                println!("{}", module.name);
                 assert_eq!(inputs.len(), module.inputs_len());
                 assert_eq!(outputs.len(), module.outputs_len());
 
@@ -219,8 +363,9 @@ impl<'n> Visitor for Verilog<'n> {
                     self.buffer.write_str("// Inputs\n");
                 }
                 for (input, mod_input) in inputs.iter().zip(module.inputs()) {
-                    let input_sym = self.net_list[*input].sym;
-                    let mod_input_sym = module[mod_input].outputs().only_one().out.sym;
+                    let input_sym = self.inject_input(*input);
+                    let mod_input_sym =
+                        self.net_list[mod_input].kind.outputs().only_one().out.sym;
 
                     self.buffer.write_tab();
                     self.buffer
@@ -234,7 +379,7 @@ impl<'n> Visitor for Verilog<'n> {
                     outputs.iter().zip(module.outputs()),
                     |buffer, (output, mod_output)| {
                         let output_sym = output.sym;
-                        let mod_output_sym = module[mod_output].sym;
+                        let mod_output_sym = self.net_list[mod_output].sym;
 
                         buffer.write_tab();
                         buffer.write_fmt(format_args!(".{mod_output_sym}({output_sym})"));
@@ -283,31 +428,42 @@ endgenerate
                 if !skip_output_def {
                     self.write_local(output, None);
                 }
-                let input = self.net_list[*input].sym;
+                let input = self.inject_input(*input);
                 let output = output.sym;
 
                 expr(&mut self.buffer, input, output);
             }
-            NodeKind::Pass(PassNode {
-                inject,
-                input,
-                output,
-            }) => {
-                if !inject.unwrap_or_default() {
+            NodeKind::Pass(Pass { input, output }) => {
+                self.write_local(output, None);
+                let input = self.inject_input(*input);
+                let output = output.sym;
+
+                self.buffer
+                    .write_template(format_args!("assign {output} = {input};"));
+            }
+            NodeKind::MultiPass(MultiPass { inputs, outputs }) => {
+                for (input, output) in inputs.iter().zip(outputs.iter()) {
                     self.write_local(output, None);
-                    let input = self.net_list[*input].sym;
+                    let input = self.inject_input(*input);
                     let output = output.sym;
 
                     self.buffer
                         .write_template(format_args!("assign {output} = {input};"));
                 }
             }
-            NodeKind::Const(ConstNode {
-                value,
-                output,
-                skip,
-            }) => {
-                if !skip {
+            NodeKind::Const(Const { value, output }) => {
+                self.write_local(output, None);
+                let output = output.sym;
+
+                self.buffer
+                    .write_template(format_args!("assign {output} = {value};"));
+            }
+            NodeKind::MultiConst(MultiConst { values, outputs }) => {
+                for (value, output) in values.iter().zip(outputs.iter()) {
+                    if output.is_skip {
+                        continue;
+                    }
+
                     self.write_local(output, None);
                     let output = output.sym;
 
@@ -315,19 +471,23 @@ endgenerate
                         .write_template(format_args!("assign {output} = {value};"));
                 }
             }
-            NodeKind::Splitter(Splitter {
-                input,
-                outputs,
-                start,
-                rev,
-            }) => {
-                let input = self.net_list[*input];
-                let input_width = input.ty.width();
-                let mut start =
-                    start.unwrap_or_else(|| if !rev { 0 } else { input_width });
-                let input = input.sym;
+            NodeKind::Splitter(
+                splitter @ Splitter {
+                    input,
+                    outputs,
+                    rev,
+                    ..
+                },
+            ) => {
+                let input_width = self.net_list[*input].ty.width();
+                let mut start = splitter.start(self.net_list);
+                let input = self.inject_input(*input);
 
                 for output in outputs.iter() {
+                    if output.is_skip {
+                        continue;
+                    }
+
                     self.write_local(output, None);
 
                     let width = output.ty.width();
@@ -375,31 +535,34 @@ endgenerate
                 output,
                 rev,
             }) => {
-                self.write_local(output, None);
-                let output = output.sym;
+                if !inputs.is_empty() {
+                    self.write_local(output, None);
+                    let output = output.sym;
 
-                self.buffer.write_tab();
-                self.buffer
-                    .write_fmt(format_args!("assign {output} = {{\n"));
+                    self.buffer.write_tab();
+                    self.buffer
+                        .write_fmt(format_args!("assign {output} = {{\n"));
 
-                let net_list = &self.net_list;
-                let inputs = if !rev {
-                    Either::Left(inputs.iter())
-                } else {
-                    Either::Right(inputs.iter().rev())
-                };
+                    let inputs = if !rev {
+                        Either::Left(inputs.iter())
+                    } else {
+                        Either::Right(inputs.iter().rev())
+                    };
+                    let inputs = inputs
+                        .map(|input| self.inject_input(*input))
+                        .collect::<SmallVec<[_; 8]>>();
 
-                self.buffer.push_tab();
-                self.buffer.intersperse(SEP, inputs, |buffer, input| {
-                    let input = net_list[*input].sym;
-                    buffer.write_tab();
-                    buffer.write_fmt(format_args!("{}", input));
-                });
-                self.buffer.pop_tab();
+                    self.buffer.push_tab();
+                    self.buffer.intersperse(SEP, inputs, |buffer, input| {
+                        buffer.write_tab();
+                        buffer.write_fmt(format_args!("{}", input));
+                    });
+                    self.buffer.pop_tab();
 
-                self.buffer.write_eol();
-                self.buffer.write_tab();
-                self.buffer.write_str("};\n\n");
+                    self.buffer.write_eol();
+                    self.buffer.write_tab();
+                    self.buffer.write_str("};\n\n");
+                }
             }
             NodeKind::Case(Case {
                 inputs: (sel, inputs, default),
@@ -409,16 +572,10 @@ endgenerate
                     self.write_local(output, None);
                     let output = output.sym;
 
-                    let sel_sym = self.net_list[*sel].sym;
+                    let sel_sym = self.inject_input(*sel);
                     let sel_width = self.net_list[*sel].ty.width();
 
                     let has_mask = inputs.iter().any(|(mask, _)| mask.mask != 0);
-                    let small_mask = inputs
-                        .iter()
-                        .map(|(mask, _)| mask.mask)
-                        .min()
-                        .unwrap_or_default();
-                    let small_mask_ones = small_mask.trailing_ones();
 
                     self.buffer.write_tab();
                     self.buffer.write_fmt(format_args!("always @(*) begin\n"));
@@ -429,37 +586,21 @@ endgenerate
 
                     if !has_mask {
                         self.buffer.write_fmt(format_args!("case ({sel_sym})\n"));
-                    } else if small_mask != 0 && small_mask_ones > 0 {
-                        let end = sel_width - 1;
-                        let start = small_mask_ones;
-                        self.buffer.write_fmt(format_args!(
-                            "casez ({sel_sym}[{end}:{start}])\n"
-                        ));
                     } else {
                         self.buffer.write_fmt(format_args!("casez ({sel_sym})\n"));
                     }
 
                     self.buffer.push_tab();
 
-                    let mut write_case = |mut mask: BitVecMask, input: NodeOutId| {
-                        let input = self.net_list[input].sym;
+                    let mut write_case = |mask: BitVecMask, input: NodeOutId| {
+                        let input = self.inject_input(input);
 
                         self.buffer.write_tab();
-                        if small_mask != 0 && small_mask_ones > 0 {
-                            let ones = small_mask_ones as u128;
-                            let width = sel_width - ones;
-                            mask.shiftr(ones);
-                            let mask = mask.to_bitstr(width, '?');
-                            self.buffer.write_fmt(format_args!(
-                                "{width}'b{mask} : {output} = {input};\n"
-                            ));
-                        } else {
-                            let mask = mask.to_bitstr(sel_width, '?');
+                        let mask = mask.to_bitstr(sel_width, '?');
 
-                            self.buffer.write_fmt(format_args!(
-                                "{sel_width}'b{mask} : {output} = {input};\n",
-                            ));
-                        }
+                        self.buffer.write_fmt(format_args!(
+                            "{sel_width}'b{mask} : {output} = {input};\n",
+                        ));
                     };
 
                     for i in 0 .. (inputs.len() - 1) {
@@ -481,7 +622,7 @@ endgenerate
                         }
                         None => {
                             let (_, input) = inputs.last().unwrap();
-                            let default = self.net_list[*input].sym;
+                            let default = self.inject_input(*input);
 
                             self.buffer.write_tab();
                             self.buffer.write_fmt(format_args!(
@@ -501,20 +642,9 @@ endgenerate
                     self.buffer.write_str("end\n\n");
                 }
             }
-            NodeKind::BitVecTrans(BitVecTrans {
-                input,
-                output,
-                trans,
-            }) => {
-                self.write_local(output, None);
-                let input = self.net_list[*input].sym;
-                let output = output.sym;
-
-                trans(self, input, output);
-            }
             NodeKind::BitNot(BitNotNode { input, output }) => {
                 self.write_local(output, None);
-                let input = self.net_list[*input].sym;
+                let input = self.inject_input(*input);
                 let output = output.sym;
 
                 self.buffer
@@ -522,7 +652,7 @@ endgenerate
             }
             NodeKind::Not(NotNode { input, output }) => {
                 self.write_local(output, None);
-                let input = self.net_list[*input].sym;
+                let input = self.inject_input(*input);
                 let output = output.sym;
 
                 self.buffer
@@ -530,22 +660,19 @@ endgenerate
             }
             NodeKind::BinOp(BinOpNode {
                 bin_op,
-                inputs: (input1, input2),
+                inputs: (left, right),
                 output,
             }) => {
                 self.write_local(output, None);
                 let output = output.sym;
 
+                let left = self.inject_input(*left);
+                let right = self.inject_input(*right);
+
                 self.buffer.write_tab();
-                self.buffer.write_fmt(format_args!("assign {output} = "));
-
-                self.inject_const(*input1);
-
-                self.buffer.write_fmt(format_args!(" {bin_op} "));
-
-                self.inject_const(*input2);
-
-                self.buffer.write_str(";\n\n");
+                self.buffer.write_fmt(format_args!(
+                    "assign {output} = {left} {bin_op} {right};\n\n"
+                ));
             }
             NodeKind::Mux2(Mux2Node {
                 inputs: (sel, (input1, input2)),
@@ -553,46 +680,53 @@ endgenerate
             }) => {
                 self.write_local(output, None);
 
-                let sel = self.net_list[*sel].sym;
-                let input1 = self.net_list[*input1].sym;
-                let input2 = self.net_list[*input2].sym;
+                let sel = self.inject_input(*sel);
+                let input1 = self.inject_input(*input1);
+                let input2 = self.inject_input(*input2);
                 let output = output.sym;
 
                 self.buffer.write_template(format_args!(
                     "
-always @ ({sel} or {input1} or {input2}) begin
+always @ (*) begin
     case ({sel})
-        1'h0: {output} = {input2};
-        1'h1: {output} = {input1};
-        default:
-            {output} = 'h0;
+        1'h0: 
+            {output} = {input2};
+        default: 
+            {output} = {input1};
     endcase
 end
 "
                 ));
             }
-            NodeKind::DFF(DFFNode {
-                inputs: (clk, data, rst, en),
+            NodeKind::DFF(DFF {
+                inputs:
+                    DFFInputs {
+                        clk,
+                        rst,
+                        en,
+                        rst_val,
+                        data,
+                    },
                 output,
-                rst_val,
             }) => {
                 self.write_local(output, Some(*rst_val));
-
-                let clk = self.net_list[*clk].sym;
-                let data = self.net_list[*data].sym;
-                let rst = self.net_list[*rst].sym;
-                let width = output.ty.width();
                 let output = output.sym;
+
+                let clk = self.inject_input(*clk);
+                let rst = self.inject_input(*rst);
+
+                let data = self.inject_input(*data);
+                let rst_val = self.inject_input(*rst_val);
 
                 match en {
                     Some(en) => {
-                        let en = self.net_list[*en].sym;
+                        let en = self.inject_input(*en);
 
                         self.buffer.write_template(format_args!(
                             "
 always @ (posedge {clk} or posedge {rst}) begin
     if ({rst})
-        {output} <= {width}'d{rst_val};
+        {output} <= {rst_val};
     else if ({en})
         {output} <= {data};
 end
@@ -604,7 +738,7 @@ end
                             "
 always @ (posedge {clk} or posedge {rst}) begin
     if ({rst})
-        {output} <= {width}'d{rst_val};
+        {output} <= {rst_val};
     else
         {output} <= {data};
 end

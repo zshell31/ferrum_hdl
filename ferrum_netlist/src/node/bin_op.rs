@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
@@ -68,11 +68,7 @@ impl BinOpNode {
         Self {
             bin_op,
             inputs: (input1, input2),
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
+            output: NodeOutput::wire(ty, sym),
         }
     }
 }

@@ -1,10 +1,9 @@
+use std::borrow::Cow;
+
 use derive_where::derive_where;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    buffer::Buffer, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
-    symbol::Symbol,
-};
+use crate::{buffer::Buffer, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive_where(Debug)]
 pub struct Expr {
@@ -14,7 +13,7 @@ pub struct Expr {
     // TODO: how to specify trans for different backends (Verilog, VHDL, etc)
     #[allow(clippy::type_complexity)]
     #[derive_where(skip)]
-    pub expr: Box<dyn Fn(&mut Buffer, Symbol, Symbol)>,
+    pub expr: Box<dyn Fn(&mut Buffer, Cow<'static, str>, Symbol)>,
 }
 
 impl Expr {
@@ -23,15 +22,11 @@ impl Expr {
         input: NodeOutId,
         sym: Symbol,
         skip_output_def: bool,
-        expr: impl Fn(&mut Buffer, Symbol, Symbol) + 'static,
+        expr: impl Fn(&mut Buffer, Cow<'static, str>, Symbol) + 'static,
     ) -> Self {
         Self {
             input,
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
+            output: NodeOutput::wire(ty, sym),
             skip_output_def,
             expr: Box::new(expr),
         }

@@ -1,7 +1,8 @@
+use either::Either;
 use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
-    node::{ConstNode, IsNode, Merger, ModInst, Node, PassNode, Splitter},
+    node::{Const, Merger, Pass, Splitter},
     params::Outputs,
     sig_ty::{EnumTy, PrimTy, SignalTy},
 };
@@ -30,7 +31,7 @@ impl<'tcx> Generator<'tcx> {
                 .map(|out| {
                     (
                         out.out.ty,
-                        PassNode::new(
+                        Pass::new(
                             out.out.ty,
                             out.node_out_id(node_id),
                             self.idents.for_module(module_id).tmp(),
@@ -65,7 +66,7 @@ impl<'tcx> Generator<'tcx> {
                     let width = node_out.out.ty.width();
                     let node_out_id = node_out.node_out_id(node_id);
 
-                    let pass = PassNode::new(
+                    let pass = Pass::new(
                         PrimTy::BitVec(width),
                         node_out_id,
                         self.idents.for_module(module_id).tmp(),
@@ -127,15 +128,14 @@ impl<'tcx> Generator<'tcx> {
 
         match sig_ty {
             SignalTy::Prim(ty) => {
-                let pass = PassNode::new(
-                    ty,
-                    node_out_id,
-                    self.idents.for_module(module_id).tmp(),
-                );
+                // TODO: подумать, можно ли избавиться от Pass здесь
+                // Если да, то это бы упростило код в функции pattern_match
+                let pass =
+                    Pass::new(ty, node_out_id, self.idents.for_module(module_id).tmp());
                 self.net_list.add_node(module_id, pass).into()
             }
             SignalTy::Array(ty) => {
-                let item_width = ty.width();
+                let item_width = ty.item_width();
 
                 let mut n = 0;
                 let splitter = Splitter::new(
@@ -202,7 +202,7 @@ impl<'tcx> Generator<'tcx> {
                 .unwrap()
             }
             SignalTy::Enum(ty) => {
-                let pass = PassNode::new(
+                let pass = Pass::new(
                     ty.prim_ty(),
                     node_out_id,
                     self.idents.for_module(module_id).tmp(),
@@ -236,19 +236,19 @@ impl<'tcx> Generator<'tcx> {
             }
         }
 
-        let scrutinee = self.net_list[scrutinee]
-            .outputs()
-            .only_one()
-            .node_out_id(scrutinee);
+        let scrutinee_out = self.net_list[scrutinee].outputs().only_one();
+        // let sym = self
+        //     .idents
+        //     .for_module(module_id)
+        //     .ident(scrutinee_out.out.sym.as_str());
+        let sym = self.idents.for_module(module_id).tmp();
+        let scrutinee = scrutinee_out.node_out_id(scrutinee);
 
         let data_part = self.net_list.add_node(
             module_id,
             Splitter::new(
                 scrutinee,
-                [(
-                    PrimTy::BitVec(sig_ty.width()),
-                    self.idents.for_module(module_id).tmp(),
-                )],
+                [(PrimTy::BitVec(sig_ty.width()), sym)],
                 Some(enum_ty.data_width()),
                 true,
             ),
@@ -271,7 +271,7 @@ impl<'tcx> Generator<'tcx> {
         let discr_val = enum_ty.discr_val(variant_idx);
         let discr_val = self.net_list.add_node(
             module_id,
-            ConstNode::new(
+            Const::new(
                 PrimTy::BitVec(enum_ty.discr_width()),
                 discr_val,
                 self.idents.for_module(module_id).tmp(),
@@ -282,69 +282,23 @@ impl<'tcx> Generator<'tcx> {
             .only_one()
             .node_out_id(discr_val);
 
-        let data_part = self.to_bitvec(module_id, data_part);
+        let inputs = if data_part.is_empty() {
+            Either::Left([discr_val].into_iter())
+        } else {
+            let data_part = self.to_bitvec(module_id, data_part);
+            Either::Right([discr_val, data_part].into_iter())
+        };
 
         self.net_list
             .add_node(
                 module_id,
                 Merger::new(
                     enum_ty.width(),
-                    [discr_val, data_part],
+                    inputs,
                     self.idents.for_module(module_id).tmp(),
                     false,
                 ),
             )
             .into()
-    }
-
-    pub fn to_const(&self, item_id: ItemId) -> Option<u128> {
-        self.to_const_inner(item_id).map(|(val, _)| val)
-    }
-
-    pub fn to_const_inner(&self, item_id: ItemId) -> Option<(u128, u128)> {
-        match item_id {
-            ItemId::Node(node_id) => {
-                let node = &self.net_list[node_id];
-                match node {
-                    Node::Const(ConstNode { value, output, .. }) => {
-                        Some((*value, output.ty.width()))
-                    }
-                    Node::ModInst(ModInst { module_id, .. }) => {
-                        let module = &self.net_list[*module_id];
-                        if module.outputs_len() > 1 {
-                            None
-                        } else {
-                            let output = module.outputs().next()?;
-                            self.to_const_inner(output.node_id().into())
-                        }
-                    }
-                    Node::Pass(PassNode { input, .. }) => {
-                        let item_id = input.node_id().into();
-                        self.to_const_inner(item_id)
-                    }
-                    Node::Splitter(Splitter { input, .. }) => {
-                        let item_id = input.node_id().into();
-                        self.to_const_inner(item_id)
-                    }
-                    _ => None,
-                }
-            }
-            ItemId::Group(group) => {
-                let mut res: u128 = 0;
-                let mut total: u128 = 0;
-                for item_id in group.item_ids().iter() {
-                    let (val, width) = self.to_const_inner(*item_id)?;
-                    // TODO: use long arithmetic instead
-                    if res == 0 {
-                        res = val;
-                    } else {
-                        res = (res << width) | val;
-                    }
-                    total = total.checked_add(width).unwrap();
-                }
-
-                Some((res, total))
-            }
-        }
     }
 }

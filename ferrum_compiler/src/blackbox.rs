@@ -5,9 +5,7 @@ use ferrum::{
 use ferrum_netlist::{
     group::ItemId,
     net_list::{NodeId, NodeOutId},
-    node::{
-        ConstNode, DFFNode, Expr as ExprNode, IsNode, LoopEnd, LoopStart, Node, Splitter,
-    },
+    node::{Const, Expr as ExprNode, LoopEnd, LoopStart, NodeKind, Splitter, DFF},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
     symbol::Symbol,
@@ -58,7 +56,9 @@ pub enum Blackbox {
     SignalApply2,
     SignalValue,
     SignalWatch,
+    SignalReset,
     BitPackPack,
+    BitPackRepack,
     BitPackMsb,
     BitVecShrink,
     BitVecSlice,
@@ -114,12 +114,20 @@ pub fn find_blackbox(def_path: &DefPath) -> Option<Blackbox> {
         return Some(Blackbox::SignalWatch);
     }
 
+    if def_path == &ItemPath(&["signal", "impl", "reset"]) {
+        return Some(Blackbox::SignalReset);
+    }
+
     if def_path == &ItemPath(&["signal", "apply2"]) {
         return Some(Blackbox::SignalApply2);
     }
 
     if def_path == &ItemPath(&["bit_pack", "BitPack", "pack"]) {
         return Some(Blackbox::BitPackPack);
+    }
+
+    if def_path == &ItemPath(&["bit_pack", "BitPack", "repack"]) {
+        return Some(Blackbox::BitPackRepack);
     }
 
     if def_path == &ItemPath(&["bit_pack", "BitPack", "msb"]) {
@@ -256,7 +264,9 @@ impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
             Self::SignalApply2 => SignalApply2.evaluate_expr(generator, expr, ctx),
             Self::SignalValue => SignalValue.evaluate_expr(generator, expr, ctx),
             Self::SignalWatch => SignalWatch.evaluate_expr(generator, expr, ctx),
+            Self::SignalReset => BitVal(false).evaluate_expr(generator, expr, ctx),
             Self::BitPackPack => BitPackPack.evaluate_expr(generator, expr, ctx),
+            Self::BitPackRepack => BitPackRepack.evaluate_expr(generator, expr, ctx),
             Self::BitPackMsb => BitPackMsb.evaluate_expr(generator, expr, ctx),
             Self::BitVecShrink => BitVecShrink.evaluate_expr(generator, expr, ctx),
             Self::BitVecSlice => BitVecSlice.evaluate_expr(generator, expr, ctx),
@@ -302,7 +312,7 @@ impl BitVal {
             false => 0,
         };
 
-        let cons = ConstNode::new(
+        let cons = Const::new(
             PrimTy::Bit,
             value,
             generator.idents.for_module(ctx.module_id).tmp(),
@@ -382,14 +392,8 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
             })
             .transpose()?;
 
-        // TODO: refactor truncating
-        let len = generator.net_list.module_len(ctx.module_id);
-        let rst_val_span = rst_val.span;
         let rst_val = generator.evaluate_expr(rst_val, ctx)?;
-        let rst_val = generator
-            .to_const(rst_val)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, rst_val_span))?;
-        generator.net_list.module_truncate(ctx.module_id, len);
+        let rst_val = generator.maybe_to_bitvec(ctx.module_id, rst_val);
 
         let comb = generator.evaluate_expr(comb, ctx)?;
 
@@ -399,7 +403,7 @@ impl<'tcx> EvaluateExpr<'tcx> for RegisterFn {
 
         let dff = generator.net_list.add_node(
             ctx.module_id,
-            DFFNode::new(
+            DFF::new(
                 prim_ty,
                 generator.net_list.only_one_node_out_id(clk),
                 rst,
@@ -587,7 +591,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
 
         generator.net_list.add_node(ctx.module_id, LoopEnd {});
 
-        if let Node::LoopStart(node) = &mut generator.net_list[loop_id] {
+        if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
             node.set_out(Some((PrimTy::BitVec(count * width), output)));
         }
 
@@ -608,6 +612,26 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         Ok(generator.to_bitvec(ctx.module_id, rec).node_id().into())
+    }
+}
+
+struct BitPackRepack;
+
+impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        let rec = generator.evaluate_expr(rec, ctx)?;
+        let to = generator.to_bitvec(ctx.module_id, rec);
+
+        let ty = generator.node_type(expr.hir_id, ctx);
+        let sig_ty = generator.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+
+        Ok(generator.from_bitvec(ctx.module_id, to, sig_ty))
     }
 }
 

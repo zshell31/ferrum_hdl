@@ -7,8 +7,8 @@ use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, Case, ConstNode, InputNode, IsNode, ModInst, Mux2Node,
-        Node, NotNode, PassNode, Splitter,
+        BinOpNode, BitNotNode, Case, Const, InputNode, ModInst, Mux2Node, NotNode, Pass,
+        Splitter,
     },
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
@@ -19,8 +19,10 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::{
     def::{CtorOf, DefKind, Res},
     def_id::{DefId, LocalDefId},
-    Expr, ExprKind, Node as HirNode, PatKind, Path, QPath, StmtKind, UnOp,
+    Expr, ExprKind, Node as HirNode, PatKind, Path, QPath, StmtKind, Ty as HirTy,
+    TyKind as HirTyKind, UnOp,
 };
+use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, Ty};
 use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
@@ -263,9 +265,26 @@ impl<'tcx> Generator<'tcx> {
             ctx.generic_args,
         );
 
+        let res = self.evaluate_expr_(expr, ctx);
+        if res.is_ok() {
+            scope.exit();
+        } else {
+            scope.inner_most_error(|| {
+                println!("{:#?}", expr);
+            });
+        }
+
+        res
+    }
+
+    pub fn evaluate_expr_(
+        &mut self,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
         let ty = self.node_type(expr.hir_id, ctx);
 
-        let res = match expr.kind {
+        match expr.kind {
             ExprKind::Array(items) => {
                 let array_ty = self
                     .find_sig_ty(ty, ctx.generic_args, expr.span)?
@@ -321,10 +340,6 @@ impl<'tcx> Generator<'tcx> {
                     };
                     let node_id = item_id.node_id();
 
-                    if let Node::Const(node) = &mut self.net_list[node_id] {
-                        node.skip = true;
-                    }
-
                     Ok(self.net_list[node_id]
                         .outputs()
                         .only_one()
@@ -371,7 +386,7 @@ impl<'tcx> Generator<'tcx> {
                                     self.net_list
                                         .add_node(
                                             ctx.module_id,
-                                            PassNode::new(
+                                            Pass::new(
                                                 out.out.ty,
                                                 out.node_out_id(node_id),
                                                 self.idents
@@ -476,6 +491,52 @@ impl<'tcx> Generator<'tcx> {
                             },
                         ) if struct_did.is_local() => {
                             self.make_struct_group_from_exprs(expr, args, ctx)
+                        }
+                        QPath::TypeRelative(
+                            qself @ HirTy {
+                                kind:
+                                    HirTyKind::Path(QPath::Resolved(
+                                        _,
+                                        Path {
+                                            res: Res::SelfTyAlias { alias_to, .. },
+                                            ..
+                                        },
+                                    )),
+                                ..
+                            },
+                            assoc_segment,
+                        ) => {
+                            let ty = self
+                                .tcx
+                                .type_of(alias_to)
+                                .instantiate(self.tcx, ctx.generic_args);
+                            let item_ctx =
+                                &ItemCtxt::new(self.tcx, expr.hir_id.owner.def_id);
+                            let astconv = item_ctx.astconv();
+                            if let Ok((_, _, variant_did)) = astconv
+                                .associated_path_to_ty(
+                                    expr.hir_id,
+                                    expr.span,
+                                    ty,
+                                    qself,
+                                    assoc_segment,
+                                    true,
+                                )
+                            {
+                                self.evaluate_enum_variant(
+                                    variant_did,
+                                    ty,
+                                    ctx,
+                                    args,
+                                    expr.span,
+                                )
+                            } else {
+                                Err(SpanError::new(
+                                    SpanErrorKind::NotSynthCall,
+                                    expr.span,
+                                )
+                                .into())
+                            }
                         }
                         QPath::TypeRelative(_, _) => {
                             let fn_ty = self.node_type(fn_item.hir_id, ctx);
@@ -619,7 +680,7 @@ impl<'tcx> Generator<'tcx> {
                     .net_list
                     .add_node(
                         ctx.module_id,
-                        ConstNode::new(
+                        Const::new(
                             prim_ty,
                             value,
                             self.idents.for_module(ctx.module_id).tmp(),
@@ -639,10 +700,11 @@ impl<'tcx> Generator<'tcx> {
                     SpanError::new(SpanErrorKind::ExpectedEnumType, expr.span)
                 })?;
 
-                let sel = self.evaluate_expr(sel, ctx)?.node_id();
+                let mut sel = self.evaluate_expr(sel, ctx)?.node_id();
 
                 let mut variants_map = FxHashMap::default();
                 let mut default = None;
+                let mut small_mask = u128::MAX;
                 let mut inputs = SmallVec::<[_; 8]>::new();
                 for arm in arms {
                     if arm.guard.is_some() {
@@ -661,7 +723,7 @@ impl<'tcx> Generator<'tcx> {
                     }
 
                     let (variant_def, variant_idx) =
-                        self.pattern_to_variant_def(arm.pat)?;
+                        self.pattern_to_variant_def(arm.pat, ctx.generic_args)?;
                     let def_id = variant_def.def_id;
 
                     if let Entry::Vacant(e) = variants_map.entry(def_id) {
@@ -677,27 +739,54 @@ impl<'tcx> Generator<'tcx> {
                     let variant = *variants_map.get(&def_id).unwrap();
                     self.pattern_match(arm.pat, variant, ctx.module_id)?;
 
-                    let item_id = self.evaluate_expr(arm.body, ctx)?;
+                    let variant_item_id = self.evaluate_expr(arm.body, ctx)?;
                     let discr =
                         self.pattern_to_bitvec(arm.pat, sel_sig_ty, ctx.generic_args)?;
-                    let node_out_id = self.maybe_to_bitvec(ctx.module_id, item_id);
+                    if discr.mask < small_mask {
+                        small_mask = discr.mask;
+                    }
+
+                    let node_out_id =
+                        self.maybe_to_bitvec(ctx.module_id, variant_item_id);
 
                     inputs.push((discr, node_out_id));
                 }
 
-                Ok(self
-                    .net_list
-                    .add_node(
+                let small_mask_ones = small_mask.trailing_ones() as u128;
+                if small_mask != 0 && small_mask_ones > 0 {
+                    let sel_out = self.net_list[sel].outputs().only_one();
+                    let sel_width = sel_out.out.width();
+
+                    sel = self.net_list.add_node(
                         ctx.module_id,
-                        Case::new(
-                            expr_ty.maybe_to_bitvec(),
-                            self.net_list[sel].outputs().only_one().node_out_id(sel),
-                            inputs,
-                            default,
-                            self.idents.for_module(ctx.module_id).tmp(),
+                        Splitter::new(
+                            sel_out.node_out_id(sel),
+                            [(
+                                PrimTy::BitVec(sel_width - small_mask_ones),
+                                self.idents.for_module(ctx.module_id).tmp(),
+                            )],
+                            None,
+                            true,
                         ),
-                    )
-                    .into())
+                    );
+
+                    for (discr, _) in &mut inputs {
+                        discr.shiftr(small_mask_ones);
+                    }
+                }
+
+                let case = self.net_list.add_node(
+                    ctx.module_id,
+                    Case::new(
+                        expr_ty.maybe_to_bitvec(),
+                        self.net_list[sel].outputs().only_one().node_out_id(sel),
+                        inputs,
+                        default,
+                        self.idents.for_module(ctx.module_id).tmp(),
+                    ),
+                );
+                let case = self.net_list[case].outputs().only_one().node_out_id(case);
+                Ok(self.maybe_from_bitvec(ctx.module_id, case, expr_ty))
             }
             ExprKind::MethodCall(_, rec, args, span) => {
                 let fn_did = self
@@ -774,7 +863,7 @@ impl<'tcx> Generator<'tcx> {
                                 .net_list
                                 .add_node(
                                     ctx.module_id,
-                                    ConstNode::new(
+                                    Const::new(
                                         sig_ty,
                                         const_val,
                                         self.idents.for_module(ctx.module_id).tmp(),
@@ -809,7 +898,7 @@ impl<'tcx> Generator<'tcx> {
                         .net_list
                         .add_node(
                             ctx.module_id,
-                            ConstNode::new(
+                            Const::new(
                                 prim_ty,
                                 value,
                                 self.idents.for_module(ctx.module_id).tmp(),
@@ -859,7 +948,7 @@ impl<'tcx> Generator<'tcx> {
                                     .net_list
                                     .add_node(
                                         ctx.module_id,
-                                        ConstNode::new(
+                                        Const::new(
                                             sig_ty.prim_ty(),
                                             const_val,
                                             self.idents.for_module(ctx.module_id).tmp(),
@@ -932,17 +1021,7 @@ impl<'tcx> Generator<'tcx> {
                 .into())
             }
             _ => Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()),
-        };
-
-        if res.is_ok() {
-            scope.exit();
-        } else {
-            scope.inner_most_error(|| {
-                println!("{:#?}", expr);
-            });
         }
-
-        res
     }
 
     fn maybe_swap_generic_args_for_conversion(
@@ -1125,6 +1204,8 @@ impl<'tcx> Generator<'tcx> {
                 )
             })
             .collect::<Vec<_>>();
+
+        assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
 
         let inst_sym = self
             .idents

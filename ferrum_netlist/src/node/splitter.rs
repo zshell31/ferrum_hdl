@@ -1,10 +1,7 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, ops::Index};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    arena::with_arena, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
-    symbol::Symbol,
-};
+use crate::{arena::with_arena, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug)]
 pub struct Splitter {
@@ -24,17 +21,22 @@ impl Splitter {
         Self {
             input,
             outputs: unsafe {
-                with_arena().alloc_from_iter(outputs.into_iter().map(|(ty, sym)| {
-                    NodeOutput {
-                        ty,
-                        sym,
-                        kind: NetKind::Wire,
-                    }
-                }))
+                with_arena().alloc_from_iter(
+                    outputs
+                        .into_iter()
+                        .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+                )
             },
             start,
             rev,
         }
+    }
+
+    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(&self, net_list: &T) -> u128 {
+        let input = net_list[self.input];
+        let input_width = input.ty.width();
+        self.start
+            .unwrap_or(if !self.rev { 0 } else { input_width })
     }
 }
 

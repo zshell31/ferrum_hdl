@@ -1,34 +1,28 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_kind::NetKind, sig_ty::PrimTy, symbol::Symbol};
+use crate::{sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
-pub struct ConstNode {
+pub struct Const {
     pub value: u128,
     pub output: NodeOutput,
-    pub skip: bool,
 }
 
-impl ConstNode {
+impl Const {
     pub fn new(ty: PrimTy, value: u128, sym: Symbol) -> Self {
         Self {
             value,
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
-            skip: false,
+            output: NodeOutput::wire(ty, sym),
         }
     }
 }
 
-impl From<ConstNode> for NodeKind {
-    fn from(node: ConstNode) -> Self {
+impl From<Const> for NodeKind {
+    fn from(node: Const) -> Self {
         Self::Const(node)
     }
 }
 
-impl IsNode for ConstNode {
+impl IsNode for Const {
     type Inputs = ();
     type Outputs = NodeOutput;
 
@@ -42,5 +36,40 @@ impl IsNode for ConstNode {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+}
+
+#[derive(Debug)]
+pub struct MultiConst {
+    pub values: &'static [u128],
+    pub outputs: &'static mut [NodeOutput],
+}
+
+impl MultiConst {
+    pub fn new(values: &'static [u128], outputs: &'static mut [NodeOutput]) -> Self {
+        Self { values, outputs }
+    }
+}
+
+impl From<MultiConst> for NodeKind {
+    fn from(node: MultiConst) -> Self {
+        Self::MultiConst(node)
+    }
+}
+
+impl IsNode for MultiConst {
+    type Inputs = ();
+    type Outputs = [NodeOutput];
+
+    fn inputs(&self) -> &Self::Inputs {
+        &()
+    }
+
+    fn outputs(&self) -> &Self::Outputs {
+        self.outputs
+    }
+
+    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+        self.outputs
     }
 }

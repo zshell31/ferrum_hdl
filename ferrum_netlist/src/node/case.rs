@@ -4,8 +4,8 @@ use either::Either;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    arena::with_arena, net_kind::NetKind, net_list::NodeOutId, params::Inputs,
-    sig_ty::PrimTy, symbol::Symbol,
+    arena::with_arena, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
+    symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -78,11 +78,7 @@ impl Case {
                 unsafe { with_arena().alloc_from_iter(inputs) },
                 default,
             ),
-            output: NodeOutput {
-                ty,
-                sym,
-                kind: NetKind::Wire,
-            },
+            output: NodeOutput::wire(ty, sym),
         }
     }
 }

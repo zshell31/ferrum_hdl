@@ -1,3 +1,9 @@
+mod inject_nodes;
+mod reachability;
+
+pub(crate) use inject_nodes::InjectNodes;
+pub(crate) use reachability::Reachability;
+
 use crate::net_list::{ModuleId, NodeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

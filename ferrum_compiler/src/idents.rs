@@ -10,6 +10,10 @@ struct IdentsInner(FxHashMap<Symbol, usize>);
 
 impl IdentsInner {
     fn ident(&mut self, ident: &str) -> Symbol {
+        // let ident = match ident.rfind('_') {
+        //     Some(ind) if !ident.starts_with("__") => Symbol::new(&ident[.. ind]),
+        //     _ => Symbol::new(ident),
+        // };
         let ident = Symbol::new(ident);
 
         match self.0.get_mut(&ident) {

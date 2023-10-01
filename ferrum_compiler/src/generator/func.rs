@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NetList, NodeId},
-    node::{InputNode, IsNode, Node, PassNode},
+    node::{InputNode, Pass},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
@@ -254,29 +254,20 @@ impl<'tcx> Generator<'tcx> {
         let node = &net_list[node_id];
         let node_id = if node.is_input() {
             let out = node.outputs().only_one();
-            let mut pass = PassNode::new(
+            let pass = Pass::new(
                 out.out.ty,
                 out.node_out_id(node_id),
                 idents.for_module(module_id).tmp(),
             );
-            pass.inject = Some(false);
 
             net_list.add_node(node_id.module_id(), pass)
         } else {
             let node = &mut net_list[node_id];
-            match node {
-                Node::Pass(pass) => {
-                    pass.inject = Some(false);
+            if !node.is_pass() {
+                for out in node.outputs_mut().items_mut() {
+                    let sym = idents.for_module(module_id).out();
+                    out.out.sym = sym;
                 }
-                _ => {
-                    for out in node.outputs_mut().items_mut() {
-                        let sym = idents.for_module(module_id).out();
-                        out.out.sym = sym;
-                    }
-                }
-            }
-            if let Node::Pass(pass) = node {
-                pass.inject = Some(false);
             }
 
             node_id

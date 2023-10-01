@@ -1,10 +1,7 @@
 use std::fmt::Debug;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    arena::with_arena, net_kind::NetKind, net_list::NodeOutId, sig_ty::PrimTy,
-    symbol::Symbol,
-};
+use crate::{arena::with_arena, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Merger {
@@ -22,11 +19,7 @@ impl Merger {
     ) -> Self {
         Self {
             inputs: unsafe { with_arena().alloc_from_iter(inputs) },
-            output: NodeOutput {
-                ty: PrimTy::BitVec(width),
-                sym,
-                kind: NetKind::Wire,
-            },
+            output: NodeOutput::wire(PrimTy::BitVec(width), sym),
             rev,
         }
     }

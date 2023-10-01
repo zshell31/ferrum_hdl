@@ -3,7 +3,7 @@ use std::iter;
 use either::Either;
 
 use crate::{
-    net_list::{NodeId, NodeOutId, OutId},
+    net_list::{ModNodeId, ModNodeOutId, NodeId, NodeOutId, OutId},
     node::NodeOutput,
 };
 
@@ -92,6 +92,10 @@ impl<'a> NodeOutWithId<'a> {
     pub fn node_out_id(&self, node_id: NodeId) -> NodeOutId {
         NodeOutId::new(node_id, self.ind)
     }
+
+    pub fn mod_node_out_id(&self, node_id: ModNodeId) -> ModNodeOutId {
+        ModNodeOutId::new(node_id, self.ind)
+    }
 }
 
 pub struct NodeOutWithIdMut<'a> {
@@ -102,6 +106,10 @@ pub struct NodeOutWithIdMut<'a> {
 impl<'a> NodeOutWithIdMut<'a> {
     pub fn node_out_id(&self, node_id: NodeId) -> NodeOutId {
         NodeOutId::new(node_id, self.ind)
+    }
+
+    pub fn mod_node_out_id(&self, node_id: ModNodeId) -> ModNodeOutId {
+        ModNodeOutId::new(node_id, self.ind)
     }
 }
 

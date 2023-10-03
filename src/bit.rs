@@ -4,6 +4,7 @@ use std::{
     ops::{BitAnd, BitOr, Not},
 };
 
+use ferrum_macros::{blackbox, blackbox_ty};
 use ferrum_netlist::sig_ty::PrimTy;
 
 use crate::{
@@ -14,6 +15,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[blackbox_ty(Bit)]
 #[repr(transparent)]
 pub struct Bit(bool);
 
@@ -68,7 +70,9 @@ impl Bit {
     }
 }
 
+#[blackbox(BitH)]
 pub const H: Bit = Bit(true);
+#[blackbox(BitL)]
 pub const L: Bit = Bit(false);
 
 impl From<bool> for Bit {

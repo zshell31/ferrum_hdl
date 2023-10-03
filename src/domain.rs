@@ -1,6 +1,7 @@
 use std::marker::PhantomData;
 
 use derive_where::derive_where;
+use ferrum_macros::blackbox_ty;
 
 pub const PICOSECONDS: usize = 1_000_000_000_000;
 
@@ -22,6 +23,7 @@ impl ClockDomain for DummySystem {
 }
 
 #[derive_where(Debug, Clone, Copy)]
+#[blackbox_ty(Clock)]
 pub struct Clock<D: ClockDomain> {
     _dom: PhantomData<D>,
 }

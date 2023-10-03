@@ -7,6 +7,7 @@ use std::{
 };
 
 use derive_where::derive_where;
+use ferrum_macros::{blackbox, blackbox_ty};
 use seq_macro::seq;
 
 use crate::{
@@ -46,6 +47,7 @@ impl_signal_value_for_tuples!(11);
 impl_signal_value_for_tuples!(12);
 
 #[derive_where(Debug, Clone)]
+#[blackbox_ty(Signal)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
     _dom: PhantomData<D>,
@@ -72,15 +74,18 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         value
     }
 
+    #[blackbox(SignalWatch)]
     pub fn watch(mut self, name: &'static str) -> Self {
         self.name = Some(name);
         self
     }
 
+    #[blackbox(SignalLift)]
     pub fn lift(value: T) -> Signal<D, T> {
         Self::new(move |_| value)
     }
 
+    #[blackbox(SignalMap)]
     pub fn map<U: SignalValue, F>(self, f: F) -> Signal<D, U>
     where
         F: Fn(T) -> U + Clone + 'static,
@@ -92,6 +97,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         })
     }
 
+    #[blackbox(SignalAndThen)]
     pub fn and_then<U: SignalValue, F>(self, f: F) -> Signal<D, U>
     where
         F: Fn(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
@@ -125,6 +131,7 @@ impl<D: ClockDomain> Signal<D, Bit> {
 pub type Reset<D: ClockDomain> = Signal<D, Bit>;
 
 impl<D: ClockDomain> Reset<D> {
+    #[blackbox(SignalReset)]
     pub fn reset() -> Self {
         Self::lift(L)
     }
@@ -156,6 +163,7 @@ impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
 }
 
 #[derive_where(Debug)]
+#[blackbox_ty(Wrapped)]
 pub struct Wrapped<D: ClockDomain, T: SignalValue>(Signal<D, T>);
 
 impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
@@ -172,6 +180,7 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
 
     #[allow(clippy::should_implement_trait)]
     #[inline(always)]
+    #[blackbox(SignalValue)]
     pub fn value(&self) -> T {
         self.0.next.borrow().value()
     }
@@ -204,6 +213,7 @@ impl Source<Bit> {
     }
 }
 
+#[blackbox(SignalApply2)]
 pub fn apply2<D: ClockDomain, T: SignalValue, U: SignalValue, V: SignalValue, F>(
     s1: Signal<D, T>,
     s2: Signal<D, U>,
@@ -301,6 +311,7 @@ where
     }
 }
 
+#[blackbox(SignalReg)]
 pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
@@ -320,6 +331,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     })
 }
 
+#[blackbox(SignalRegEn)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
@@ -347,11 +359,14 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
 pub trait Unbundle {
     type Unbundled;
 
+    #[blackbox(Unbundle)]
     fn unbundle(self) -> Self::Unbundled;
 }
 
 pub trait Bundle {
     type Bundled: Unbundle<Unbundled = Self>;
+
+    #[blackbox(Bundle)]
     fn bundle(self) -> Self::Bundled;
 }
 

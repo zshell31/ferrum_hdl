@@ -3,7 +3,8 @@ members = [
   ".",
   "ferrum_compiler",
   "ferrum_macros",
-  "ferrum_netlist"
+  "ferrum_netlist",
+  "ferrum_blackbox"
 ]
 
 [package]

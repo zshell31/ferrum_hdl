@@ -1,8 +1,14 @@
 use std::fmt::Debug;
 
+use ferrum_blackbox::{Blackbox, BlackboxTy};
 use ferrum_netlist::{
     arena::with_arena,
     sig_ty::{PrimTy, SignalTy},
+};
+use rustc_ast::{
+    token::{Lit, LitKind, Token, TokenKind},
+    tokenstream::TokenTree,
+    AttrArgs, AttrKind, DelimArgs,
 };
 use rustc_hir::{
     def_id::{DefId, LocalDefId},
@@ -17,10 +23,11 @@ use rustc_type_ir::{
 
 use super::{generic::Generics, Generator};
 use crate::{
-    blackbox::{self, Blackbox},
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
+
+const FERRUM_TOOL: &str = "ferrum_tool";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TyOrDefId<'tcx> {
@@ -117,8 +124,17 @@ impl<'tcx> Generator<'tcx> {
             let mut blackbox = None;
 
             if let Some(def_id) = key.def_id() {
-                let def_path = self.tcx.def_path(def_id);
-                blackbox = blackbox::find_blackbox(&def_path);
+                blackbox = self.find_blackbox_(def_id);
+                if let Some(blackbox) = blackbox {
+                    if self
+                        .registered_blackboxes
+                        .insert(blackbox, def_id)
+                        .filter(|old_def_id| *old_def_id != def_id)
+                        .is_some()
+                    {
+                        panic!("Already registered blackbox '{blackbox}'");
+                    }
+                }
             }
 
             self.blackbox.insert(key.clone(), blackbox);
@@ -134,6 +150,32 @@ impl<'tcx> Generator<'tcx> {
                 )
             })
             .map_err(Into::into)
+    }
+
+    fn find_blackbox_(&self, def_id: DefId) -> Option<Blackbox> {
+        if self.crates.is_core(def_id) {
+            let def_path = self.tcx.def_path_str(def_id);
+
+            if def_path == "std::convert::From::from" {
+                return Some(Blackbox::StdFrom);
+            }
+
+            if def_path == "std::convert::Into::into" {
+                return Some(Blackbox::StdInto);
+            }
+
+            if def_path == "std::clone::Clone::clone" {
+                return Some(Blackbox::StdClone);
+            }
+        }
+
+        if self.crates.is_ferrum(def_id) {
+            return self
+                .find_ferrum_tool_attr("blackbox", def_id)
+                .and_then(|kind| Blackbox::try_from(kind).ok());
+        }
+
+        None
     }
 
     pub fn find_sig_ty<T: IsTyOrDefId<'tcx>>(
@@ -182,8 +224,7 @@ impl<'tcx> Generator<'tcx> {
 
             if sig_ty.is_none() {
                 if let Some(def_id) = key.def_id() {
-                    let def_path = self.tcx.def_path(def_id);
-                    sig_ty = blackbox::find_sig_ty(&key, &def_path);
+                    sig_ty = self.find_sig_ty_(&key, def_id);
                 }
             }
 
@@ -201,6 +242,54 @@ impl<'tcx> Generator<'tcx> {
                 )
             })
             .map_err(Into::into)
+    }
+
+    fn find_sig_ty_(
+        &self,
+        key: &TyOrDefIdWithGen<'tcx>,
+        def_id: DefId,
+    ) -> Option<SignalTy> {
+        if self.crates.is_ferrum(def_id) {
+            let blackbox_ty = self.find_ferrum_tool_attr("blackbox_ty", def_id)?;
+            let blackbox_ty = BlackboxTy::try_from(blackbox_ty).ok()?;
+
+            return match blackbox_ty {
+                BlackboxTy::Signal => key.generic_ty(1),
+                BlackboxTy::Wrapped => key.generic_ty(1),
+                BlackboxTy::BitVec => {
+                    key.generic_const(0).map(|val| PrimTy::BitVec(val).into())
+                }
+                BlackboxTy::Bit => Some(PrimTy::Bit.into()),
+                BlackboxTy::Clock => Some(PrimTy::Clock.into()),
+                BlackboxTy::Unsigned => {
+                    key.generic_const(0).map(|val| PrimTy::Unsigned(val).into())
+                }
+                BlackboxTy::Array => {
+                    let n = key.generic_const(0)?;
+                    let ty = key.generic_ty(1)?;
+
+                    Some(SignalTy::mk_array(n, ty))
+                }
+            };
+        }
+
+        None
+    }
+
+    pub fn find_blackbox_ty(&mut self, def_id: DefId) -> Option<BlackboxTy> {
+        let blackbox_ty = self.find_ferrum_tool_attr("blackbox_ty", def_id)?;
+        let blackbox_ty = BlackboxTy::try_from(blackbox_ty).ok()?;
+
+        if self
+            .registered_blackbox_tys
+            .insert(blackbox_ty, def_id)
+            .filter(|old_def_id| *old_def_id != def_id)
+            .is_some()
+        {
+            panic!("Already registered blackbox ty '{blackbox_ty}'");
+        }
+
+        Some(blackbox_ty)
     }
 
     pub fn find_sig_ty_for_hir_ty(
@@ -239,5 +328,51 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<Generics, Error> {
         Generics::from_args(self, generic_args.into_iter().map(Some), span)
+    }
+
+    fn find_ferrum_tool_attr(&self, attr_kind: &str, def_id: DefId) -> Option<&'tcx str> {
+        let attrs = self.tcx.get_attrs_unchecked(def_id);
+        for attr in attrs {
+            if let AttrKind::Normal(attr) = &attr.kind {
+                let segments = &attr.item.path.segments;
+                if segments.len() == 2
+                    && segments[0].ident.as_str() == FERRUM_TOOL
+                    && segments[1].ident.as_str() == attr_kind
+                {
+                    if let AttrArgs::Delimited(DelimArgs { tokens, .. }) = &attr.item.args
+                    {
+                        if tokens.len() == 1 {
+                            if let Some(TokenTree::Token(
+                                Token {
+                                    kind:
+                                        TokenKind::Literal(Lit {
+                                            kind: LitKind::Str,
+                                            symbol,
+                                            ..
+                                        }),
+                                    ..
+                                },
+                                _,
+                            )) = tokens.trees().next()
+                            {
+                                return Some(symbol.as_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    pub fn ignore_ty(&self, def_id: DefId) -> bool {
+        self.crates.is_core(def_id)
+            && self
+                .tcx
+                .get_lang_items(())
+                .phantom_data()
+                .filter(|phantom_data| *phantom_data == def_id)
+                .is_some()
     }
 }

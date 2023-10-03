@@ -5,6 +5,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
+use ferrum_macros::blackbox_ty;
 use ferrum_netlist::sig_ty::PrimTy;
 
 use crate::{
@@ -29,6 +30,7 @@ pub const fn unsigned_value(value: u128, width: u128) -> u128 {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[blackbox_ty(Unsigned)]
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(u128);
 

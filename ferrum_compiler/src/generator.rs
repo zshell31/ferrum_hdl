@@ -9,6 +9,7 @@ pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
+use ferrum_blackbox::{Blackbox, BlackboxTy};
 use ferrum_netlist::{
     backend::Verilog,
     group::ItemId,
@@ -31,12 +32,11 @@ use rustc_middle::{
     ty::{AssocKind, EarlyBinder, GenericArgsRef, List, ParamEnv, Ty, TyCtxt},
 };
 use rustc_session::EarlyErrorHandler;
-use rustc_span::{symbol::Ident, Span};
+use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 use rustc_type_ir::fold::TypeFoldable;
 
 use self::{generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
-    blackbox::{Blackbox, ItemPath},
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
     utils,
@@ -54,9 +54,8 @@ impl Callbacks for CompilerCallbacks {
         queries
             .global_ctxt()
             .unwrap()
-            .enter(|tcx| match find_top_module(tcx) {
-                Ok(top_module) => {
-                    let mut generator = Generator::new(tcx, top_module);
+            .enter(|tcx| match init_generator(tcx) {
+                Ok(mut generator) => {
                     generator.generate();
                 }
                 Err(e) => {
@@ -66,6 +65,13 @@ impl Callbacks for CompilerCallbacks {
 
         Compilation::Continue
     }
+}
+
+fn init_generator(tcx: TyCtxt<'_>) -> Result<Generator, Error> {
+    let crates = Crates::find_crates(tcx)?;
+    let top_module = find_top_module(tcx)?;
+
+    Ok(Generator::new(tcx, top_module, crates))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -119,6 +125,49 @@ impl<'tcx> MonoItem<'tcx> {
     }
 }
 
+struct Crates {
+    core: CrateNum,
+    std: CrateNum,
+    ferrum: CrateNum,
+}
+
+impl Crates {
+    fn find_crates(tcx: TyCtxt<'_>) -> Result<Self, Error> {
+        let mut core = None;
+        let mut std = None;
+        let mut ferrum = None;
+
+        for krate in tcx.crates(()) {
+            let crate_name = tcx.crate_name(*krate);
+            let crate_name = crate_name.as_str();
+
+            if crate_name == "core" {
+                core = Some(*krate);
+            }
+            if crate_name == "std" {
+                std = Some(*krate);
+            }
+            if crate_name == "ferrum" {
+                ferrum = Some(*krate);
+            }
+        }
+
+        let core = core.ok_or_else(|| Error::MissingCrate("core"))?;
+        let std = std.ok_or_else(|| Error::MissingCrate("std"))?;
+        let ferrum = ferrum.ok_or_else(|| Error::MissingCrate("ferrum"))?;
+
+        Ok(Self { core, std, ferrum })
+    }
+
+    pub(crate) fn is_core(&self, def_id: DefId) -> bool {
+        def_id.krate == self.core || def_id.krate == self.std
+    }
+
+    pub(crate) fn is_ferrum(&self, def_id: DefId) -> bool {
+        def_id.krate == self.ferrum
+    }
+}
+
 pub struct Generator<'tcx> {
     tcx: TyCtxt<'tcx>,
     top_module: HirItemId,
@@ -126,6 +175,9 @@ pub struct Generator<'tcx> {
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
+    crates: Crates,
+    registered_blackboxes: FxHashMap<Blackbox, DefId>,
+    registered_blackbox_tys: FxHashMap<BlackboxTy, DefId>,
     pub net_list: NetList,
     pub idents: Idents,
 }
@@ -140,7 +192,7 @@ pub struct TraitImpls<'tcx> {
 }
 
 impl<'tcx> Generator<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId) -> Self {
+    fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId, crates: Crates) -> Self {
         Self {
             tcx,
             top_module,
@@ -148,6 +200,9 @@ impl<'tcx> Generator<'tcx> {
             sig_ty: FxHashMap::default(),
             local_trait_impls: FxHashMap::default(),
             evaluated_modules: FxHashMap::default(),
+            crates,
+            registered_blackboxes: FxHashMap::default(),
+            registered_blackbox_tys: FxHashMap::default(),
             net_list: NetList::default(),
             idents: Idents::new(),
         }
@@ -184,8 +239,8 @@ impl<'tcx> Generator<'tcx> {
 
     fn collect_local_trait_impls(&mut self) {
         for (trait_id, _) in self.tcx.all_local_trait_impls(()) {
-            let def_path = self.tcx.def_path(*trait_id);
-            if def_path == ItemPath(&["convert", "From"]) {
+            let def_path = self.tcx.def_path_str(*trait_id);
+            if def_path == "std::convert::From" {
                 let fn_did = self
                     .tcx
                     .associated_items(*trait_id)

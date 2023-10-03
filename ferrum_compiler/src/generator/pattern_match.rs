@@ -91,9 +91,6 @@ impl<'tcx> Generator<'tcx> {
                     Self::zip_tuple_pats_with(pats, dot_dot_pos, group.item_ids())
                         .filter(|(pat, _)| pat.is_some())
                 {
-                    if let ItemId::Node(node_id) = *item_id {
-                        println!("{:?}", self.net_list[node_id]);
-                    }
                     self.pattern_match(pat.unwrap(), *item_id, module_id)?;
                 }
             }

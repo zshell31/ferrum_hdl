@@ -8,7 +8,6 @@ use rustc_middle::ty::{FieldDef, GenericArgsRef, Ty, TyKind};
 use rustc_span::Span;
 
 use crate::{
-    blackbox,
     error::{Error, SpanError, SpanErrorKind},
     generator::Generator,
 };
@@ -30,16 +29,19 @@ impl<'tcx> Generator<'tcx> {
                     field.ty(tcx, adt_generics),
                 )
             })
-            .filter(|(_, ty)| match ty.kind() {
-                TyKind::Adt(adt, _) => {
-                    let def_path = tcx.def_path(adt.did());
-                    !blackbox::ignore_ty(&def_path)
+            .filter_map(|(sym, ty)| {
+                let check_ty = match ty.kind() {
+                    TyKind::Adt(adt, _) => !self.ignore_ty(adt.did()),
+                    _ => true,
+                };
+                if check_ty {
+                    Some(
+                        self.find_sig_ty(ty, generics, span)
+                            .map(|sig_ty| Named::new(sig_ty, sym)),
+                    )
+                } else {
+                    None
                 }
-                _ => true,
-            })
-            .map(|(sym, ty)| {
-                self.find_sig_ty(ty, generics, span)
-                    .map(|sig_ty| Named::new(sig_ty, sym))
             });
 
         let tys = unsafe { with_arena().alloc_from_res_iter(fields)? };

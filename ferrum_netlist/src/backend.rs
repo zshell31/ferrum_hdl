@@ -687,7 +687,7 @@ endgenerate
 
                 self.buffer.write_template(format_args!(
                     "
-always @ (*) begin
+always @(*) begin
     case ({sel})
         1'h0: 
             {output} = {input2};

@@ -1,3 +1,4 @@
+use ferrum_macros::blackbox;
 use ferrum_netlist::sig_ty::PrimTy;
 
 pub trait IsPrimTy: Sized {
@@ -23,6 +24,7 @@ impl<T: IsPrimTy> CastInner<T> for T {
 }
 
 pub trait Cast {
+    #[blackbox(Cast)]
     fn cast<T>(self) -> T
     where
         Self: CastInner<T>,

@@ -3,6 +3,8 @@ use std::{
     ops::{BitAnd, BitOr, BitOrAssign, Not, Shl},
 };
 
+use ferrum_macros::{blackbox, blackbox_ty};
+
 use crate::{
     bit::Bit,
     bit_pack::BitPack,
@@ -25,6 +27,7 @@ pub(crate) const fn msb_inner(inner: BitVecInner, width: usize) -> Bit {
 }
 
 #[derive(Debug, Clone, Copy)]
+#[blackbox_ty(BitVec)]
 pub struct BitVec<const N: usize>(BitVecInner);
 
 impl<const N: usize> BitVec<N> {
@@ -42,6 +45,7 @@ impl<const N: usize> BitVec<N> {
         msb_inner(self.inner(), N)
     }
 
+    #[blackbox(BitVecShrink)]
     pub fn shrink<const M: usize>(self) -> BitVec<M>
     where
         Assert<{ M < N }>: IsTrue,
@@ -49,6 +53,7 @@ impl<const N: usize> BitVec<N> {
         BitVec::<M>::from(self.0)
     }
 
+    #[blackbox(BitVecSlice)]
     pub fn slice<const S: usize, const M: usize>(self) -> BitVec<M>
     where
         Assert<{ M > 0 }>: IsTrue,
@@ -59,6 +64,7 @@ impl<const N: usize> BitVec<N> {
         BitVec::<M>::from(inner)
     }
 
+    #[blackbox(BitVecUnpack)]
     pub fn unpack<T: BitPack<Packed = Self>>(self) -> T {
         T::unpack(self)
     }

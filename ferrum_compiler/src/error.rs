@@ -3,15 +3,16 @@ use std::{
     io,
 };
 
+use ferrum_blackbox::Blackbox;
 use ferrum_netlist::sig_ty::PrimTy;
 use rustc_span::{symbol::Ident, Span};
-
-use crate::blackbox::Blackbox;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("cannot find 'top_module' function")]
     MissingTopModule,
+    #[error("cannot find crate '{0}'")]
+    MissingCrate(&'static str),
     #[error("{0}")]
     Span(SpanError),
     #[error("{0}")]

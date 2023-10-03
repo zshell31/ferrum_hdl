@@ -75,6 +75,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferrum_blackbox"
+version = "0.1.0"
+dependencies = [
+ "strum",
+]
+
+[[package]]
 name = "ferrum_compiler"
 version = "0.1.0"
 dependencies = [
@@ -82,6 +89,7 @@ dependencies = [
  "bumpalo",
  "either",
  "ferrum",
+ "ferrum_blackbox",
  "ferrum_netlist",
  "smallvec",
  "thiserror",
@@ -91,6 +99,7 @@ dependencies = [
 name = "ferrum_macros"
 version = "0.1.0"
 dependencies = [
+ "ferrum_blackbox",
  "proc-macro2",
  "quote",
  "syn",

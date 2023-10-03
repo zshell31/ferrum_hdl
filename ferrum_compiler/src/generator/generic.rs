@@ -1,4 +1,5 @@
 use either::Either;
+use ferrum_blackbox::BlackboxTy;
 use ferrum_netlist::{arena::with_arena, sig_ty::SignalTy};
 use rustc_middle::ty::{
     GenericArg, GenericArgsRef, List, ParamEnv, Ty, TyCtxt, UnevaluatedConst,
@@ -11,7 +12,6 @@ use rustc_type_ir::{
 
 use super::Generator;
 use crate::{
-    blackbox::ItemPath,
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
@@ -125,18 +125,17 @@ impl Generics {
                 })))
             }
             TyKind::Adt(adt, generics) if !generics.is_empty() => {
-                // TODO: refactor
-                if generator.tcx.def_path(adt.did()) == ItemPath(&["domain", "Clock"]) {
+                let blackbox_ty = generator.find_blackbox_ty(adt.did());
+                if let Some(BlackboxTy::Clock) = blackbox_ty {
                     return Ok(None);
                 }
 
-                let def_path = generator.tcx.def_path(adt.did());
-                let generics = if def_path == ItemPath(&["signal", "Signal"])
-                    || def_path == ItemPath(&["signal", "Wrapped"])
-                {
-                    Either::Left([None, Some(generics[1])].into_iter()) // the first generic argument is ClockDomain
-                } else {
-                    Either::Right(generics.iter().map(Some))
+                let generics = match blackbox_ty {
+                    Some(BlackboxTy::Signal | BlackboxTy::Wrapped) => {
+                        // the first generic argument is ClockDomain,
+                        Either::Left([None, Some(generics[1])].into_iter())
+                    }
+                    _ => Either::Right(generics.iter().map(Some)),
                 };
 
                 Self::from_args(generator, generics, span).map(Some)

@@ -17,7 +17,6 @@ use rustc_span::symbol::Ident;
 
 use super::{EvalContext, Generator};
 use crate::{
-    blackbox,
     error::{Error, SpanError, SpanErrorKind},
     idents::Idents,
 };
@@ -110,7 +109,7 @@ impl<'tcx> Generator<'tcx> {
         for (input, param) in inputs {
             let ty = self.node_type(param.hir_id, ctx);
             if let TyKind::Adt(adt, ..) = ty.kind() {
-                if blackbox::ignore_ty(&self.tcx.def_path(adt.did())) {
+                if self.ignore_ty(adt.did()) {
                     continue;
                 }
             }

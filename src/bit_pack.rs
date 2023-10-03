@@ -1,3 +1,5 @@
+use ferrum_macros::blackbox;
+
 use crate::{
     bit::Bit,
     bit_vec::{msb_inner, BitVec, BitVecInner},
@@ -26,15 +28,18 @@ impl<const N: usize> IsPacked for BitVec<N> {
 pub trait BitPack: BitSize {
     type Packed: IsPacked;
 
+    #[blackbox(BitPackPack)]
     fn pack(&self) -> Self::Packed;
 
     fn unpack(packed: Self::Packed) -> Self;
 
+    #[blackbox(BitPackRepack)]
     fn repack<T: BitPack<Packed = Self::Packed>>(&self) -> T {
         let bitvec = self.pack();
         T::unpack(bitvec)
     }
 
+    #[blackbox(BitPackMsb)]
     fn msb(&self) -> Bit {
         self.pack().msb()
     }

@@ -5,6 +5,7 @@ use std::{
     ops::Index,
 };
 
+use ferrum_macros::{blackbox, blackbox_ty};
 use smallvec::SmallVec;
 
 use crate::{
@@ -18,6 +19,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy)]
+#[blackbox_ty(Array)]
 #[repr(transparent)]
 pub struct Array<const N: usize, T>([T; N]);
 
@@ -141,10 +143,6 @@ impl<const N: usize, U, T: PartialEq<U>> PartialEq<[U; N]> for Array<N, T> {
 impl<const N: usize, T: Eq> Eq for Array<N, T> {}
 
 impl<const N: usize, T> Array<N, T> {
-    pub fn into_inner(self) -> [T; N] {
-        self.0
-    }
-
     pub fn at<const M: usize>(self) -> T
     where
         Assert<{ M < N }>: IsTrue,
@@ -165,6 +163,7 @@ impl<const N: usize, T> Array<N, T> {
         })
     }
 
+    #[blackbox(ArrayReverse)]
     pub fn reverse(self) -> Self
     where
         T: Clone,
@@ -176,6 +175,7 @@ impl<const N: usize, T> Array<N, T> {
         values.into()
     }
 
+    #[blackbox(ArrayMap)]
     pub fn map<U>(self, f: impl Fn(T) -> U) -> Array<N, U> {
         self.0.map(f).into()
     }

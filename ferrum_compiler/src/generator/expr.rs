@@ -937,12 +937,12 @@ impl<'tcx> Generator<'tcx> {
                                 self.tcx,
                                 self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
                             );
+                            let rel_ty = ctx.instantiate(self.tcx, rel_ty);
+                            let args = self.tcx.mk_args(&[rel_ty.into()]);
 
-                            if let Some(const_val) = self.eval_const_val(
-                                def_id,
-                                utils::subst(rel_ty),
-                                Some(expr.span),
-                            ) {
+                            if let Some(const_val) =
+                                self.eval_const_val(def_id, args, Some(expr.span))
+                            {
                                 let sig_ty =
                                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
                                 return Ok(self

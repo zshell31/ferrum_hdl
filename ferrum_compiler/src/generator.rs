@@ -29,7 +29,7 @@ use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::{
     mir::UnevaluatedConst,
-    ty::{AssocKind, EarlyBinder, GenericArgsRef, List, ParamEnv, Ty, TyCtxt},
+    ty::{AssocKind, EarlyBinder, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
 use rustc_session::EarlyErrorHandler;
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
@@ -226,7 +226,7 @@ impl<'tcx> Generator<'tcx> {
         self.collect_local_trait_impls();
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_fn_item(item, List::empty(), true)?;
+        self.evaluate_top_module(item)?;
 
         self.net_list.run_stages();
 
@@ -326,12 +326,8 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         inputs: &[ItemId],
         closure: ItemId,
-        span: Span,
-    ) -> Result<(), Error> {
-        let dummy_inputs_len = self
-            .net_list
-            .dummy_inputs_len(closure)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
+    ) -> Option<()> {
+        let dummy_inputs_len = self.net_list.dummy_inputs_len(closure)?;
 
         let mut n = 0;
 
@@ -341,10 +337,10 @@ impl<'tcx> Generator<'tcx> {
             .enumerate()
         {
             n += 1;
-            let dummy_input = self
-                .net_list
-                .dummy_input(closure, ind)
-                .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
+            let dummy_input = self.net_list.dummy_input(closure, ind)?;
+            if dummy_input == node_id {
+                continue;
+            }
 
             let node_out = self.net_list[node_id].kind.outputs().only_one();
             let dummy_out = self.net_list[dummy_input].kind.outputs().only_one();
@@ -353,12 +349,12 @@ impl<'tcx> Generator<'tcx> {
             let pass = Pass::new(node_out.out.ty, node_out.node_out_id(node_id), sym);
             self.net_list.replace(dummy_input, pass);
 
-            self.propagate_sym_down(dummy_input, sym);
+            // self.propagate_sym_down(dummy_input, sym);
         }
 
         assert_eq!(n, dummy_inputs_len);
 
-        Ok(())
+        Some(())
     }
 
     pub fn propagate_sym_down(&mut self, node_id: NodeId, sym: Symbol) {

@@ -46,6 +46,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),
             false => (&args[0], &args[1], None, &args[2], &args[3]),
         };
+        let span = comb.span;
 
         let clk = generator.evaluate_expr(clk, ctx)?.node_id();
 
@@ -101,7 +102,9 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
 
         let dff_out = generator.maybe_from_bitvec(ctx.module_id, dff_out, sig_ty);
 
-        generator.link_dummy_inputs(&[dff_out], comb, rec.span)?;
+        generator
+            .link_dummy_inputs(&[dff_out], comb)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
         Ok(dff_out)
     }
@@ -132,12 +135,13 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
-        let span = rec.span;
 
         let rec = generator.evaluate_expr(rec, ctx)?;
         let comb = generator.evaluate_expr(&args[0], ctx)?;
 
-        generator.link_dummy_inputs(&[rec], comb, span)?;
+        generator.link_dummy_inputs(&[rec], comb).ok_or_else(|| {
+            SpanError::new(SpanErrorKind::ExpectedClosure, args[0].span)
+        })?;
 
         Ok(comb)
     }
@@ -153,12 +157,13 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
-        let span = rec.span;
 
         let rec = generator.evaluate_expr(rec, ctx)?;
         let comb = generator.evaluate_expr(&args[0], ctx)?;
 
-        generator.link_dummy_inputs(&[rec], comb, span)?;
+        generator.link_dummy_inputs(&[rec], comb).ok_or_else(|| {
+            SpanError::new(SpanErrorKind::ExpectedClosure, args[0].span)
+        })?;
 
         Ok(comb)
     }
@@ -173,13 +178,17 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (rec, args) = utils::expected_call(expr)?;
+        let (_, args) = utils::expected_call(expr)?;
 
         let arg1 = generator.evaluate_expr(&args[0], ctx)?;
         let arg2 = generator.evaluate_expr(&args[1], ctx)?;
         let comb = generator.evaluate_expr(&args[2], ctx)?;
 
-        generator.link_dummy_inputs(&[arg1, arg2], comb, rec.span)?;
+        generator
+            .link_dummy_inputs(&[arg1, arg2], comb)
+            .ok_or_else(|| {
+                SpanError::new(SpanErrorKind::ExpectedClosure, args[2].span)
+            })?;
 
         Ok(comb)
     }

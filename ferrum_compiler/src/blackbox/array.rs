@@ -8,7 +8,7 @@ use super::{
     EvaluateExpr,
 };
 use crate::{
-    error::Error,
+    error::{Error, SpanError, SpanErrorKind},
     generator::{EvalContext, Generator},
     utils,
 };
@@ -71,7 +71,6 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let (_, rec, args, _) = utils::exptected_method_call(expr)?;
-        let span = rec.span;
 
         let array_ty = generator
             .find_sig_ty(
@@ -87,6 +86,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         let closure = &args[0];
+        let span = closure.span;
         bitvec::bit_vec_trans_in_loop(
             generator,
             rec,
@@ -111,7 +111,11 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
                 let input = generator.from_bitvec(ctx.module_id, input, *item_ty);
 
                 let closure = generator.evaluate_expr(closure, ctx)?;
-                generator.link_dummy_inputs(&[input], closure, span)?;
+                generator
+                    .link_dummy_inputs(&[input], closure)
+                    .ok_or_else(|| {
+                        SpanError::new(SpanErrorKind::ExpectedClosure, span)
+                    })?;
 
                 let sig_ty = generator.item_ty(closure);
                 let width = sig_ty.width();

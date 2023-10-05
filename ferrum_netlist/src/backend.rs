@@ -710,7 +710,7 @@ end
 
                         self.buffer.write_template(format_args!(
                             "
-always @ (posedge {clk} or posedge {rst}) begin
+always @(posedge {clk} or posedge {rst}) begin
     if ({rst})
         {output} <= {rst_val};
     else if ({en})
@@ -722,7 +722,7 @@ end
                     None => {
                         self.buffer.write_template(format_args!(
                             "
-always @ (posedge {clk} or posedge {rst}) begin
+always @(posedge {clk} or posedge {rst}) begin
     if ({rst})
         {output} <= {rst_val};
     else

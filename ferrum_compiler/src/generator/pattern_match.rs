@@ -35,12 +35,13 @@ impl<'tcx> Generator<'tcx> {
                     ItemId::Node(node_id) => {
                         let sym = self.idents.for_module(module_id).ident(ident.as_str());
 
-                        if self.net_list[node_id].is_pass() {
-                            self.propagate_sym_down(node_id, sym)
-                        } else {
-                            self.net_list[node_id].outputs_mut().only_one_mut().out.sym =
-                                sym;
-                        }
+                        self.net_list[node_id].outputs_mut().only_one_mut().out.sym = sym;
+                        // if self.net_list[node_id].is_pass() {
+                        //     self.propagate_sym_down(node_id, sym)
+                        // } else {
+                        //     self.net_list[node_id].outputs_mut().only_one_mut().out.sym =
+                        //         sym;
+                        // }
                     }
                     ItemId::Group(group) => {
                         for item_id in group.item_ids() {

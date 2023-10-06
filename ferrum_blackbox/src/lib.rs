@@ -21,10 +21,13 @@ pub enum Blackbox {
 
     Cast,
 
+    SignalAnd,
     SignalAndThen,
     SignalApply2,
+    SignalEq,
     SignalLift,
     SignalMap,
+    SignalOr,
     SignalReg,
     SignalRegEn,
     SignalReset,

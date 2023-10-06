@@ -1,7 +1,7 @@
 use ferrum_blackbox::Blackbox;
 use ferrum_netlist::{
     group::ItemId,
-    node::{IsNode, DFF},
+    node::{BinOp, IsNode, DFF},
     params::Outputs,
 };
 use rustc_hir::Expr;
@@ -228,5 +228,22 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
 
         generator.evaluate_expr(rec, ctx)
+    }
+}
+
+pub struct SignalOp {
+    pub op: BinOp,
+}
+
+impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
+    fn evaluate_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+
+        todo!()
     }
 }

@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, rc::Rc};
 
 use derive_where::derive_where;
 
@@ -6,6 +6,7 @@ use super::{IsNode, NodeKind, NodeOutput};
 use crate::{buffer::Buffer, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive_where(Debug)]
+#[derive(Clone)]
 pub struct Expr {
     pub input: NodeOutId,
     pub output: NodeOutput,
@@ -13,7 +14,7 @@ pub struct Expr {
     // TODO: how to specify trans for different backends (Verilog, VHDL, etc)
     #[allow(clippy::type_complexity)]
     #[derive_where(skip)]
-    pub expr: Box<dyn Fn(&mut Buffer, Cow<'static, str>, Symbol)>,
+    pub expr: Rc<dyn Fn(&mut Buffer, Cow<'static, str>, Symbol)>,
 }
 
 impl Expr {
@@ -28,7 +29,7 @@ impl Expr {
             input,
             output: NodeOutput::wire(ty, sym),
             skip_output_def,
-            expr: Box::new(expr),
+            expr: Rc::new(expr),
         }
     }
 }
@@ -45,6 +46,10 @@ impl IsNode for Expr {
 
     fn inputs(&self) -> &Self::Inputs {
         &self.input
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.input
     }
 
     fn outputs(&self) -> &Self::Outputs {

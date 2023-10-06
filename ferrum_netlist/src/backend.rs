@@ -9,9 +9,9 @@ use crate::{
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, BitVecMask, Case, Const, DFFInputs, Expr, LoopStart,
-        Merger, ModInst, MultiConst, MultiPass, Mux2Node, NodeKind, NodeOutput, NotNode,
-        Pass, Splitter, DFF,
+        BinOpNode, BitNot, BitVecMask, Case, CaseInputs, Const, DFFInputs, Expr,
+        LoopStart, Merger, ModInst, MultiConst, MultiPass, Mux2, Mux2Inputs, NodeKind,
+        NodeOutput, Not, Pass, Splitter, DFF,
     },
     symbol::Symbol,
     visitor::{ParamKind, Visitor},
@@ -143,11 +143,11 @@ impl<'n> Verilog<'n> {
                 let input = inputs[node_out_id.out_id()];
                 self.inject_node_(module_id, input, expr, false, from_const);
             }
-            NodeKind::BitNot(BitNotNode { input, .. }) => {
+            NodeKind::BitNot(BitNot { input, .. }) => {
                 expr.write_str("~");
                 self.inject_node_(module_id, *input, expr, true, from_const);
             }
-            NodeKind::Not(NotNode { input, .. }) => {
+            NodeKind::Not(Not { input, .. }) => {
                 expr.write_str("!");
                 self.inject_node_(module_id, *input, expr, true, from_const);
             }
@@ -411,7 +411,7 @@ endgenerate
                 skip_output_def,
                 expr,
             }) => {
-                if !skip_output_def {
+                if !*skip_output_def {
                     self.write_local(output, None);
                 }
                 let input = self.inject_input(*input);
@@ -481,14 +481,14 @@ endgenerate
 
                     self.buffer.write_tab();
                     if width == 1 {
-                        let start = if !rev { start } else { start - 1 };
+                        let start = if !*rev { start } else { start - 1 };
 
                         self.buffer.write_fmt(format_args!(
                             "assign {output} = {input}[{start}];\n\n"
                         ));
                     } else {
                         #[allow(clippy::collapsible_else_if)]
-                        let (start, width) = if !rev {
+                        let (start, width) = if !*rev {
                             if start <= input_width - width {
                                 (start, width)
                             } else {
@@ -509,7 +509,7 @@ endgenerate
                             "assign {output} = {input}[{start} +: {width}];\n\n"
                         ));
                     }
-                    if !rev {
+                    if !*rev {
                         start = cmp::min(start + width, input_width);
                     } else {
                         start = start.saturating_sub(width);
@@ -529,7 +529,7 @@ endgenerate
                     self.buffer
                         .write_fmt(format_args!("assign {output} = {{\n"));
 
-                    let inputs = if !rev {
+                    let inputs = if !*rev {
                         Either::Left(inputs.iter())
                     } else {
                         Either::Right(inputs.iter().rev())
@@ -551,17 +551,22 @@ endgenerate
                 }
             }
             NodeKind::Case(Case {
-                inputs: (sel, inputs, default),
+                inputs:
+                    CaseInputs {
+                        sel,
+                        variants,
+                        default,
+                    },
                 output,
             }) => {
-                if !inputs.is_empty() {
+                if !variants.is_empty() {
                     self.write_local(output, None);
                     let output = output.sym;
 
                     let sel_sym = self.inject_input(*sel);
                     let sel_width = self.net_list[*sel].ty.width();
 
-                    let has_mask = inputs.iter().any(|(mask, _)| mask.mask != 0);
+                    let has_mask = variants.iter().any(|(mask, _)| mask.mask != 0);
 
                     self.buffer.write_tab();
                     self.buffer.write_fmt(format_args!("always @(*) begin\n"));
@@ -589,14 +594,14 @@ endgenerate
                         ));
                     };
 
-                    for i in 0 .. (inputs.len() - 1) {
-                        let (mask, input) = inputs[i];
+                    for i in 0 .. (variants.len() - 1) {
+                        let (mask, input) = variants[i];
                         write_case(mask, input);
                     }
 
                     match default {
                         Some(default) => {
-                            let (mask, input) = inputs.last().unwrap();
+                            let (mask, input) = variants.last().unwrap();
                             write_case(*mask, *input);
 
                             let default = self.net_list[*default].sym;
@@ -607,7 +612,7 @@ endgenerate
                             ));
                         }
                         None => {
-                            let (_, input) = inputs.last().unwrap();
+                            let (_, input) = variants.last().unwrap();
                             let default = self.inject_input(*input);
 
                             self.buffer.write_tab();
@@ -628,7 +633,7 @@ endgenerate
                     self.buffer.write_str("end\n\n");
                 }
             }
-            NodeKind::BitNot(BitNotNode { input, output }) => {
+            NodeKind::BitNot(BitNot { input, output }) => {
                 self.write_local(output, None);
                 let input = self.inject_input(*input);
                 let output = output.sym;
@@ -636,7 +641,7 @@ endgenerate
                 self.buffer
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
-            NodeKind::Not(NotNode { input, output }) => {
+            NodeKind::Not(Not { input, output }) => {
                 self.write_local(output, None);
                 let input = self.inject_input(*input);
                 let output = output.sym;
@@ -660,8 +665,13 @@ endgenerate
                     "assign {output} = {left} {bin_op} {right};\n\n"
                 ));
             }
-            NodeKind::Mux2(Mux2Node {
-                inputs: (sel, (input1, input2)),
+            NodeKind::Mux2(Mux2 {
+                inputs:
+                    Mux2Inputs {
+                        sel,
+                        input1,
+                        input2,
+                    },
                 output,
             }) => {
                 self.write_local(output, None);

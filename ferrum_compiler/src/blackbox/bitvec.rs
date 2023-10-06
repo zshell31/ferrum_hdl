@@ -1,7 +1,7 @@
 use ferrum_netlist::{
     group::ItemId,
     net_list::{NodeId, NodeOutId},
-    node::{LoopEnd, LoopStart, NodeKind, Splitter},
+    node::{IsNode, LoopEnd, LoopStart, NodeKind, Splitter},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
     symbol::Symbol,
@@ -29,6 +29,7 @@ pub fn bit_vec_trans<'tcx>(
 
     let (trans, sig_ty) = trans(generator, ctx, bit_vec)?;
     let trans = generator.net_list[trans]
+        .kind
         .outputs()
         .only_one()
         .node_out_id(trans);
@@ -129,6 +130,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
         let rec = generator.net_list[rec]
+            .kind
             .outputs()
             .only_one()
             .node_out_id(rec);
@@ -168,6 +170,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecUnpack {
         let (_, rec, _, _) = utils::exptected_method_call(expr)?;
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
         let rec = generator.net_list[rec]
+            .kind
             .outputs()
             .only_one()
             .node_out_id(rec);

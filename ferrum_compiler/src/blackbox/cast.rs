@@ -2,7 +2,7 @@ use ferrum::{bit::Bit, unsigned::Unsigned};
 use ferrum_blackbox::Blackbox;
 use ferrum_netlist::{
     group::ItemId,
-    node::Splitter,
+    node::{IsNode, Splitter},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
@@ -72,7 +72,10 @@ impl StdConversion {
 
         let node_id = item_id.node_id();
         let module_id = node_id.module_id();
-        let node_out = generator.net_list[node_id].outputs_mut().only_one_mut();
+        let node_out = generator.net_list[node_id]
+            .kind
+            .outputs_mut()
+            .only_one_mut();
         let node_out_id = node_out.node_out_id(node_id);
         let node_out = node_out.out;
 

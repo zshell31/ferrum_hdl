@@ -1,5 +1,9 @@
 use ferrum_blackbox::Blackbox;
-use ferrum_netlist::{group::ItemId, node::DFF, params::Outputs};
+use ferrum_netlist::{
+    group::ItemId,
+    node::{IsNode, DFF},
+    params::Outputs,
+};
 use rustc_hir::Expr;
 use rustc_span::Span;
 
@@ -55,6 +59,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             .map(|item_id| item_id.node_id())
             .map(|node_id| {
                 generator.net_list[node_id]
+                    .kind
                     .outputs()
                     .only_one()
                     .node_out_id(node_id)
@@ -67,6 +72,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
                     .map(|item_id| item_id.node_id())
                     .map(|node_id| {
                         generator.net_list[node_id]
+                            .kind
                             .outputs()
                             .only_one()
                             .node_out_id(node_id)
@@ -96,6 +102,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             ),
         );
         let dff_out = generator.net_list[dff]
+            .kind
             .outputs()
             .only_one()
             .node_out_id(dff);

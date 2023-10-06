@@ -1,7 +1,7 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::with_arena, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Pass {
     pub input: NodeOutId,
     pub output: NodeOutput,
@@ -30,6 +30,10 @@ impl IsNode for Pass {
         &self.input
     }
 
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.input
+    }
+
     fn outputs(&self) -> &Self::Outputs {
         &self.output
     }
@@ -39,10 +43,10 @@ impl IsNode for Pass {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MultiPass {
-    pub inputs: &'static [NodeOutId],
-    pub outputs: &'static mut [NodeOutput],
+    pub inputs: Vec<NodeOutId>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl MultiPass {
@@ -51,14 +55,12 @@ impl MultiPass {
         outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
     ) -> Self {
         let node = Self {
-            inputs: unsafe { with_arena().alloc_from_iter(inputs) },
-            outputs: unsafe {
-                with_arena().alloc_from_iter(
-                    outputs
-                        .into_iter()
-                        .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
-                )
-            },
+            inputs: Vec::collect_from(inputs),
+            outputs: Vec::collect_from(
+                outputs
+                    .into_iter()
+                    .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+            ),
         };
         assert_eq!(node.inputs.len(), node.outputs.len());
 
@@ -77,14 +79,18 @@ impl IsNode for MultiPass {
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
-        self.inputs
+        self.inputs.as_slice()
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        self.inputs.as_mut_slice()
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        self.outputs
+        self.outputs.as_slice()
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs
+        self.outputs.as_mut_slice()
     }
 }

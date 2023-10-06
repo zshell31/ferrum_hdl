@@ -1,14 +1,11 @@
 use either::Either;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    arena::with_arena, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
-    symbol::Symbol,
-};
+use crate::{net_list::NodeOutId, params::Inputs, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct DFF {
-    pub inputs: &'static DFFInputs,
+    pub inputs: DFFInputs,
     pub output: NodeOutput,
 }
 
@@ -23,14 +20,12 @@ impl DFF {
         sym: Symbol,
     ) -> Self {
         Self {
-            inputs: unsafe {
-                with_arena().alloc(DFFInputs {
-                    clk,
-                    rst,
-                    en,
-                    rst_val,
-                    data,
-                })
+            inputs: DFFInputs {
+                clk,
+                rst,
+                en,
+                rst_val,
+                data,
             },
             output: NodeOutput::reg(ty, sym),
         }
@@ -48,7 +43,11 @@ impl IsNode for DFF {
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
-        self.inputs
+        &self.inputs
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -78,6 +77,30 @@ impl Inputs for DFFInputs {
             None => {
                 Either::Right([self.clk, self.rst, self.rst_val, self.data].into_iter())
             }
+        }
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        match &mut self.en {
+            Some(en) => Either::Left(
+                [
+                    &mut self.clk,
+                    &mut self.rst,
+                    en,
+                    &mut self.rst_val,
+                    &mut self.data,
+                ]
+                .into_iter(),
+            ),
+            None => Either::Right(
+                [
+                    &mut self.clk,
+                    &mut self.rst,
+                    &mut self.rst_val,
+                    &mut self.data,
+                ]
+                .into_iter(),
+            ),
         }
     }
 

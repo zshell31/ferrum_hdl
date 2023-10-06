@@ -1,9 +1,9 @@
 use super::{const_val::ConstVal, NetList, NodeOutId};
 use crate::{
-    arena::with_arena,
+    arena::Vec,
     node::{
-        BinOp, BinOpNode, BitNotNode, Const, Merger, MultiConst, MultiPass, Node,
-        NodeKind, NotNode, Pass,
+        BinOp, BinOpNode, BitNot, Const, Merger, MultiConst, MultiPass, Node, NodeKind,
+        Not, Pass,
     },
 };
 
@@ -24,7 +24,7 @@ impl NetList {
     pub(super) fn transform(&mut self, mut node: Node) -> Node {
         match node.kind {
             NodeKind::Const(_) => node,
-            NodeKind::Pass(Pass { input, output, .. }) => match self.to_const(input) {
+            NodeKind::Pass(Pass { input, output, .. }) => match self.to_const(*input) {
                 Some(const_val) => {
                     Const::new(output.ty, const_val.val, output.sym).into()
                 }
@@ -43,12 +43,10 @@ impl NetList {
                 let values = module.outputs().map(|node_out_id| {
                     self.to_const(node_out_id).map(|const_val| const_val.val)
                 });
-                let values = unsafe { with_arena().alloc_from_opt_iter(values) };
-                let outputs = unsafe {
-                    with_arena().alloc_from_iter(
-                        module.outputs().map(|node_out_id| self[node_out_id]),
-                    )
-                };
+                let values = Vec::collect_from_opt(values);
+                let outputs = Vec::collect_from(
+                    module.outputs().map(|node_out_id| self[node_out_id]),
+                );
 
                 match values {
                     Some(values) => MultiConst::new(values, outputs).into(),
@@ -72,25 +70,23 @@ impl NetList {
 
                             node
                         } else {
-                            mod_inst.into()
+                            node
                         }
                     }
                 }
             }
-            NodeKind::Not(NotNode { input, output })
-            | NodeKind::BitNot(BitNotNode { input, output }) => {
-                match self.to_const(input) {
-                    Some(const_val) => {
-                        Const::new(output.ty, const_val.val, output.sym).into()
-                    }
-                    None => node,
+            NodeKind::Not(Not { input, output })
+            | NodeKind::BitNot(BitNot { input, output }) => match self.to_const(*input) {
+                Some(const_val) => {
+                    Const::new(output.ty, const_val.val, output.sym).into()
                 }
-            }
+                None => node,
+            },
             NodeKind::BinOp(BinOpNode {
                 bin_op,
                 inputs: (left, right),
                 output,
-            }) => match (self.to_const(left), self.to_const(right)) {
+            }) => match (self.to_const(*left), self.to_const(*right)) {
                 (Some(left), Some(right)) => {
                     let const_val = match bin_op {
                         BinOp::Add => left + right,
@@ -122,19 +118,19 @@ impl NetList {
                 match self.to_const(splitter.input) {
                     Some(input) => {
                         let rev = splitter.rev;
-                        let values = splitter.outputs.iter().map(|output| {
-                            let width = output.width();
-                            let val = input.slice(start, width, rev).val;
-                            if !rev {
-                                start += width;
-                            } else {
-                                start -= width;
-                            };
-                            val
-                        });
-                        let values = unsafe { with_arena().alloc_from_iter(values) };
+                        let values =
+                            Vec::collect_from(splitter.outputs.iter().map(|output| {
+                                let width = output.width();
+                                let val = input.slice(start, width, rev).val;
+                                if !rev {
+                                    start += width;
+                                } else {
+                                    start -= width;
+                                };
+                                val
+                            }));
 
-                        MultiConst::new(values, splitter.outputs).into()
+                        MultiConst::new(values, splitter.outputs.iter().copied()).into()
                     }
                     None => {
                         let output = splitter.outputs[0];
@@ -143,7 +139,7 @@ impl NetList {
                         {
                             Pass::new(output.ty, splitter.input, output.sym).into()
                         } else {
-                            splitter.into()
+                            node
                         }
                     }
                 }
@@ -156,7 +152,7 @@ impl NetList {
                     None => Pass::new(output.ty, inputs[0], output.sym).into(),
                 }
             }
-            NodeKind::Merger(Merger { inputs, .. }) if inputs.len() > 1 => {
+            NodeKind::Merger(Merger { ref inputs, .. }) if inputs.len() > 1 => {
                 if inputs.iter().all(|input| self[input.node_id()].from_const) {
                     node.from_const = true;
                 }

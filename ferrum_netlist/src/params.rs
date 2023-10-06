@@ -11,11 +11,17 @@ use crate::{
 pub trait Inputs {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_;
 
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_;
+
     fn len(&self) -> usize;
 }
 
 impl Inputs for () {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+        iter::empty()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
         iter::empty()
     }
 
@@ -29,6 +35,10 @@ impl Inputs for NodeOutId {
         [*self].into_iter()
     }
 
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        [self].into_iter()
+    }
+
     fn len(&self) -> usize {
         1
     }
@@ -37,6 +47,10 @@ impl Inputs for NodeOutId {
 impl Inputs for (NodeOutId, NodeOutId) {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         [self.0, self.1].into_iter()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        [&mut self.0, &mut self.1].into_iter()
     }
 
     fn len(&self) -> usize {
@@ -49,32 +63,22 @@ impl Inputs for (NodeOutId, NodeOutId, NodeOutId) {
         [self.0, self.1, self.2].into_iter()
     }
 
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        [&mut self.0, &mut self.1, &mut self.2].into_iter()
+    }
+
     fn len(&self) -> usize {
         3
-    }
-}
-
-impl Inputs for (NodeOutId, NodeOutId, NodeOutId, Option<NodeOutId>) {
-    fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        match self.3 {
-            Some(node_out_id) => {
-                Either::Left([self.0, self.1, self.2, node_out_id].into_iter())
-            }
-            None => Either::Right([self.0, self.1, self.2].into_iter()),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self.3 {
-            Some(_) => 4,
-            None => 3,
-        }
     }
 }
 
 impl Inputs for [NodeOutId] {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         self.iter().copied()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        self.iter_mut()
     }
 
     fn len(&self) -> usize {

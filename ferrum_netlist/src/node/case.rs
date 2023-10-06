@@ -4,8 +4,7 @@ use either::Either;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    arena::with_arena, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
-    symbol::Symbol,
+    arena::Vec, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy, symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -56,11 +55,7 @@ impl BitVecMask {
 
 #[derive(Debug, Clone)]
 pub struct Case {
-    pub inputs: (
-        NodeOutId,
-        &'static [(BitVecMask, NodeOutId)],
-        Option<NodeOutId>,
-    ),
+    pub inputs: CaseInputs,
     pub output: NodeOutput,
 }
 
@@ -68,16 +63,16 @@ impl Case {
     pub fn new(
         ty: PrimTy,
         sel: NodeOutId,
-        inputs: impl IntoIterator<Item = (BitVecMask, NodeOutId)>,
+        variants: impl IntoIterator<Item = (BitVecMask, NodeOutId)>,
         default: Option<NodeOutId>,
         sym: Symbol,
     ) -> Self {
         Self {
-            inputs: (
+            inputs: CaseInputs {
                 sel,
-                unsafe { with_arena().alloc_from_iter(inputs) },
+                variants: Vec::collect_from(variants),
                 default,
-            ),
+            },
             output: NodeOutput::wire(ty, sym),
         }
     }
@@ -90,15 +85,15 @@ impl From<Case> for NodeKind {
 }
 
 impl IsNode for Case {
-    type Inputs = (
-        NodeOutId,
-        &'static [(BitVecMask, NodeOutId)],
-        Option<NodeOutId>,
-    );
+    type Inputs = CaseInputs;
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
         &self.inputs
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -110,26 +105,37 @@ impl IsNode for Case {
     }
 }
 
-impl Inputs
-    for (
-        NodeOutId,
-        &'static [(BitVecMask, NodeOutId)],
-        Option<NodeOutId>,
-    )
-{
-    fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        let outs =
-            iter::once(self.0).chain(self.1.iter().map(|(_, node_out_id)| *node_out_id));
+#[derive(Debug, Clone)]
+pub struct CaseInputs {
+    pub sel: NodeOutId,
+    pub variants: Vec<(BitVecMask, NodeOutId)>,
+    pub default: Option<NodeOutId>,
+}
 
-        match self.2 {
+impl Inputs for CaseInputs {
+    fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+        let outs = iter::once(self.sel)
+            .chain(self.variants.iter().map(|(_, node_out_id)| *node_out_id));
+
+        match self.default {
+            Some(node_out_id) => Either::Left(outs.chain(iter::once(node_out_id))),
+            None => Either::Right(outs),
+        }
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        let outs = iter::once(&mut self.sel)
+            .chain(self.variants.iter_mut().map(|(_, node_out_id)| node_out_id));
+
+        match &mut self.default {
             Some(node_out_id) => Either::Left(outs.chain(iter::once(node_out_id))),
             None => Either::Right(outs),
         }
     }
 
     fn len(&self) -> usize {
-        let len = self.1.len() + 1;
-        match self.2 {
+        let len = self.variants.len() + 1;
+        match self.default {
             Some(_) => len + 1,
             None => len,
         }

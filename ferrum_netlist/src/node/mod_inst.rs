@@ -1,17 +1,17 @@
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    arena::with_arena,
+    arena::Vec,
     net_list::{ModuleId, NodeOutId},
     sig_ty::PrimTy,
     symbol::Symbol,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModInst {
     pub name: Symbol,
     pub module_id: ModuleId,
-    pub inputs: &'static [NodeOutId],
-    pub outputs: &'static mut [NodeOutput],
+    pub inputs: Vec<NodeOutId>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl ModInst {
@@ -24,14 +24,12 @@ impl ModInst {
         Self {
             name,
             module_id,
-            inputs: unsafe { with_arena().alloc_from_iter(inputs) },
-            outputs: unsafe {
-                with_arena().alloc_from_iter(
-                    outputs
-                        .into_iter()
-                        .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
-                )
-            },
+            inputs: Vec::collect_from(inputs),
+            outputs: Vec::collect_from(
+                outputs
+                    .into_iter()
+                    .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+            ),
         }
     }
 }
@@ -47,14 +45,18 @@ impl IsNode for ModInst {
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
-        self.inputs
+        self.inputs.as_slice()
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        self.inputs.as_mut_slice()
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        self.outputs
+        self.outputs.as_slice()
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs
+        self.outputs.as_mut_slice()
     }
 }

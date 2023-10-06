@@ -5,7 +5,7 @@ mod cons;
 mod dff;
 mod expr;
 mod input;
-mod loop_nodes;
+mod loops;
 mod merger;
 mod mod_inst;
 mod mux2;
@@ -20,21 +20,22 @@ use auto_enums::auto_enum;
 pub(crate) use self::cons::MultiConst;
 pub use self::{
     bin_op::{BinOp, BinOpNode},
-    bit_not::BitNotNode,
-    case::{BitVecMask, Case},
+    bit_not::BitNot,
+    case::{BitVecMask, Case, CaseInputs},
     cons::Const,
     dff::{DFFInputs, DFF},
     expr::Expr,
-    input::InputNode,
-    loop_nodes::{LoopEnd, LoopStart},
+    input::Input,
+    loops::{LoopEnd, LoopStart},
     merger::Merger,
     mod_inst::ModInst,
-    mux2::Mux2Node,
-    not::NotNode,
+    mux2::{Mux2, Mux2Inputs},
+    not::Not,
     pass::{MultiPass, Pass},
     splitter::Splitter,
 };
 use crate::{
+    arena::with_arena,
     net_kind::NetKind,
     net_list::{NodeId, NodeOutId, OutId},
     params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
@@ -47,6 +48,7 @@ pub struct NodeOutput {
     pub ty: PrimTy,
     pub sym: Symbol,
     pub kind: NetKind,
+    // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
 }
@@ -80,15 +82,20 @@ impl NodeOutput {
 
 #[derive(Debug)]
 pub struct Node {
-    pub kind: NodeKind,
+    pub kind: &'static mut NodeKind,
+    // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
     pub from_const: bool,
 }
 
-impl<T: Into<NodeKind>> From<T> for Node {
-    fn from(node: T) -> Self {
-        let kind = node.into();
+impl Node {
+    pub fn new(kind: NodeKind) -> Self {
+        let kind = unsafe { with_arena().alloc(kind) };
+        Self::new_from_ref(kind)
+    }
+
+    pub fn new_from_ref(kind: &'static mut NodeKind) -> Self {
         let from_const = kind.is_const();
 
         Self {
@@ -100,70 +107,22 @@ impl<T: Into<NodeKind>> From<T> for Node {
     }
 }
 
-impl Node {
-    #[inline(always)]
-    pub fn is_input(&self) -> bool {
-        self.kind.is_input()
+impl Clone for Node {
+    fn clone(&self) -> Self {
+        let kind = self.kind.clone();
+        Self::new(kind)
     }
+}
 
-    #[inline(always)]
-    pub fn is_dummy_input(&self) -> bool {
-        self.kind.is_dummy_input()
+impl<T: Into<NodeKind>> From<T> for Node {
+    fn from(node: T) -> Self {
+        Self::new(node.into())
     }
+}
 
-    #[inline(always)]
-    pub fn is_pass(&self) -> bool {
-        self.kind.is_pass()
-    }
-
-    #[inline(always)]
-    pub fn is_expr(&self) -> bool {
-        self.kind.is_expr()
-    }
-
-    #[inline(always)]
-    pub fn is_const(&self) -> bool {
-        self.kind.is_const()
-    }
-
-    #[inline(always)]
-    pub fn is_splitter(&self) -> bool {
-        self.kind.is_splitter()
-    }
-
-    #[inline(always)]
-    pub fn is_merger(&self) -> bool {
-        self.kind.is_merger()
-    }
-
-    #[inline(always)]
-    pub fn is_mux(&self) -> bool {
-        self.kind.is_mux()
-    }
-
-    #[inline(always)]
-    pub fn is_mod_inst(&self) -> bool {
-        self.kind.is_mod_inst()
-    }
-
-    #[inline(always)]
-    pub fn inputs(&self) -> &<NodeKind as IsNode>::Inputs {
-        self.kind.inputs()
-    }
-
-    #[inline(always)]
-    pub fn outputs(&self) -> &<NodeKind as IsNode>::Outputs {
-        self.kind.outputs()
-    }
-
-    #[inline(always)]
-    pub fn outputs_mut(&mut self) -> &mut <NodeKind as IsNode>::Outputs {
-        self.kind.outputs_mut()
-    }
-
-    #[inline(always)]
-    pub fn node_out_ids(&self, node_id: NodeId) -> impl Iterator<Item = NodeOutId> + '_ {
-        self.kind.node_out_ids(node_id)
+impl From<&'static mut NodeKind> for Node {
+    fn from(kind: &'static mut NodeKind) -> Self {
+        Self::new_from_ref(kind)
     }
 }
 
@@ -172,6 +131,8 @@ pub trait IsNode: Into<NodeKind> {
     type Outputs: Outputs + ?Sized;
 
     fn inputs(&self) -> &Self::Inputs;
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs;
 
     fn outputs(&self) -> &Self::Outputs;
 
@@ -188,7 +149,7 @@ macro_rules! define_nodes {
     (
         $( $kind:ident => $node:ident ),+ $(,)?
     ) => {
-        #[derive(Debug)]
+        #[derive(Debug, Clone)]
         pub enum NodeKind {
             $(
                 $kind($node),
@@ -209,6 +170,15 @@ macro_rules! define_nodes {
                 match self {
                     $(
                         Self::$kind(node) => Inputs::items(node.inputs()),
+                    )+
+                }
+            }
+
+            #[auto_enum(Iterator)]
+            fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+                match self {
+                    $(
+                        Self::$kind(node) => Inputs::items_mut(node.inputs_mut()),
                     )+
                 }
             }
@@ -283,6 +253,10 @@ macro_rules! define_nodes {
                 unsafe { mem::transmute(self) }
             }
 
+            fn inputs_mut(&mut self) -> &mut NodeInputs {
+                unsafe { mem::transmute(self) }
+        }
+
             fn outputs(&self) -> &NodeOutputs {
                 unsafe { mem::transmute(self) }
             }
@@ -300,8 +274,8 @@ impl !Sync for NodeKind {}
 impl !Send for NodeKind {}
 
 define_nodes!(
-    DummyInput => InputNode,
-    Input => InputNode,
+    DummyInput => Input,
+    Input => Input,
     ModInst => ModInst,
     LoopStart => LoopStart,
     LoopEnd => LoopEnd,
@@ -314,9 +288,9 @@ define_nodes!(
     Merger => Merger,
     Case => Case,
     BinOp => BinOpNode,
-    BitNot => BitNotNode,
-    Not => NotNode,
-    Mux2 => Mux2Node,
+    BitNot => BitNot,
+    Not => Not,
+    Mux2 => Mux2,
     DFF => DFF,
 );
 
@@ -370,7 +344,7 @@ mod tests {
     #[test]
     fn maxsize() {
         print_mem_size::<NodeKind>();
-        print_mem_size::<InputNode>();
+        print_mem_size::<Input>();
         print_mem_size::<ModInst>();
         print_mem_size::<LoopStart>();
         print_mem_size::<LoopEnd>();
@@ -381,9 +355,9 @@ mod tests {
         print_mem_size::<Merger>();
         print_mem_size::<Case>();
         print_mem_size::<BinOpNode>();
-        print_mem_size::<BitNotNode>();
-        print_mem_size::<NotNode>();
-        print_mem_size::<Mux2Node>();
+        print_mem_size::<BitNot>();
+        print_mem_size::<Not>();
+        print_mem_size::<Mux2>();
         print_mem_size::<DFF>();
     }
 }

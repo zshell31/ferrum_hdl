@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
-pub struct InputNode {
+pub struct Input {
     output: NodeOutput,
 }
 
-impl InputNode {
+impl Input {
     pub fn new(ty: PrimTy, sym: Symbol) -> Self {
         Self {
             output: NodeOutput::wire(ty, sym),
@@ -16,18 +16,22 @@ impl InputNode {
     }
 }
 
-impl From<InputNode> for NodeKind {
-    fn from(node: InputNode) -> Self {
+impl From<Input> for NodeKind {
+    fn from(node: Input) -> Self {
         Self::Input(node)
     }
 }
 
-impl IsNode for InputNode {
-    type Inputs = ();
+impl IsNode for Input {
+    type Inputs = [NodeOutId];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
-        &()
+        &[]
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {

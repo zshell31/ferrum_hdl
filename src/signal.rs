@@ -137,6 +137,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         })
     }
 
+    #[blackbox(SignalEq)]
     pub fn eq<U: SignalValue>(self, other: Signal<D, U>) -> Signal<D, bool>
     where
         T: PartialEq<U>,
@@ -152,10 +153,12 @@ impl<D: ClockDomain> Signal<D, bool> {
         source.revert();
     }
 
+    #[blackbox(SignalAnd)]
     pub fn and(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| this && other)
     }
 
+    #[blackbox(SignalOr)]
     pub fn or(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| this || other)
     }
@@ -168,10 +171,12 @@ impl<D: ClockDomain> Signal<D, Bit> {
         source.revert();
     }
 
+    #[blackbox(SignalAnd)]
     pub fn and(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| Bit::from(this.into() && other.into()))
     }
 
+    #[blackbox(SignalOr)]
     pub fn or(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| Bit::from(this.into() || other.into()))
     }
@@ -252,20 +257,24 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
 }
 
 impl<D: ClockDomain> Wrapped<D, bool> {
+    #[blackbox(SignalAnd)]
     pub fn and(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
         Signal::from(self).and(other)
     }
 
+    #[blackbox(SignalOr)]
     pub fn or(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
         Signal::from(self).or(other)
     }
 }
 
 impl<D: ClockDomain> Wrapped<D, Bit> {
+    #[blackbox(SignalAnd)]
     pub fn and(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
         Signal::from(self).and(other)
     }
 
+    #[blackbox(SignalOr)]
     pub fn or(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
         Signal::from(self).or(other)
     }
@@ -553,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let s = [0, 4, 3, 1, 2]
+        let s = [0_u8, 4, 3, 1, 2]
             .into_iter()
             .map(Unsigned::<8>::from)
             .into_signal::<TestSystem>();
@@ -565,7 +574,7 @@ mod tests {
     fn test_reg() {
         let clk = Clock::<TestSystem>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0.into(), |val| val + 1);
+        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7

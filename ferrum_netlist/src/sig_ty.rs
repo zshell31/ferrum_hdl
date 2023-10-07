@@ -19,6 +19,10 @@ impl<T> Named<T> {
 pub enum PrimTy {
     Bool,
     Bit,
+    U8,
+    U16,
+    U32,
+    U64,
     U128,
     Unsigned(u128),
     BitVec(u128),
@@ -35,6 +39,10 @@ impl PrimTy {
         match self {
             Self::Bool => 1,
             Self::Bit => 1,
+            Self::U8 => 8,
+            Self::U16 => 16,
+            Self::U32 => 32,
+            Self::U64 => 64,
             Self::U128 => 128,
             Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,

@@ -39,12 +39,13 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (rec, args) = utils::expected_call(expr)?;
+        let args = utils::expected_call(expr)?;
 
-        let ty = generator.node_type(rec.hir_id, ctx);
+        let ty = generator.node_type(expr.hir_id, ctx);
 
-        let value_ty = utils::subst_type(ty, 1).ok_or_else(|| self.make_err(rec.span))?;
-        let sig_ty = generator.find_sig_ty(value_ty, ctx.generic_args, rec.span)?;
+        let value_ty =
+            utils::subst_type(ty, 1).ok_or_else(|| self.make_err(expr.span))?;
+        let sig_ty = generator.find_sig_ty(value_ty, ctx.generic_args, expr.span)?;
 
         let (clk, rst, en, rst_val, comb) = match self.has_en {
             true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),
@@ -126,9 +127,9 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, args) = utils::expected_call(expr)?;
+        utils::args!(expr as arg);
 
-        generator.evaluate_expr(&args[0], ctx)
+        generator.evaluate_expr(arg, ctx)
     }
 }
 
@@ -141,14 +142,15 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec, comb);
+        let span = comb.span;
 
         let rec = generator.evaluate_expr(rec, ctx)?;
-        let comb = generator.evaluate_expr(&args[0], ctx)?;
+        let comb = generator.evaluate_expr(comb, ctx)?;
 
-        generator.link_dummy_inputs(&[rec], comb).ok_or_else(|| {
-            SpanError::new(SpanErrorKind::ExpectedClosure, args[0].span)
-        })?;
+        generator
+            .link_dummy_inputs(&[rec], comb)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
         Ok(comb)
     }
@@ -163,14 +165,15 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec, comb);
+        let span = comb.span;
 
         let rec = generator.evaluate_expr(rec, ctx)?;
-        let comb = generator.evaluate_expr(&args[0], ctx)?;
+        let comb = generator.evaluate_expr(comb, ctx)?;
 
-        generator.link_dummy_inputs(&[rec], comb).ok_or_else(|| {
-            SpanError::new(SpanErrorKind::ExpectedClosure, args[0].span)
-        })?;
+        generator
+            .link_dummy_inputs(&[rec], comb)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
         Ok(comb)
     }
@@ -185,17 +188,16 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, args) = utils::expected_call(expr)?;
+        utils::args!(expr as arg1, arg2, comb);
+        let span = comb.span;
 
-        let arg1 = generator.evaluate_expr(&args[0], ctx)?;
-        let arg2 = generator.evaluate_expr(&args[1], ctx)?;
-        let comb = generator.evaluate_expr(&args[2], ctx)?;
+        let arg1 = generator.evaluate_expr(arg1, ctx)?;
+        let arg2 = generator.evaluate_expr(arg2, ctx)?;
+        let comb = generator.evaluate_expr(comb, ctx)?;
 
         generator
             .link_dummy_inputs(&[arg1, arg2], comb)
-            .ok_or_else(|| {
-                SpanError::new(SpanErrorKind::ExpectedClosure, args[2].span)
-            })?;
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span))?;
 
         Ok(comb)
     }
@@ -210,7 +212,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
 
         generator.evaluate_expr(rec, ctx)
     }
@@ -225,7 +227,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
 
         generator.evaluate_expr(rec, ctx)
     }
@@ -242,8 +244,9 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as lhs, rhs);
+        let ty = generator.node_type(expr.hir_id, ctx);
 
-        todo!()
+        generator.bin_op(ty, self.op, lhs, rhs, ctx, expr.span)
     }
 }

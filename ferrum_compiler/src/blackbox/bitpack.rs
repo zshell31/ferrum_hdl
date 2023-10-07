@@ -17,7 +17,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         Ok(generator.to_bitvec(ctx.module_id, rec).node_id().into())
@@ -33,7 +33,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
+
         let rec = generator.evaluate_expr(rec, ctx)?;
         let to = generator.to_bitvec(ctx.module_id, rec);
 
@@ -53,7 +54,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
+
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         bitvec::bit_vec_trans(generator, rec, ctx, |generator, ctx, bit_vec| {

@@ -64,6 +64,26 @@ impl BitPack for Bit {
     }
 }
 
+impl BitSize for bool {
+    const BITS: usize = 1;
+}
+
+impl BitPack for bool {
+    type Packed = BitVec<1>;
+
+    fn pack(&self) -> Self::Packed {
+        (match self {
+            true => 1,
+            false => 0,
+        })
+        .into()
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        bitvec.inner() == 1
+    }
+}
+
 impl Bit {
     pub(crate) const fn from_u128(value: u128) -> Self {
         Self(value > 0)

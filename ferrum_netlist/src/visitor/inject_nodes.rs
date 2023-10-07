@@ -138,6 +138,7 @@ impl<'n> Visitor for InjectNodes<'n> {
                 link.kind.is_expr()
                     || link.kind.is_mux()
                     || link.kind.is_merger()
+                    || link.kind.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)
             });
             return;
@@ -147,6 +148,7 @@ impl<'n> Visitor for InjectNodes<'n> {
             self.try_inject_if_not_linked_by_pass(node_id, |this, link, link_out_id| {
                 link.kind.is_merger()
                     || link.kind.is_mux()
+                    || link.kind.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)
             });
         }

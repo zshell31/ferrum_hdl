@@ -13,11 +13,10 @@ use ferrum_blackbox::{Blackbox, BlackboxTy};
 use ferrum_netlist::{
     backend::Verilog,
     group::ItemId,
-    net_list::{ModuleId, NetList, NodeId},
-    node::{IsNode, NodeKind, Pass},
+    net_list::{ModuleId, NetList},
+    node::{IsNode, Pass},
     params::Outputs,
     sig_ty::SignalTy,
-    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -184,12 +183,6 @@ pub struct Generator<'tcx> {
 impl<'tcx> !Sync for Generator<'tcx> {}
 impl<'tcx> !Send for Generator<'tcx> {}
 
-pub struct TraitImpls<'tcx> {
-    pub trait_id: DefId,
-    pub fn_did: DefId,
-    pub impls: &'tcx [LocalDefId],
-}
-
 impl<'tcx> Generator<'tcx> {
     fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId, crates: Crates) -> Self {
         Self {
@@ -257,22 +250,10 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    pub fn find_local_trait_impls(
-        &self,
-        trait_kind: TraitKind,
-    ) -> Option<TraitImpls<'tcx>> {
+    pub fn find_trait_method(&self, trait_kind: TraitKind) -> Option<DefId> {
         self.local_trait_impls
             .get(&trait_kind)
-            .and_then(|(trait_id, fn_did)| {
-                self.tcx
-                    .all_local_trait_impls(())
-                    .get(trait_id)
-                    .map(|impls| TraitImpls {
-                        trait_id: *trait_id,
-                        fn_did: *fn_did,
-                        impls: impls.as_slice(),
-                    })
-            })
+            .map(|(_, fn_did)| *fn_did)
     }
 
     fn emit_err(&mut self, err: Error) {
@@ -348,24 +329,11 @@ impl<'tcx> Generator<'tcx> {
 
             let pass = Pass::new(node_out.out.ty, node_out.node_out_id(node_id), sym);
             self.net_list.replace(dummy_input, pass);
-
-            // self.propagate_sym_down(dummy_input, sym);
         }
 
         assert_eq!(n, dummy_inputs_len);
 
         Some(())
-    }
-
-    pub fn propagate_sym_down(&mut self, node_id: NodeId, sym: Symbol) {
-        let mut id = node_id;
-        while let NodeKind::Pass(Pass { input, output }) = &mut self.net_list[id].kind {
-            output.sym = sym;
-            let input = *input;
-            self.net_list[input].sym = sym;
-
-            id = input.node_id();
-        }
     }
 
     pub fn method_call_generics(

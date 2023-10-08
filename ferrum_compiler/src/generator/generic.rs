@@ -54,10 +54,12 @@ impl Generic {
         unevaluated: UnevaluatedConst<'tcx>,
         tcx: TyCtxt<'tcx>,
     ) -> Option<u128> {
+        use rustc_middle::mir::UnevaluatedConst;
+
         let param_env = ParamEnv::reveal_all();
         let value = tcx.const_eval_resolve(
             param_env.without_caller_bounds(),
-            unevaluated.expand(),
+            UnevaluatedConst::new(unevaluated.def, unevaluated.args),
             None,
         );
 
@@ -115,7 +117,7 @@ impl Generics {
             TyKind::Array(ty, cons) => {
                 let sig_ty: Generic = generator.find_sig_ty(*ty, generics, span)?.into();
                 let cons: Generic = cons
-                    .try_to_scalar_int()
+                    .try_eval_scalar_int(generator.tcx, ParamEnv::reveal_all())
                     .and_then(utils::eval_scalar_int)
                     .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span))?
                     .into();

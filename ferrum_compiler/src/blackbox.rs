@@ -4,6 +4,7 @@ pub mod bitpack;
 pub mod bitvec;
 pub mod bundle;
 pub mod cast;
+pub mod index;
 pub mod lit;
 pub mod signal;
 pub mod std;
@@ -81,6 +82,8 @@ evaluate_expr!(
     SignalReset => bit::BitVal(false),
     SignalValue => signal::SignalValue,
     SignalWatch => signal::SignalWatch,
+
+    UnsignedIndex => index::UnsignedIndex,
 
     StdClone => std::StdClone
 

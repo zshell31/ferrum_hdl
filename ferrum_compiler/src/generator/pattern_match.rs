@@ -8,12 +8,15 @@ use ferrum_netlist::{
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
+use rustc_ast::ast::LitKind;
 use rustc_hir::{
     def::{DefKind, Res},
-    DotDotPos, Pat, PatKind, Path, QPath, Ty as HirTy, TyKind as HirTyKind,
+    DotDotPos, Expr, ExprKind, Pat, PatKind, Path, QPath, Ty as HirTy,
+    TyKind as HirTyKind,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{GenericArgsRef, VariantDef};
+use rustc_span::source_map::Spanned;
 
 use super::Generator;
 use crate::{
@@ -41,12 +44,6 @@ impl<'tcx> Generator<'tcx> {
                             .only_one_mut()
                             .out
                             .sym = sym;
-                        // if self.net_list[node_id].is_pass() {
-                        //     self.propagate_sym_down(node_id, sym)
-                        // } else {
-                        //     self.net_list[node_id].outputs_mut().only_one_mut().out.sym =
-                        //         sym;
-                        // }
                     }
                     ItemId::Group(group) => {
                         for item_id in group.item_ids() {
@@ -59,6 +56,14 @@ impl<'tcx> Generator<'tcx> {
                     .for_module(module_id)
                     .add_local_ident(ident, item_id);
             }
+            PatKind::Lit(Expr {
+                kind:
+                    ExprKind::Lit(Spanned {
+                        node: LitKind::Int(_, _),
+                        ..
+                    }),
+                ..
+            }) => {}
             PatKind::Path(QPath::Resolved(_, _)) => {}
             PatKind::Slice(before, wild, after) => {
                 let array_ty = self.item_ty(item_id).opt_array_ty().ok_or_else(|| {
@@ -228,6 +233,20 @@ impl<'tcx> Generator<'tcx> {
                 let width = sig_ty.width();
                 bvm.shiftl(width);
                 bvm.set_mask(width);
+
+                Ok(())
+            }
+            PatKind::Lit(Expr {
+                kind:
+                    ExprKind::Lit(Spanned {
+                        node: LitKind::Int(lit, _),
+                        ..
+                    }),
+                ..
+            }) => {
+                let width = sig_ty.width();
+                bvm.shiftl(width);
+                bvm.set_val(*lit, width);
 
                 Ok(())
             }

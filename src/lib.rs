@@ -2,6 +2,7 @@
 #![feature(generic_const_exprs)]
 #![feature(const_trait_impl)]
 #![feature(cell_update)]
+#![feature(min_specialization)]
 #![feature(register_tool)]
 #![register_tool(ferrum_tool)]
 

@@ -1,7 +1,6 @@
 use core::fmt;
 use std::{
     fmt::{Binary, Debug, Display, LowerHex},
-    mem,
     ops::Index,
 };
 
@@ -22,31 +21,6 @@ use crate::{
 #[blackbox_ty(Array)]
 #[repr(transparent)]
 pub struct Array<const N: usize, T>([T; N]);
-
-impl<const N: usize, T, U: Copy> CastInner<[U; N]> for Array<N, T>
-where
-    T: CastInner<U>,
-{
-    fn cast_inner(self) -> [U; N] {
-        unsafe {
-            let res = mem::transmute::<*const T, *const U>(self.0.as_ptr());
-            *(res as *const [U; N])
-        }
-    }
-}
-
-impl<const N: usize, T: Copy, U> CastInner<Array<N, T>> for [U; N]
-where
-    U: CastInner<T>,
-{
-    fn cast_inner(self) -> Array<N, T> {
-        unsafe {
-            let res = mem::transmute::<*const U, *const T>(self.as_ptr());
-            *(res as *const [T; N])
-        }
-        .into()
-    }
-}
 
 impl<const N: usize, T: SignalValue> SignalValue for Array<N, T> {}
 
@@ -128,6 +102,57 @@ impl<const N: usize, T> From<[T; N]> for Array<N, T> {
     }
 }
 
+impl<const N: usize, T> From<Array<N, T>> for [T; N] {
+    fn from(value: Array<N, T>) -> Self {
+        value.0
+    }
+}
+
+fn transform_array<const N: usize, T, U>(a: [T; N], f: impl Fn(T) -> U) -> [U; N] {
+    let v = a.into_iter().map(f).collect::<Vec<_>>();
+
+    match <[U; N]>::try_from(v) {
+        Ok(res) => res,
+        Err(_) => unreachable!(),
+    }
+}
+
+impl<const N: usize, T, U> CastInner<[U; N]> for [T; N]
+where
+    T: CastInner<U>,
+{
+    fn cast_inner(self) -> [U; N] {
+        transform_array(self, CastInner::cast_inner)
+    }
+}
+
+impl<const N: usize, T, U> CastInner<[U; N]> for Array<N, T>
+where
+    T: CastInner<U>,
+{
+    fn cast_inner(self) -> [U; N] {
+        transform_array(self.0, CastInner::cast_inner)
+    }
+}
+
+impl<const N: usize, T, U> CastInner<Array<N, T>> for [U; N]
+where
+    U: CastInner<T>,
+{
+    fn cast_inner(self) -> Array<N, T> {
+        transform_array(self, CastInner::cast_inner).into()
+    }
+}
+
+impl<const N: usize, T, U> CastInner<Array<N, T>> for Array<N, U>
+where
+    U: CastInner<T>,
+{
+    fn cast_inner(self) -> Array<N, T> {
+        transform_array(self.0, CastInner::cast_inner).into()
+    }
+}
+
 impl<const N: usize, T: PartialEq> PartialEq<Array<N, T>> for Array<N, T> {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
@@ -195,7 +220,7 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Unbundle for Signal<D, Arra
     fn unbundle(self) -> Self::Unbundled {
         let signals = (0 .. N)
             .map(|ind| self.clone().map(move |s| s[ind]))
-            .collect::<Vec<_>>(); // TODO: smallvec
+            .collect::<Vec<_>>();
 
         Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
             Ok(res) => res,
@@ -213,9 +238,9 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for Array<N, Signal<
                 .0
                 .iter_mut()
                 .map(|signal| signal.next(ctx))
-                .collect::<SmallVec<[T; 8]>>();
+                .collect::<Vec<_>>();
 
-            Array::from(match <[T; N]>::try_from(values.as_slice()) {
+            Array::from(match <[T; N]>::try_from(values) {
                 Ok(res) => res,
                 Err(_) => unreachable!(),
             })
@@ -229,9 +254,9 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for Array<N, Signa
     fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
         let values = (0 .. N)
             .map(|ind| self.0[ind].next(ctx))
-            .collect::<SmallVec<[_; 8]>>();
+            .collect::<Vec<_>>();
 
-        match <[_; N]>::try_from(values.as_slice()) {
+        match <[_; N]>::try_from(values) {
             Ok(res) => res,
             Err(_) => unreachable!(),
         }

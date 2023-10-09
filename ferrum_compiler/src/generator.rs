@@ -9,7 +9,7 @@ pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
-use ferrum_blackbox::{Blackbox, BlackboxTy};
+use ferrum_blackbox::Blackbox;
 use ferrum_netlist::{
     backend::Verilog,
     group::ItemId,
@@ -173,7 +173,6 @@ pub struct Generator<'tcx> {
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,
-    uniq_blackbox_tys: FxHashMap<BlackboxTy, DefId>,
     pub net_list: NetList,
     pub idents: Idents,
 }
@@ -191,7 +190,6 @@ impl<'tcx> Generator<'tcx> {
             local_trait_impls: FxHashMap::default(),
             evaluated_modules: FxHashMap::default(),
             crates,
-            uniq_blackbox_tys: FxHashMap::default(),
             net_list: NetList::default(),
             idents: Idents::new(),
         }

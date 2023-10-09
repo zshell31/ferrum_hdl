@@ -1,7 +1,6 @@
 use std::{
     cmp::Ordering,
     fmt::{self, Binary, Display, LowerHex},
-    mem,
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
@@ -11,7 +10,7 @@ use ferrum_netlist::sig_ty::PrimTy;
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::BitVec,
-    cast::{CastInner, IsPrimTy},
+    cast::IsPrimTy,
     const_helpers::{Assert, IsTrue},
     signal::SignalValue,
 };
@@ -35,8 +34,12 @@ pub const fn unsigned_value(value: u128, width: u128) -> u128 {
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(u128);
 
-pub const fn u<const N: usize>(n: u128) -> Unsigned<N> {
-    Unsigned::<N>::new(n)
+#[allow(non_camel_case_types)]
+#[blackbox_ty(UnsignedMatch)]
+pub struct u<const N: usize>(pub u128);
+
+impl<const N: usize> IsPrimTy for u<N> {
+    const PRIM_TY: PrimTy = PrimTy::Unsigned(N as u128);
 }
 
 impl<const N: usize> Unsigned<N> {
@@ -50,18 +53,6 @@ impl<const N: usize> Unsigned<N> {
         Assert<{ M < N }>: IsTrue,
     {
         (self.0 & (1 << M)) != 0
-    }
-}
-
-impl<const N: usize> CastInner<u128> for Unsigned<N> {
-    fn cast_inner(self) -> u128 {
-        unsafe { mem::transmute::<Unsigned<N>, u128>(self) }
-    }
-}
-
-impl<const N: usize> CastInner<Unsigned<N>> for u128 {
-    fn cast_inner(self) -> Unsigned<N> {
-        unsafe { mem::transmute::<u128, Unsigned<N>>(self) }
     }
 }
 
@@ -87,36 +78,6 @@ impl<const N: usize> BitPack for Unsigned<N> {
     }
 }
 
-impl<const N: usize> const From<u8> for Unsigned<N> {
-    fn from(value: u8) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> const From<u16> for Unsigned<N> {
-    fn from(value: u16) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> const From<u32> for Unsigned<N> {
-    fn from(value: u32) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> const From<u64> for Unsigned<N> {
-    fn from(value: u64) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> const From<u128> for Unsigned<N> {
-    fn from(value: u128) -> Self {
-        Self::new(value)
-    }
-}
-
 impl<const N: usize> Display for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Unsigned({})", self.0)
@@ -131,7 +92,55 @@ impl<const N: usize> Binary for Unsigned<N> {
 
 impl<const N: usize> LowerHex for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:x}", self.0)
+        write!(f, "Unsigned({:x})", self.0)
+    }
+}
+
+impl<const N: usize> From<u8> for Unsigned<N> {
+    fn from(value: u8) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> From<u16> for Unsigned<N> {
+    fn from(value: u16) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> From<u32> for Unsigned<N> {
+    fn from(value: u32) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> From<u64> for Unsigned<N> {
+    fn from(value: u64) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> From<u128> for Unsigned<N> {
+    fn from(value: u128) -> Self {
+        Self::new(value)
+    }
+}
+
+impl<const N: usize> From<Unsigned<N>> for u128 {
+    fn from(value: Unsigned<N>) -> Self {
+        value.0
+    }
+}
+
+impl<const N: usize> From<Unsigned<N>> for u<N> {
+    fn from(value: Unsigned<N>) -> Self {
+        Self(value.0)
+    }
+}
+
+impl<const N: usize> From<u<N>> for Unsigned<N> {
+    fn from(value: u<N>) -> Self {
+        Self::new(value.0)
     }
 }
 

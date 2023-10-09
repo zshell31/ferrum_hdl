@@ -1,4 +1,9 @@
-use ferrum::{bit::Bit, unsigned::Unsigned};
+use std::iter;
+
+use ferrum::{
+    bit::Bit,
+    unsigned::{u, Unsigned},
+};
 use ferrum_netlist::{
     group::ItemId,
     node::{IsNode, Splitter},
@@ -116,6 +121,23 @@ impl StdConversion {
             }
             (SignalTy::Prim(PrimTy::U128), SignalTy::Prim(PrimTy::Unsigned(n))) => {
                 assert_convert::<u128, Unsigned<1>>();
+                Ok(Self::to_unsigned(from, n, generator))
+            }
+            // TODO: use blackbox_ty for matching
+            (SignalTy::Prim(PrimTy::Unsigned(n)), SignalTy::Struct(struct_ty))
+                if struct_ty.len() == 1 && struct_ty.tys()[0].inner.is_unsigned(n) =>
+            {
+                assert_convert::<Unsigned<1>, u<1>>();
+                generator
+                    .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
+            }
+            // TODO: use blackbox_ty for matching
+            (SignalTy::Struct(struct_ty), SignalTy::Prim(PrimTy::Unsigned(n)))
+                if struct_ty.len() == 1 && struct_ty.tys()[0].inner.is_unsigned(n) =>
+            {
+                assert_convert::<u<1>, Unsigned<1>>();
+
+                let from = from.group().item_ids()[0];
                 Ok(Self::to_unsigned(from, n, generator))
             }
             _ => {

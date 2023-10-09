@@ -604,7 +604,7 @@ endgenerate
                             let (mask, input) = variants.last().unwrap();
                             write_case(*mask, *input);
 
-                            let default = self.net_list[*default].sym;
+                            let default = self.inject_input(*default);
 
                             self.buffer.write_tab();
                             self.buffer.write_fmt(format_args!(

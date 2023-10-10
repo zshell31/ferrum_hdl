@@ -185,8 +185,8 @@ impl Arena {
 const ARENA_CAP: usize = 256;
 
 /// # Safety
-/// This function should be invoked only in one thread because it initializes global Arena that not
-/// implements Sync
+/// This function should be invoked only in single-threadead application because it initializes global Arena that
+/// does not implement Sync
 pub unsafe fn with_arena() -> &'static Arena {
     static mut INSTANCE: OnceCell<Arena> = OnceCell::new();
     INSTANCE.get_or_init(|| Arena::with_capacity(ARENA_CAP))

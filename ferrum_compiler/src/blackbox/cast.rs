@@ -140,6 +140,18 @@ impl StdConversion {
                 let from = from.group().item_ids()[0];
                 Ok(Self::to_unsigned(from, n, generator))
             }
+            (SignalTy::Array(from_ty), SignalTy::Array(to_ty))
+                if from_ty.count() == to_ty.count() =>
+            {
+                let ty = to_ty;
+                let from_ty = *from_ty.item_ty();
+                let to_ty = *to_ty.item_ty();
+                let from = from.group();
+
+                generator.make_array_group(ty, from.item_ids(), |generator, item_id| {
+                    Self::convert(from_ty, to_ty, *item_id, generator, span)
+                })
+            }
             _ => {
                 println!("from {:?} => to {:?}", from_ty, to_ty);
 

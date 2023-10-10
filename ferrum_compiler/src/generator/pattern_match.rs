@@ -1,12 +1,13 @@
 use std::iter;
 
 use either::Either;
+use ferrum_blackbox::Blackbox;
 use ferrum_netlist::{
     group::ItemId,
-    net_list::{ModuleId, NodeOutId},
-    node::{BitVecMask, IsNode, Splitter},
+    net_list::ModuleId,
+    node::{BitVecMask, IsNode},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::SignalTy,
 };
 use rustc_ast::ast::LitKind;
 use rustc_hir::{
@@ -20,6 +21,7 @@ use rustc_span::source_map::Spanned;
 
 use super::Generator;
 use crate::{
+    blackbox::bit::BitVal,
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
@@ -66,19 +68,24 @@ impl<'tcx> Generator<'tcx> {
             }) => {}
             PatKind::Path(QPath::Resolved(_, _)) => {}
             PatKind::Slice(before, wild, after) => {
-                let array_ty = self.item_ty(item_id).opt_array_ty().ok_or_else(|| {
+                let _ = self.item_ty(item_id).opt_array_ty().ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
                 })?;
-                let item_ty = array_ty.item_ty();
-                let width = item_ty.width();
+                let items = item_id.group().item_ids();
 
-                let to = self.to_bitvec(module_id, item_id);
-
-                self.slice_pattern_match(to, width, *item_ty, before, None)?;
+                for (ind, pat) in before.iter().enumerate() {
+                    self.pattern_match(pat, items[ind], module_id)?;
+                }
 
                 if wild.is_some() {
-                    let start = (after.len() as u128) * width;
-                    self.slice_pattern_match(to, width, *item_ty, after, Some(start))?;
+                    let before_count = before.len();
+                    let after_count = after.len();
+                    assert!(before_count + after_count <= items.len());
+
+                    let offset = items.len() - after_count;
+                    for (ind, pat) in after.iter().enumerate() {
+                        self.pattern_match(pat, items[offset + ind], module_id)?;
+                    }
                 }
             }
             PatKind::Struct(_, fields, _) => {
@@ -142,48 +149,6 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn slice_pattern_match(
-        &mut self,
-        node_out_id: NodeOutId,
-        width: u128,
-        sig_ty: SignalTy,
-        pat: &[Pat<'tcx>],
-        start: Option<u128>,
-    ) -> Result<(), Error> {
-        if pat.is_empty() {
-            return Ok(());
-        }
-
-        let module_id = node_out_id.node_id().module_id();
-        let splitter = Splitter::new(
-            node_out_id,
-            (0 .. pat.len()).map(|_| {
-                (
-                    PrimTy::BitVec(width),
-                    self.idents.for_module(module_id).tmp(),
-                )
-            }),
-            start,
-            true,
-        );
-        let node_id = self.net_list.add_node(module_id, splitter);
-
-        let outputs = self.net_list[node_id].kind.outputs();
-        assert_eq!(outputs.len(), pat.len());
-
-        let node_out_ids = outputs
-            .items()
-            .map(|out| out.node_out_id(node_id))
-            .collect::<Vec<_>>();
-
-        for (node_out_id, before_pat) in node_out_ids.into_iter().zip(pat) {
-            let from = self.from_bitvec(module_id, node_out_id, sig_ty);
-            self.pattern_match(before_pat, from, module_id)?;
-        }
-
-        Ok(())
-    }
-
     pub fn pattern_to_bitvec(
         &mut self,
         pat: &Pat<'tcx>,
@@ -197,7 +162,7 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn pattern_to_bitvec_(
-        &self,
+        &mut self,
         pat: &Pat<'tcx>,
         sig_ty: SignalTy,
         generic_args: GenericArgsRef<'tcx>,
@@ -257,17 +222,69 @@ impl<'tcx> Generator<'tcx> {
                     res: Res::Def(DefKind::Const, def_id),
                     ..
                 },
-            )) if def_id.is_local() => {
-                if let Some(const_val) =
-                    self.eval_const_val(*def_id, generic_args, Some(pat.span))
-                {
+            )) => {
+                if def_id.is_local() {
+                    if let Some(const_val) =
+                        self.eval_const_val(*def_id, generic_args, Some(pat.span))
+                    {
+                        let width = sig_ty.width();
+                        bvm.shiftl(width);
+                        bvm.set_val(const_val, width);
+                        return Ok(());
+                    }
+
+                    Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
+                } else {
+                    let blackbox = self.find_blackbox(*def_id, generic_args, pat.span)?;
+                    let value = match blackbox {
+                        Blackbox::BitL => BitVal(false).bit_value(),
+                        Blackbox::BitH => BitVal(true).bit_value(),
+                        _ => {
+                            return Err(SpanError::new(
+                                SpanErrorKind::InvalidPattern,
+                                pat.span,
+                            )
+                            .into());
+                        }
+                    };
+
                     let width = sig_ty.width();
                     bvm.shiftl(width);
-                    bvm.set_val(const_val, width);
-                    return Ok(());
+                    bvm.set_val(value, width);
+
+                    Ok(())
+                }
+            }
+            PatKind::Slice(before, wild, after) => {
+                let array_ty = sig_ty.opt_array_ty().ok_or_else(|| {
+                    SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
+                })?;
+                let item_ty = *array_ty.item_ty();
+                let width = item_ty.width();
+
+                let count = array_ty.count() as usize;
+
+                for pat in before {
+                    self.pattern_to_bitvec_(pat, item_ty, generic_args, bvm)?;
                 }
 
-                Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
+                if wild.is_some() {
+                    let before_count = before.len();
+                    let after_count = after.len();
+                    assert!(before_count + after_count <= count);
+
+                    let rest = count - (before_count + after_count);
+                    for _ in 0 .. rest {
+                        bvm.shiftl(width);
+                        bvm.set_mask(width);
+                    }
+
+                    for pat in after {
+                        self.pattern_to_bitvec_(pat, item_ty, generic_args, bvm)?;
+                    }
+                }
+
+                Ok(())
             }
             PatKind::Struct(_, fields, _) => {
                 let struct_ty = sig_ty.struct_ty();

@@ -10,7 +10,14 @@ use crate::{
 pub struct BitVal(pub bool);
 
 impl BitVal {
-    fn create_bit_value<'tcx>(
+    pub fn bit_value(&self) -> u128 {
+        match self.0 {
+            true => 1,
+            false => 0,
+        }
+    }
+
+    fn add_const<'tcx>(
         &self,
         generator: &mut Generator<'tcx>,
         ctx: &EvalContext<'tcx>,
@@ -36,6 +43,6 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVal {
         _: &Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        self.create_bit_value(generator, ctx)
+        self.add_const(generator, ctx)
     }
 }

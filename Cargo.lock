@@ -114,7 +114,6 @@ dependencies = [
  "bumpalo",
  "derive-where",
  "either",
- "ferrum_blackbox",
  "fnv",
  "indexmap",
  "smallvec",

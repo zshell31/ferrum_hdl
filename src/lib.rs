@@ -4,9 +4,9 @@
 #![feature(cell_update)]
 #![feature(min_specialization)]
 #![feature(register_tool)]
-#![register_tool(ferrum_tool)]
+#![register_tool(fhdl_tool)]
 
-pub use ferrum_macros::p;
+pub use fhdl_macros::p;
 
 pub mod array;
 pub mod bit;

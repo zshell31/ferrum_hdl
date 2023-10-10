@@ -1,5 +1,5 @@
-use ferrum_macros::blackbox;
-use ferrum_netlist::sig_ty::PrimTy;
+use fhdl_macros::blackbox;
+use fhdl_netlist::sig_ty::PrimTy;
 
 pub trait IsPrimTy: Sized {
     const PRIM_TY: PrimTy;

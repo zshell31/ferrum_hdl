@@ -4,8 +4,8 @@ use std::{
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
-use ferrum_macros::{blackbox, blackbox_ty};
-use ferrum_netlist::sig_ty::PrimTy;
+use fhdl_macros::{blackbox, blackbox_ty};
+use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
     bit_pack::{BitPack, BitSize},

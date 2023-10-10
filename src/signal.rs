@@ -7,7 +7,7 @@ use std::{
 };
 
 use derive_where::derive_where;
-use ferrum_macros::{blackbox, blackbox_ty};
+use fhdl_macros::{blackbox, blackbox_ty};
 use seq_macro::seq;
 
 use crate::{

@@ -1,10 +1,7 @@
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features)]
-use ferrum::{
-    array::Array,
-    domain::ClockDomain,
-    signal::{Bundle, Signal, Unbundle},
-    unsigned::Unsigned,
+use ferrum_hdl::{
+    array::Array, cast::Cast, domain::ClockDomain, signal::Signal, unsigned::Unsigned,
 };
 
 pub struct TestSystem;
@@ -16,22 +13,16 @@ impl ClockDomain for TestSystem {
 pub fn top_module(
     signals: Signal<TestSystem, Array<4, Unsigned<4>>>,
 ) -> Signal<TestSystem, Array<4, Unsigned<4>>> {
-    let [start, .., end] = signals.unbundle().into_inner();
+    signals.map(|signals| {
+        let [start, .., end] = signals.cast::<[Unsigned<4>; 4]>();
 
-    Array::<4, _>::bundle(
-        [
-            start.clone(),
-            start.clone() + end.clone(),
-            start - end.clone(),
-            end,
-        ]
-        .into(),
-    )
+        [start, start + end, start - end, end].into()
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use ferrum::{signal::SignalIterExt, CastInner};
+    use ferrum_hdl::{signal::SignalIterExt, CastInner};
 
     use super::*;
 

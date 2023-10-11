@@ -2,7 +2,7 @@ use smallvec::SmallVec;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{IsNode, Node, NodeKind, Pass, DFF},
+    node::{IsNode, Node, NodeKind, DFF},
     params::Outputs,
     visitor::Visitor,
 };
@@ -42,39 +42,18 @@ impl<'n> InjectNodes<'n> {
             || node.kind.is_merger()
     }
 
-    fn inject_input_for_pass(&mut self, node_id: NodeId) {
-        let mut next = &self.net_list[node_id];
-        let mut input_id = None;
-        while let NodeKind::Pass(Pass { ref input, .. }) = next.kind {
-            input_id = Some(*input);
-            next = &self.net_list[input.node_id()];
-        }
-
-        if let Some(input_id) = input_id {
-            if Self::maybe_to_inject(&self.net_list[input_id.node_id()]) {
-                let out = &mut self.net_list[input_id];
-                out.inject = true;
-
-                let node = &mut self.net_list[input_id.node_id()];
-                if node.kind.outputs().items().all(|output| output.out.inject) {
-                    node.inject = true;
-                }
-            }
-        }
-    }
-
-    fn try_inject_if_not_linked_by_pass(
+    fn try_inject(
         &mut self,
         node_id: NodeId,
-        check: impl Fn(&Self, &Node, NodeOutId) -> bool,
+        check: impl Fn(&Self, NodeId, &Node, NodeOutId) -> bool,
     ) {
         let node = &self.net_list[node_id];
 
         let mut inject_outs: SmallVec<[NodeOutId; 8]> = SmallVec::new();
 
         for node_out_id in node.kind.node_out_ids(node_id) {
-            for (link, link_out_id) in self.net_list.not_pass_links(node_out_id) {
-                if check(self, link, link_out_id) {
+            for (link_id, link) in self.net_list.links(node_out_id) {
+                if !link.is_skip && check(self, link_id, link, node_out_id) {
                     inject_outs.push(node_out_id);
                 }
             }
@@ -121,21 +100,15 @@ impl<'n> Visitor for InjectNodes<'n> {
     }
 
     fn visit_node(&mut self, node_id: NodeId) {
-        if self.net_list[node_id].kind.is_pass() {
-            if !self.is_out_node(node_id) {
-                let node = &mut self.net_list[node_id];
-                node.kind.outputs_mut().only_one_mut().out.inject = true;
-                node.inject = true;
-            } else {
-                self.inject_input_for_pass(node_id);
-            }
-            return;
-        }
+        // if self.net_list[node_id].kind.is_pass() && !self.is_out_node(node_id) {
+        //     panic!("found pass node: {:?}", node_id);
+        // }
 
         let node = &self.net_list[node_id];
         if node.kind.is_const() || node.kind.is_expr() || node.kind.is_splitter() {
-            self.try_inject_if_not_linked_by_pass(node_id, |this, link, link_out_id| {
-                link.kind.is_expr()
+            self.try_inject(node_id, |this, link_id, link, link_out_id| {
+                (link.kind.is_pass() && this.is_out_node(link_id))
+                    || link.kind.is_expr()
                     || link.kind.is_mux()
                     || link.kind.is_merger()
                     || link.kind.is_mod_inst()
@@ -145,8 +118,9 @@ impl<'n> Visitor for InjectNodes<'n> {
         }
 
         if node.kind.is_merger() {
-            self.try_inject_if_not_linked_by_pass(node_id, |this, link, link_out_id| {
-                link.kind.is_merger()
+            self.try_inject(node_id, |this, link_id, link, link_out_id| {
+                (link.kind.is_pass() && this.is_out_node(link_id))
+                    || link.kind.is_merger()
                     || link.kind.is_mux()
                     || link.kind.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)

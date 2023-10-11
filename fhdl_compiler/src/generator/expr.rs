@@ -879,7 +879,12 @@ impl<'tcx> Generator<'tcx> {
                 QPath::Resolved(
                     _,
                     Path {
-                        res: Res::Def(DefKind::Struct, struct_did),
+                        res:
+                            Res::SelfTyAlias {
+                                alias_to: struct_did,
+                                ..
+                            }
+                            | Res::Def(DefKind::Struct, struct_did),
                         ..
                     },
                 ),

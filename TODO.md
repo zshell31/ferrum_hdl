@@ -105,3 +105,7 @@ endmodule
 - for loop support
 - README / Documentation
 - Определиться с типом для ширины сигналов (сейчас используется u128, но это много)
+- tracing
+- derive SignalValue, BitPack, BitSize
+- RefCell for nodes in netlist
+- expr complexity for nodes

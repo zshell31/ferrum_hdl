@@ -3,7 +3,7 @@ mod transform;
 
 use std::ops::{Index, IndexMut};
 
-use fnv::{FnvBuildHasher, FnvHashMap};
+use fnv::{FnvBuildHasher, FnvHashMap, FnvHashSet};
 use indexmap::IndexSet;
 use smallvec::SmallVec;
 
@@ -116,20 +116,20 @@ impl Module {
         node_id
     }
 
-    fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
+    fn replace(&mut self, node_id: NodeId, node: Node) {
         let old_node = &self.node(node_id).kind;
-        assert_eq!(old_node.outputs().len(), node.outputs().len());
+        assert_eq!(old_node.outputs().len(), node.kind.outputs().len());
 
         if old_node.is_input() {
             self.inputs.remove(&node_id);
         }
-        let node: NodeKind = node.into();
-        if node.is_input() {
+
+        if node.kind.is_input() {
             self.inputs.insert(node_id);
         }
 
         let old_node = self.node_mut(node_id);
-        *old_node = node.into();
+        *old_node = node;
     }
 
     fn add_output(&mut self, node_id: NodeId, out: OutId) {
@@ -197,35 +197,7 @@ impl Module {
     }
 }
 
-#[derive(Debug)]
-pub enum LinkKind {
-    Direct,
-    Indirect(NodeOutId),
-}
-
-#[derive(Debug)]
-pub struct Link {
-    pub node_id: NodeId,
-    pub kind: LinkKind,
-}
-
-impl Link {
-    fn direct(node_id: NodeId) -> Self {
-        Self {
-            node_id,
-            kind: LinkKind::Direct,
-        }
-    }
-
-    fn indirect(node_id: NodeId, link_node_out_id: NodeOutId) -> Self {
-        Self {
-            node_id,
-            kind: LinkKind::Indirect(link_node_out_id),
-        }
-    }
-}
-
-pub type Links = SmallVec<[Link; 8]>;
+pub type Links = FnvHashSet<NodeId>;
 
 #[derive(Debug, Default)]
 pub struct NetList {
@@ -316,56 +288,54 @@ impl NetList {
         let node = self.modules[node_id.module_id().0].node(node_id);
         for input in node.kind.inputs().items() {
             let links = self.rev_links.entry(input).or_default();
-            links.push(Link::direct(node_id));
+            links.remove(&node_id);
+        }
 
-            let mut input_out_id = input;
-            let mut indirect = None;
-            loop {
-                let input_id = input_out_id.node_id();
-                let node = self.modules[input_id.module_id().0].node(input_id);
+        self.replace_inputs(node_id);
 
-                match &node.kind {
-                    NodeKind::Pass(Pass { input, .. }) => {
-                        indirect = Some(*input);
-                        input_out_id = *input;
-                    }
-                    NodeKind::MultiPass(MultiPass { inputs, .. }) => {
-                        let input = inputs[input_out_id.out_id()];
-                        indirect = Some(input);
-                        input_out_id = input;
-                    }
-                    _ => break,
+        let node = self.modules[node_id.module_id().0].node(node_id);
+        for input in node.kind.inputs().items() {
+            let links = self.rev_links.entry(input).or_default();
+            links.insert(node_id);
+        }
+    }
+
+    fn replace_inputs(&mut self, node_id: NodeId) {
+        // TODO: refactor
+        let node = &self[node_id];
+
+        let mut new_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
+        for input in node.kind.inputs().items() {
+            let input_node = &self[input.node_id()];
+
+            let new_input = match &input_node.kind {
+                NodeKind::Pass(Pass { input, .. }) => Some(*input),
+                NodeKind::MultiPass(MultiPass { inputs, .. }) => {
+                    Some(inputs[input.out_id()])
                 }
-            }
+                _ => None,
+            };
 
-            if let Some(indirect) = indirect {
-                let links = self.rev_links.entry(indirect).or_default();
-                links.push(Link::indirect(node_id, input));
+            new_inputs.push(new_input);
+        }
+
+        let node = &mut self[node_id];
+        for (input, new_input) in node.kind.inputs_mut().items_mut().zip(new_inputs) {
+            if let Some(new_input) = new_input {
+                *input = new_input;
             }
         }
     }
 
-    pub fn links(&self, node_out_id: NodeOutId) -> Option<&Links> {
-        self.rev_links.get(&node_out_id)
-    }
-
-    pub fn not_pass_links(
+    pub fn links(
         &self,
         node_out_id: NodeOutId,
-    ) -> impl Iterator<Item = (&Node, NodeOutId)> + '_ {
+    ) -> impl Iterator<Item = (NodeId, &Node)> + '_ {
         self.rev_links
             .get(&node_out_id)
             .into_iter()
             .flat_map(|links| links.iter())
-            .filter_map(move |link| {
-                let node = &self[link.node_id];
-
-                match link.kind {
-                    LinkKind::Direct if !node.kind.is_pass() => Some((node, node_out_id)),
-                    LinkKind::Indirect(node_out_id) => Some((node, node_out_id)),
-                    _ => None,
-                }
-            })
+            .map(move |link| (*link, &self[*link]))
     }
 
     pub fn add_dummy_node(&mut self, module_id: ModuleId, node: Input) -> NodeId {
@@ -374,23 +344,27 @@ impl NetList {
     }
 
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
+        let outputs_len = self[node_id].kind.outputs().len();
+
+        let node: NodeKind = node.into();
+        let node: Node = node.into();
+        let node = self.transform(node);
+        assert_eq!(outputs_len, node.kind.outputs().len());
+
         let module = &mut self[node_id.module_id()];
         module.replace(node_id, node);
-        let node = &self[node_id];
-        if node.kind.is_pass() {
-            let links = node
-                .kind
-                .outputs()
-                .items()
-                .map(|out| out.node_out_id(node_id))
-                .flat_map(|node_out_id| self.rev_links.get(&node_out_id))
-                .flat_map(|links| links.iter())
-                .map(|link| link.node_id)
-                .collect::<SmallVec<[NodeId; 8]>>();
+        self.add_links(node_id);
 
-            for link in links {
-                self.add_links(link);
-            }
+        let all_links = self[node_id]
+            .kind
+            .node_out_ids(node_id)
+            .flat_map(|output| self.rev_links.get(&output))
+            .flat_map(|links| links.iter())
+            .copied()
+            .collect::<SmallVec<[_; 8]>>();
+
+        for link in all_links {
+            self.add_links(link);
         }
     }
 

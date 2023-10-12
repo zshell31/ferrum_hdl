@@ -16,7 +16,13 @@ pub fn top_module(
     signals.map(|signals| {
         let [start, .., end] = signals.cast::<[Unsigned<4>; 4]>();
 
-        [start, start + end, start - end, end].into()
+        [
+            start.clone(),
+            start.clone() + end.clone(),
+            start - end.clone(),
+            end,
+        ]
+        .into()
     })
 }
 

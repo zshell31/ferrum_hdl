@@ -3,7 +3,7 @@ use std::{fmt::Debug, iter};
 use fhdl_blackbox::{Blackbox, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy, SignalTyKind},
 };
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
@@ -203,25 +203,35 @@ impl<'tcx> Generator<'tcx> {
                                 unsafe { with_arena().alloc(key.generic_ty(0).unwrap()) };
                             let cons = key.generic_const(1).unwrap();
 
-                            sig_ty = Some(SignalTy::mk_array(cons, *ty));
+                            sig_ty = Some(SignalTy::mk_array(None, cons, *ty));
                         }
                         TyKind::Bool => {
-                            sig_ty = Some(PrimTy::Bool.into());
+                            sig_ty = Some(SignalTy::new(None, PrimTy::Bool.into()));
                         }
-                        TyKind::Uint(UintTy::U8) => sig_ty = Some(PrimTy::U8.into()),
-                        TyKind::Uint(UintTy::U16) => sig_ty = Some(PrimTy::U16.into()),
-                        TyKind::Uint(UintTy::U32) => sig_ty = Some(PrimTy::U32.into()),
+                        TyKind::Uint(UintTy::U8) => {
+                            sig_ty = Some(SignalTy::new(None, PrimTy::U8.into()))
+                        }
+                        TyKind::Uint(UintTy::U16) => {
+                            sig_ty = Some(SignalTy::new(None, PrimTy::U16.into()))
+                        }
+                        TyKind::Uint(UintTy::U32) => {
+                            sig_ty = Some(SignalTy::new(None, PrimTy::U32.into()))
+                        }
                         TyKind::Uint(UintTy::U64 | UintTy::Usize) => {
-                            sig_ty = Some(PrimTy::U64.into())
+                            sig_ty = Some(SignalTy::new(None, PrimTy::U64.into()))
                         }
                         TyKind::Uint(UintTy::U128) => {
-                            sig_ty = Some(PrimTy::U128.into());
+                            sig_ty = Some(SignalTy::new(None, PrimTy::U128.into()))
                         }
                         TyKind::Tuple(ty) => {
-                            sig_ty = Some(SignalTy::Struct(
-                                self.make_tuple_ty(ty.iter(), |generator, ty| {
-                                    generator.find_sig_ty(ty, generics, span)
-                                })?,
+                            sig_ty = Some(SignalTy::new(
+                                None,
+                                SignalTyKind::Struct(self.make_tuple_ty(
+                                    ty.iter(),
+                                    |generator, ty| {
+                                        generator.find_sig_ty(ty, generics, span)
+                                    },
+                                )?),
                             ));
                         }
                         _ => {}
@@ -262,27 +272,31 @@ impl<'tcx> Generator<'tcx> {
             return match blackbox_ty {
                 BlackboxTy::Signal => key.generic_ty(1),
                 BlackboxTy::Wrapped => key.generic_ty(1),
-                BlackboxTy::BitVec => {
-                    key.generic_const(0).map(|val| PrimTy::BitVec(val).into())
+                BlackboxTy::BitVec => key.generic_const(0).map(|val| {
+                    SignalTy::new(Some(blackbox_ty), PrimTy::BitVec(val).into())
+                }),
+                BlackboxTy::Bit => {
+                    Some(SignalTy::new(Some(blackbox_ty), PrimTy::Bit.into()))
                 }
-                BlackboxTy::Bit => Some(PrimTy::Bit.into()),
-                BlackboxTy::Clock => Some(PrimTy::Clock.into()),
-                BlackboxTy::Unsigned => {
-                    key.generic_const(0).map(|val| PrimTy::Unsigned(val).into())
+                BlackboxTy::Clock => {
+                    Some(SignalTy::new(Some(blackbox_ty), PrimTy::Clock.into()))
                 }
-                BlackboxTy::UnsignedMatch => {
+                BlackboxTy::Unsigned => key.generic_const(0).map(|val| {
+                    SignalTy::new(Some(blackbox_ty), PrimTy::Unsigned(val).into())
+                }),
+                BlackboxTy::UnsignedShort => {
                     let n = key.generic_const(0).unwrap();
                     self.make_tuple_ty(iter::once(PrimTy::Unsigned(n)), |_, prim_ty| {
-                        Ok(prim_ty.into())
+                        Ok(SignalTy::new(None, prim_ty.into()))
                     })
                     .ok()
-                    .map(Into::into)
+                    .map(|ty| SignalTy::new(Some(blackbox_ty), ty.into()))
                 }
                 BlackboxTy::Array => {
                     let n = key.generic_const(0)?;
                     let ty = key.generic_ty(1)?;
 
-                    Some(SignalTy::mk_array(n, ty))
+                    Some(SignalTy::mk_array(Some(blackbox_ty), n, ty))
                 }
             };
         }

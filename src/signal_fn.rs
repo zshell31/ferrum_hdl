@@ -35,7 +35,7 @@ impl<T: SignalValue> SignalFn<T> {
     }
 
     pub(crate) fn value(&self) -> T {
-        self.cached.unwrap()
+        self.cached.clone().unwrap()
     }
 }
 

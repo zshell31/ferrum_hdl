@@ -3,7 +3,7 @@
 
 use ferrum_hdl::{
     bit::Bit,
-    bit_pack::BitPack,
+    bitpack::BitPackExt,
     const_functions::clog2,
     const_helpers::UsizeConstr,
     domain::{Clock, ClockDomain, PICOSECONDS},
@@ -40,7 +40,7 @@ where
         0_u8.into(),
         |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
     )
-    .map(|value| (value.msb(), value))
+    .map(|value| (value.clone().msb().into(), value))
 }
 
 pub struct ZynqMiniDom;

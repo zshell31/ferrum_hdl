@@ -5,12 +5,11 @@ use std::{
 };
 
 use fhdl_macros::{blackbox, blackbox_ty};
-use smallvec::SmallVec;
 
 use crate::{
-    bit_pack::{BitPack, BitSize},
-    bit_vec::{BitVec, BitVecInner},
-    cast::CastInner,
+    bitpack::{BitPack, BitSize, IsPacked},
+    bitvec::BitVec,
+    cast::{Cast, CastInner},
     const_helpers::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue, Unbundle},
@@ -66,36 +65,32 @@ where
 {
     type Packed = BitVec<{ N * T::BITS }>;
 
-    fn pack(&self) -> Self::Packed {
+    fn pack(self) -> Self::Packed {
         let width = T::BITS;
-        assert!(width * N <= 128);
-
-        let mut bitvec: BitVecInner = 0;
+        let mut bitvec = Self::Packed::zero();
 
         for item in self {
-            bitvec <<= width;
-            bitvec |= item.pack().inner();
+            bitvec = bitvec << width;
+            bitvec = bitvec | item.pack().cast();
         }
 
-        bitvec.into()
+        bitvec
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
         let width = T::BITS;
-        assert!(width * N <= 128);
-        let mask = (1 << width) - 1;
+        let mask: <T as BitPack>::Packed = ((1_usize << width) - 1_usize).into();
         let mut offset = (N - 1) * width;
 
         let vec = (0 .. N)
             .map(|_| {
-                let slice =
-                    BitVec::<{ T::BITS }>::from((bitvec.inner() >> offset) & mask);
+                let slice = (bitvec.clone() >> offset).cast() & mask.clone();
                 offset = offset.saturating_sub(width);
                 T::unpack(slice)
             })
-            .collect::<SmallVec<[T; 8]>>();
+            .collect::<Vec<_>>();
 
-        match <[T; N]>::try_from(vec.as_slice()) {
+        match <[T; N]>::try_from(vec) {
             Ok(res) => res,
             Err(_) => unreachable!(),
         }
@@ -110,7 +105,7 @@ where
 {
     type Packed = BitVec<{ N * T::BITS }>;
 
-    fn pack(&self) -> Self::Packed {
+    fn pack(self) -> Self::Packed {
         self.0.pack()
     }
 
@@ -242,7 +237,7 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Unbundle for Signal<D, Arra
 
     fn unbundle(self) -> Self::Unbundled {
         let signals = (0 .. N)
-            .map(|ind| self.clone().map(move |s| s[ind]))
+            .map(|ind| self.clone().map(move |s| s[ind].clone()))
             .collect::<Vec<_>>();
 
         Array::from(match <[Signal<D, T>; N]>::try_from(signals) {
@@ -291,7 +286,7 @@ mod tests {
     use super::*;
     use crate::{
         bit::{Bit, H, L},
-        bit_vec::BitVec,
+        bitvec::BitVec,
         cast::Cast,
         signal::SignalIterExt,
     };
@@ -355,12 +350,12 @@ mod tests {
         let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]].cast_inner();
 
         assert_eq!(<Array<3, Array<2, Bit>> as BitSize>::BITS, 6);
-        assert_eq!(s.pack(), BitVec::<6>::from(0b001101));
+        assert_eq!(s.pack(), BitVec::<6>::from(0b001101_u8));
     }
 
     #[test]
     fn unpack() {
-        let b: BitVec<6> = BitVec::from(0b001101);
+        let b: BitVec<6> = BitVec::from(0b001101_u8);
         let s = Array::<3, Array<2, Bit>>::unpack(b);
 
         assert_eq!(

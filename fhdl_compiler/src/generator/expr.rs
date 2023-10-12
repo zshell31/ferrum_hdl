@@ -12,7 +12,7 @@ use fhdl_netlist::{
         Not, Pass, Splitter,
     },
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
 use if_chain::if_chain;
@@ -173,8 +173,8 @@ impl<'tcx> Generator<'tcx> {
             ctx.generic_args,
             expr.span,
         )?;
-        match sig_ty {
-            SignalTy::Struct(ty) => {
+        match sig_ty.kind {
+            SignalTyKind::Struct(ty) => {
                 let sub_exprs = sub_exprs
                     .into_iter()
                     .filter(|sub_expr| {
@@ -217,8 +217,8 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         let module_id = ctx.module_id;
 
-        match sig_ty {
-            SignalTy::Prim(ty) => {
+        match sig_ty.kind {
+            SignalTyKind::Prim(ty) => {
                 let dummy_input = self.net_list.add_dummy_node(
                     module_id,
                     Input::new(ty, self.idents.for_module(module_id).tmp()),
@@ -226,7 +226,7 @@ impl<'tcx> Generator<'tcx> {
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
             }
-            SignalTy::Array(ty) => self
+            SignalTyKind::Array(ty) => self
                 .make_array_group(ty, ty.tys(), |generator, sig_ty| {
                     Ok(generator.make_dummy_inputs_from_sig_ty_inner(
                         sig_ty,
@@ -235,7 +235,7 @@ impl<'tcx> Generator<'tcx> {
                     ))
                 })
                 .unwrap(),
-            SignalTy::Struct(ty) => self
+            SignalTyKind::Struct(ty) => self
                 .make_struct_group(
                     ty,
                     ty.tys().iter().map(|ty| ty.inner),
@@ -248,7 +248,7 @@ impl<'tcx> Generator<'tcx> {
                     },
                 )
                 .unwrap(),
-            SignalTy::Enum(ty) => {
+            SignalTyKind::Enum(ty) => {
                 let dummy_input = self.net_list.add_dummy_node(
                     module_id,
                     Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp()),
@@ -432,7 +432,7 @@ impl<'tcx> Generator<'tcx> {
                         ) if struct_did.is_local()
                             || self
                                 .find_blackbox_ty(*struct_did)
-                                .filter(|ty| ty.is_match())
+                                .filter(|ty| ty.has_constructor())
                                 .is_some() =>
                         {
                             self.make_struct_group_from_exprs(expr, args, ctx)
@@ -573,6 +573,7 @@ impl<'tcx> Generator<'tcx> {
                 _,
             ) => self.index(expr, *ind, ctx),
             ExprKind::Lit(lit) => {
+                println!("{:#?}", lit);
                 let prim_ty = self.find_sig_ty(ty, ctx.generic_args, lit.span)?.prim_ty();
                 let value = lit::evaluate_lit(prim_ty, lit)?;
 
@@ -616,8 +617,8 @@ impl<'tcx> Generator<'tcx> {
                         continue;
                     }
 
-                    match sel_sig_ty {
-                        SignalTy::Enum(enum_ty) => {
+                    match sel_sig_ty.kind {
+                        SignalTyKind::Enum(enum_ty) => {
                             let sel = sel.node_id();
                             let (variant_def, variant_idx) =
                                 self.pattern_to_variant_def(arm.pat, ctx.generic_args)?;
@@ -636,7 +637,7 @@ impl<'tcx> Generator<'tcx> {
                             let variant = *variants_map.get(&def_id).unwrap();
                             self.pattern_match(arm.pat, variant, ctx.module_id)?;
                         }
-                        SignalTy::Array(_) | SignalTy::Struct(_) => {
+                        SignalTyKind::Array(_) | SignalTyKind::Struct(_) => {
                             self.pattern_match(arm.pat, sel, ctx.module_id)?;
                         }
                         _ => {
@@ -770,20 +771,24 @@ impl<'tcx> Generator<'tcx> {
                             ctx.generic_args,
                             Some(expr.span),
                         ) {
-                            let sig_ty = self
-                                .find_sig_ty(ty, ctx.generic_args, expr.span)?
-                                .prim_ty();
-                            Ok(self
-                                .net_list
-                                .add_node(
-                                    ctx.module_id,
-                                    Const::new(
-                                        sig_ty,
-                                        const_val,
-                                        self.idents.for_module(ctx.module_id).tmp(),
-                                    ),
-                                )
-                                .into())
+                            let sig_ty =
+                                self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+
+                            let node = self.net_list.add_node(
+                                ctx.module_id,
+                                Const::new(
+                                    sig_ty.maybe_to_bitvec(),
+                                    const_val,
+                                    self.idents.for_module(ctx.module_id).tmp(),
+                                ),
+                            );
+                            let node_out_id = self.net_list[node]
+                                .kind
+                                .outputs()
+                                .only_one()
+                                .node_out_id(node);
+
+                            Ok(self.maybe_from_bitvec(ctx.module_id, node_out_id, sig_ty))
                         } else {
                             Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span)
                                 .into())
@@ -982,10 +987,10 @@ impl<'tcx> Generator<'tcx> {
             let input_ty = self.find_sig_ty(fn_sig.inputs()[0], generic_args, span)?;
             let output_ty = self.find_sig_ty(fn_sig.output(), generic_args, span)?;
 
-            println!(
-                "evaluate closure fn without params: {:?}: {:?}",
-                fn_sig, generic_args
-            );
+            // println!(
+            //     "evaluate closure fn without params: {:?}: {:?}",
+            //     fn_sig, generic_args
+            // );
 
             if fn_id.is_local() {
                 let (input, dummy_inputs) =
@@ -1424,8 +1429,8 @@ impl<'tcx> Generator<'tcx> {
 
                 let item_id = if prim_ty != subexpr_ty {
                     StdConversion::convert(
-                        prim_ty.into(),
-                        subexpr_ty.into(),
+                        SignalTy::new(None, prim_ty.into()),
+                        SignalTy::new(None, subexpr_ty.into()),
                         node,
                         self,
                         span,
@@ -1496,8 +1501,8 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         let span = expr.span;
         let expr = self.evaluate_expr(expr, ctx)?;
-        match self.item_ty(expr) {
-            SignalTy::Prim(prim) => {
+        match self.item_ty(expr).kind {
+            SignalTyKind::Prim(prim) => {
                 assert!(ind < prim.width());
                 let indexed = self.net_list[expr.node_id()]
                     .kind
@@ -1517,7 +1522,7 @@ impl<'tcx> Generator<'tcx> {
                     )
                     .into())
             }
-            SignalTy::Array(array_ty) => {
+            SignalTyKind::Array(array_ty) => {
                 assert!(ind < array_ty.count());
 
                 Ok(expr.group().item_ids()[ind as usize])

@@ -59,12 +59,16 @@ pub enum BlackboxTy {
     Bit,
     Clock,
     Unsigned,
-    UnsignedMatch,
+    UnsignedShort,
     Array,
 }
 
 impl BlackboxTy {
-    pub fn is_match(&self) -> bool {
-        matches!(self, BlackboxTy::UnsignedMatch)
+    pub fn is_unsigned_short(&self) -> bool {
+        matches!(self, BlackboxTy::UnsignedShort)
+    }
+
+    pub fn has_constructor(&self) -> bool {
+        self.is_unsigned_short()
     }
 }

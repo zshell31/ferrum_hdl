@@ -8,7 +8,7 @@ use fhdl_netlist::{
     group::ItemId,
     node::{IsNode, Splitter},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy, SignalTyKind},
 };
 use rustc_hir::Expr;
 use rustc_span::Span;
@@ -90,57 +90,68 @@ impl StdConversion {
         generator: &mut Generator<'_>,
         span: Span,
     ) -> Result<ItemId, Error> {
-        if from_ty == to_ty {
+        if from_ty.kind == to_ty.kind {
             return Ok(from);
         }
 
-        match (from_ty, to_ty) {
-            (SignalTy::Prim(PrimTy::Bool), SignalTy::Prim(PrimTy::Bit)) => {
+        match (from_ty.kind, to_ty.kind) {
+            (SignalTyKind::Prim(PrimTy::Bool), SignalTyKind::Prim(PrimTy::Bit)) => {
                 assert_convert::<bool, Bit>();
                 Ok(Self::bool_to_bit(from, generator))
             }
-            (SignalTy::Prim(PrimTy::Bit), SignalTy::Prim(PrimTy::Bool)) => {
+            (SignalTyKind::Prim(PrimTy::Bit), SignalTyKind::Prim(PrimTy::Bool)) => {
                 assert_convert::<Bit, bool>();
                 Ok(Self::bit_to_bool(from, generator))
             }
-            (SignalTy::Prim(PrimTy::U8), SignalTy::Prim(PrimTy::Unsigned(n))) => {
+            (SignalTyKind::Prim(PrimTy::U8), SignalTyKind::Prim(PrimTy::Unsigned(n))) => {
                 assert_convert::<u8, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTy::Prim(PrimTy::U16), SignalTy::Prim(PrimTy::Unsigned(n))) => {
+            (
+                SignalTyKind::Prim(PrimTy::U16),
+                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+            ) => {
                 assert_convert::<u16, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTy::Prim(PrimTy::U32), SignalTy::Prim(PrimTy::Unsigned(n))) => {
+            (
+                SignalTyKind::Prim(PrimTy::U32),
+                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+            ) => {
                 assert_convert::<u32, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTy::Prim(PrimTy::U64), SignalTy::Prim(PrimTy::Unsigned(n))) => {
+            (
+                SignalTyKind::Prim(PrimTy::U64),
+                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+            ) => {
                 assert_convert::<u64, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTy::Prim(PrimTy::U128), SignalTy::Prim(PrimTy::Unsigned(n))) => {
+            (
+                SignalTyKind::Prim(PrimTy::U128),
+                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+            ) => {
                 assert_convert::<u128, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            // TODO: use blackbox_ty for matching
-            (SignalTy::Prim(PrimTy::Unsigned(n)), SignalTy::Struct(struct_ty))
-                if struct_ty.len() == 1 && struct_ty.tys()[0].inner.is_unsigned(n) =>
-            {
+            (
+                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Struct(struct_ty),
+            ) if to_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
                 assert_convert::<Unsigned<1>, u<1>>();
                 generator
                     .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
             }
-            // TODO: use blackbox_ty for matching
-            (SignalTy::Struct(struct_ty), SignalTy::Prim(PrimTy::Unsigned(n)))
-                if struct_ty.len() == 1 && struct_ty.tys()[0].inner.is_unsigned(n) =>
+            (SignalTyKind::Struct(_), SignalTyKind::Prim(PrimTy::Unsigned(n)))
+                if from_ty.is_unsigned_short() && from_ty.width() == to_ty.width() =>
             {
                 assert_convert::<u<1>, Unsigned<1>>();
 
                 let from = from.group().item_ids()[0];
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTy::Array(from_ty), SignalTy::Array(to_ty))
+            (SignalTyKind::Array(from_ty), SignalTyKind::Array(to_ty))
                 if from_ty.count() == to_ty.count() =>
             {
                 let ty = to_ty;

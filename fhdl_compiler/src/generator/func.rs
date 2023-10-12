@@ -5,7 +5,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NetList, NodeId},
     node::{Input, IsNode, Pass},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{PrimTy, SignalTy, SignalTyKind},
 };
 use rustc_ast::{Mutability, UintTy};
 use rustc_hir::{
@@ -230,8 +230,20 @@ impl<'tcx> Generator<'tcx> {
                 let (is_self_param, sig_ty) = match path.res {
                     Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
                     Res::SelfTyAlias { alias_to, .. } => (true, find_sig_ty(alias_to)?),
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::Usize | UintTy::U128)) => {
-                        (false, PrimTy::U128.into())
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::U8)) => {
+                        (false, SignalTy::new(None, PrimTy::U8.into()))
+                    }
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::U16)) => {
+                        (false, SignalTy::new(None, PrimTy::U16.into()))
+                    }
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::U32)) => {
+                        (false, SignalTy::new(None, PrimTy::U32.into()))
+                    }
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::U64)) => {
+                        (false, SignalTy::new(None, PrimTy::U64.into()))
+                    }
+                    Res::PrimTy(HirPrimTy::Uint(UintTy::U128)) => {
+                        (false, SignalTy::new(None, PrimTy::U128.into()))
                     }
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
@@ -279,8 +291,8 @@ impl<'tcx> Generator<'tcx> {
         module_id: ModuleId,
         is_dummy: bool,
     ) -> ItemId {
-        match sig_ty {
-            SignalTy::Prim(prim_ty) => {
+        match sig_ty.kind {
+            SignalTyKind::Prim(prim_ty) => {
                 let input = Input::new(prim_ty, self.idents.for_module(module_id).tmp());
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
@@ -289,12 +301,12 @@ impl<'tcx> Generator<'tcx> {
                 })
                 .into()
             }
-            SignalTy::Array(ty) => self
+            SignalTyKind::Array(ty) => self
                 .make_array_group(ty, ty.tys(), |generator, ty| {
                     Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
                 })
                 .unwrap(),
-            SignalTy::Struct(ty) => self
+            SignalTyKind::Struct(ty) => self
                 .make_struct_group(
                     ty,
                     ty.tys().iter().map(|ty| ty.inner),
@@ -303,7 +315,7 @@ impl<'tcx> Generator<'tcx> {
                     },
                 )
                 .unwrap(),
-            SignalTy::Enum(ty) => {
+            SignalTyKind::Enum(ty) => {
                 let input =
                     Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp());
                 (if is_dummy {

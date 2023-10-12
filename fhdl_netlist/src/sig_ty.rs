@@ -1,3 +1,5 @@
+use fhdl_blackbox::BlackboxTy;
+
 use crate::{arena::with_arena, const_functions::clog2, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -66,8 +68,12 @@ impl PrimTy {
 
         match (lhs, rhs) {
             (Bool, Bit) | (Bit, Bool) => Some(Bit),
-            (Unsigned(n), U128) | (U128, Unsigned(n)) => Some(Unsigned(n)),
-            _ => None,
+            (Unsigned(n), U8 | U16 | U32 | U64 | U128)
+            | (U8 | U16 | U32 | U64 | U128, Unsigned(n)) => Some(Unsigned(n)),
+            _ => {
+                println!("ty_for_bin_expr: lhs = {:?} rhs = {:?}", lhs, rhs);
+                None
+            }
         }
     }
 }
@@ -250,17 +256,14 @@ impl EnumTy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SignalTy {
+pub enum SignalTyKind {
     Prim(PrimTy),
     Array(ArrayTy),
     Struct(StructTy),
     Enum(EnumTy),
 }
 
-impl !Sync for SignalTy {}
-impl !Send for SignalTy {}
-
-impl From<PrimTy> for SignalTy {
+impl From<PrimTy> for SignalTyKind {
     fn from(prim_ty: PrimTy) -> Self {
         match prim_ty {
             PrimTy::Enum(enum_ty) => enum_ty.into(),
@@ -269,36 +272,59 @@ impl From<PrimTy> for SignalTy {
     }
 }
 
-impl From<ArrayTy> for SignalTy {
+impl From<ArrayTy> for SignalTyKind {
     fn from(array_ty: ArrayTy) -> Self {
         Self::Array(array_ty)
     }
 }
 
-impl From<StructTy> for SignalTy {
+impl From<StructTy> for SignalTyKind {
     fn from(struct_ty: StructTy) -> Self {
         Self::Struct(struct_ty)
     }
 }
 
-impl From<EnumTy> for SignalTy {
+impl From<EnumTy> for SignalTyKind {
     fn from(enum_ty: EnumTy) -> Self {
         Self::Enum(enum_ty)
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SignalTy {
+    pub blackbox: Option<BlackboxTy>,
+    pub kind: SignalTyKind,
+}
+
+impl !Sync for SignalTy {}
+impl !Send for SignalTy {}
+
 impl SignalTy {
-    pub fn mk_array(n: u128, sig_ty: SignalTy) -> Self {
-        Self::Array(ArrayTy::new(n, unsafe { with_arena().alloc(sig_ty) }))
+    pub fn new(blackbox: Option<BlackboxTy>, kind: SignalTyKind) -> Self {
+        Self { blackbox, kind }
+    }
+    pub fn mk_array(blackbox: Option<BlackboxTy>, n: u128, sig_ty: SignalTy) -> Self {
+        Self::new(
+            blackbox,
+            SignalTyKind::Array(ArrayTy::new(n, unsafe { with_arena().alloc(sig_ty) })),
+        )
     }
 
-    pub fn mk_struct(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
-        Self::Struct(StructTy::new(unsafe { with_arena().alloc_from_iter(iter) }))
+    pub fn mk_struct(
+        blackbox: Option<BlackboxTy>,
+        iter: impl IntoIterator<Item = Named<SignalTy>>,
+    ) -> Self {
+        Self::new(
+            blackbox,
+            SignalTyKind::Struct(StructTy::new(unsafe {
+                with_arena().alloc_from_iter(iter)
+            })),
+        )
     }
 
     pub fn opt_prim_ty(&self) -> Option<PrimTy> {
-        match self {
-            Self::Prim(prim_ty) => Some(*prim_ty),
+        match self.kind {
+            SignalTyKind::Prim(prim_ty) => Some(prim_ty),
             _ => None,
         }
     }
@@ -314,8 +340,8 @@ impl SignalTy {
     }
 
     pub fn opt_array_ty(&self) -> Option<ArrayTy> {
-        match self {
-            Self::Array(array_ty) => Some(*array_ty),
+        match self.kind {
+            SignalTyKind::Array(array_ty) => Some(array_ty),
             _ => None,
         }
     }
@@ -325,8 +351,8 @@ impl SignalTy {
     }
 
     pub fn opt_struct_ty(&self) -> Option<StructTy> {
-        match self {
-            Self::Struct(ty) => Some(*ty),
+        match self.kind {
+            SignalTyKind::Struct(ty) => Some(ty),
             _ => None,
         }
     }
@@ -336,8 +362,8 @@ impl SignalTy {
     }
 
     pub fn opt_enum_ty(&self) -> Option<EnumTy> {
-        match self {
-            Self::Enum(enum_ty) => Some(*enum_ty),
+        match self.kind {
+            SignalTyKind::Enum(enum_ty) => Some(enum_ty),
             _ => None,
         }
     }
@@ -347,25 +373,31 @@ impl SignalTy {
     }
 
     pub fn is_enum_ty(&self) -> bool {
-        matches!(self, Self::Enum(_))
+        matches!(self.kind, SignalTyKind::Enum(_))
     }
 
     pub fn width(&self) -> u128 {
-        match self {
-            Self::Prim(ty) => ty.width(),
-            Self::Array(ty) => ty.width(),
-            Self::Struct(ty) => ty.width(),
-            Self::Enum(ty) => ty.width(),
+        match self.kind {
+            SignalTyKind::Prim(ty) => ty.width(),
+            SignalTyKind::Array(ty) => ty.width(),
+            SignalTyKind::Struct(ty) => ty.width(),
+            SignalTyKind::Enum(ty) => ty.width(),
         }
     }
 
     pub fn maybe_to_bitvec(&self) -> PrimTy {
-        match self {
-            SignalTy::Prim(prim_ty) => *prim_ty,
+        match self.kind {
+            SignalTyKind::Prim(prim_ty) => prim_ty,
             _ => {
                 let width = self.width();
                 PrimTy::BitVec(width)
             }
         }
+    }
+
+    pub fn is_unsigned_short(&self) -> bool {
+        self.blackbox
+            .map(|blackbox| blackbox.is_unsigned_short())
+            .unwrap_or_default()
     }
 }

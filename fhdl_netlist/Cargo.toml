@@ -12,6 +12,7 @@ derive-where = "1.2.5"
 either = "1.9.0"
 indexmap = "2.0.0"
 fhdl_blackbox = { path = "../fhdl_blackbox/" }
+fhdl_const_func = { path = "../fhdl_const_func/" }
 fnv = "1.0.7"
 smallvec = "1.11.0"
 

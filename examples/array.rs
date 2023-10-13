@@ -28,7 +28,7 @@ pub fn top_module(
 
 #[cfg(test)]
 mod tests {
-    use ferrum_hdl::{signal::SignalIterExt, CastInner};
+    use ferrum_hdl::{signal::SignalIterExt, Cast};
 
     use super::*;
 
@@ -36,7 +36,7 @@ mod tests {
     fn signals() {
         let s = [[0, 1, 2, 3], [1, 2, 3, 4], [2, 3, 4, 5], [3, 4, 5, 6]]
             .into_iter()
-            .map(CastInner::<Array<4, Unsigned<4>>>::cast_inner)
+            .map(Cast::cast::<Array<4, Unsigned<4>>>)
             .into_signal();
 
         let res = top_module(s);

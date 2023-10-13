@@ -1,6 +1,7 @@
 use fhdl_blackbox::BlackboxTy;
+use fhdl_const_func::clog2_len;
 
-use crate::{arena::with_arena, const_functions::clog2, symbol::Symbol};
+use crate::{arena::with_arena, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Named<T> {
@@ -206,11 +207,7 @@ fn data_width(variants: &'static [Named<SignalTy>]) -> u128 {
 }
 
 fn discr_width(variants: &'static [Named<SignalTy>]) -> u128 {
-    if variants.is_empty() {
-        0
-    } else {
-        clog2(variants.len() - 1) as u128
-    }
+    clog2_len(variants.len()) as u128
 }
 
 impl EnumTy {

@@ -7,7 +7,6 @@
 pub mod arena;
 pub mod backend;
 pub mod buffer;
-pub mod const_functions;
 pub mod group;
 pub mod net_kind;
 pub mod net_list;

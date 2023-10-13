@@ -10,7 +10,7 @@ use num_traits::Zero;
 
 use crate::{
     bitpack::{BitPack, IsPacked},
-    cast::CastInner,
+    cast::CastFrom,
     const_functions::{bit, slice},
     const_helpers::{Assert, IsTrue},
     signal::SignalValue,
@@ -122,11 +122,11 @@ impl<const N: usize> From<BigUint> for BitVec<N> {
     }
 }
 
-impl<const N: usize, const M: usize> CastInner<BitVec<N>> for BitVec<M> {
-    fn cast_inner(self) -> BitVec<N> {
-        match self {
-            Self::Short(short) => BitVec::<N>::from(short),
-            Self::Long(long) => BitVec::<N>::from(long),
+impl<const N: usize, const M: usize> CastFrom<BitVec<M>> for BitVec<N> {
+    fn cast_from(from: BitVec<M>) -> BitVec<N> {
+        match from {
+            BitVec::<M>::Short(short) => BitVec::<N>::from(short),
+            BitVec::<M>::Long(long) => BitVec::<N>::from(long),
         }
     }
 }

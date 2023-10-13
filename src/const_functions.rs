@@ -1,5 +1,4 @@
-// TODO: Move into other crate
-pub use fhdl_netlist::const_functions::*;
+pub use fhdl_const_func::*;
 
 pub const fn bit(m: usize, n: usize) -> bool {
     m < n

@@ -1,15 +1,19 @@
-use std::ops::{BitAnd, BitOr, Shl, Shr};
+use std::{
+    marker::PhantomData,
+    ops::{BitAnd, BitOr, Shl, Shr},
+};
 
 use fhdl_macros::blackbox;
+pub use fhdl_macros::BitPack;
 
-use crate::{bitvec::BitVec, cast::CastInner};
+use crate::{bitvec::BitVec, cast::CastFrom};
 
 pub trait BitSize: Sized {
     const BITS: usize;
 }
 
 pub trait IsPacked:
-    Sized + Clone + BitAnd + BitOr + Shl<usize> + Shr<usize> + CastInner<Self> + From<usize>
+    Sized + Clone + BitAnd + BitOr + Shl<usize> + Shr<usize> + CastFrom<Self> + From<usize>
 {
     fn zero() -> Self;
 }
@@ -26,6 +30,22 @@ pub trait BitPack: BitSize {
     fn repack<T: BitPack<Packed = Self::Packed>>(self) -> T {
         let bitvec = self.pack();
         T::unpack(bitvec)
+    }
+}
+
+impl<T> BitSize for PhantomData<T> {
+    const BITS: usize = 0;
+}
+
+impl<T> BitPack for PhantomData<T> {
+    type Packed = BitVec<0>;
+
+    fn pack(self) -> Self::Packed {
+        BitVec::<0>::zero()
+    }
+
+    fn unpack(_: Self::Packed) -> Self {
+        PhantomData
     }
 }
 

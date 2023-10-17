@@ -573,7 +573,6 @@ impl<'tcx> Generator<'tcx> {
                 _,
             ) => self.index(expr, *ind, ctx),
             ExprKind::Lit(lit) => {
-                println!("{:#?}", lit);
                 let prim_ty = self.find_sig_ty(ty, ctx.generic_args, lit.span)?.prim_ty();
                 let value = lit::evaluate_lit(prim_ty, lit)?;
 

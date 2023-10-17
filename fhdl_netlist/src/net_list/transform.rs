@@ -2,8 +2,7 @@ use super::{const_val::ConstVal, NetList, NodeOutId};
 use crate::{
     arena::Vec,
     node::{
-        BinOp, BinOpNode, BitNot, Const, Merger, MultiConst, MultiPass, Node, NodeKind,
-        Not, Pass,
+        BinOp, BinOpNode, BitNot, Const, Merger, MultiConst, Node, NodeKind, Not, Pass,
     },
 };
 
@@ -21,20 +20,14 @@ impl NetList {
         }
     }
 
-    pub(super) fn transform(&mut self, mut node: Node) -> Node {
+    pub(super) fn transform(&mut self, node: Node) -> Node {
         match node.kind {
             NodeKind::Const(_) => node,
             NodeKind::Pass(Pass { input, output, .. }) => match self.to_const(*input) {
                 Some(const_val) => {
                     Const::new(output.ty, const_val.val, output.sym).into()
                 }
-                None => {
-                    if self[input.node_id()].from_const {
-                        node.from_const = true;
-                    }
-
-                    node
-                }
+                None => node,
             },
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id;
@@ -44,40 +37,21 @@ impl NetList {
                     self.to_const(node_out_id).map(|const_val| const_val.val)
                 });
                 let values = Vec::collect_from_opt(values);
-                let outputs = Vec::collect_from(
-                    module.outputs().map(|node_out_id| self[node_out_id]),
-                );
 
                 match values {
-                    Some(values) => MultiConst::new(values, outputs).into(),
-                    None => {
-                        let from_const = module
-                            .outputs()
-                            .all(|output| self[output.node_id()].from_const);
-
-                        if from_const {
-                            let inputs = module.outputs();
-                            let outputs = module.outputs().map(|output| {
-                                let output = self[output];
-                                (output.ty, output.sym)
-                            });
-
-                            let mut node: Node = MultiPass::new(inputs, outputs).into();
-                            node.from_const = true;
-
-                            let module = &mut self[module_id];
-                            module.inject = true;
-
-                            node
-                        } else {
-                            node
-                        }
+                    Some(values) => {
+                        let outputs = Vec::collect_from(
+                            module.outputs().map(|node_out_id| self[node_out_id]),
+                        );
+                        MultiConst::new(values, outputs).into()
                     }
+                    None => node,
                 }
             }
             NodeKind::Not(Not { input, output })
             | NodeKind::BitNot(BitNot { input, output }) => match self.to_const(*input) {
                 Some(const_val) => {
+                    let const_val = !const_val;
                     Const::new(output.ty, const_val.val, output.sym).into()
                 }
                 None => node,
@@ -118,19 +92,27 @@ impl NetList {
                 match self.to_const(splitter.input) {
                     Some(input) => {
                         let rev = splitter.rev;
-                        let values =
-                            Vec::collect_from(splitter.outputs.iter().map(|output| {
-                                let width = output.width();
-                                let val = input.slice(start, width, rev).val;
-                                if !rev {
-                                    start += width;
-                                } else {
-                                    start -= width;
-                                };
-                                val
-                            }));
+                        let mut values = splitter.outputs.iter().map(|output| {
+                            let width = output.width();
+                            let val = input.slice(start, width, rev).val;
+                            if !rev {
+                                start += width;
+                            } else {
+                                start -= width;
+                            };
+                            val
+                        });
 
-                        MultiConst::new(values, splitter.outputs.iter().copied()).into()
+                        if splitter.outputs.len() > 1 {
+                            let values = Vec::collect_from(values);
+
+                            MultiConst::new(values, splitter.outputs.iter().copied())
+                                .into()
+                        } else {
+                            let output = splitter.outputs[0];
+                            Const::new(output.ty, values.next().unwrap(), output.sym)
+                                .into()
+                        }
                     }
                     None => {
                         let output = splitter.outputs[0];
@@ -152,7 +134,9 @@ impl NetList {
                     None => Pass::new(output.ty, inputs[0], output.sym).into(),
                 }
             }
-            NodeKind::Merger(Merger { ref inputs, .. }) if inputs.len() > 1 => {
+            NodeKind::Merger(Merger {
+                ref inputs, output, ..
+            }) if inputs.len() > 1 => {
                 // let sym = output.sym;
 
                 // if !*rev {
@@ -175,10 +159,22 @@ impl NetList {
                 //     }
                 // }
 
-                if inputs.iter().all(|input| self[input.node_id()].from_const) {
-                    node.from_const = true;
+                let mut val = Some(ConstVal::new(0, 0));
+                inputs.iter().for_each(|input| match self.to_const(*input) {
+                    Some(new_val) => {
+                        if let Some(val) = val.as_mut() {
+                            val.shift(new_val);
+                        }
+                    }
+                    None => {
+                        val = None;
+                    }
+                });
+
+                match val {
+                    Some(val) => Const::new(output.ty, val.val, output.sym).into(),
+                    None => node,
                 }
-                node
             }
             _ => node,
         }

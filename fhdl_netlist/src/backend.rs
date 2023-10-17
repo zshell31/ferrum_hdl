@@ -50,9 +50,9 @@ impl<'n> Verilog<'n> {
 
             if let Some(init) = init {
                 let node = &self.net_list[init.node_id()];
-                if node.from_const {
+                if node.kind.is_const() {
                     let sym = out.sym;
-                    let init = self.inject_const(init);
+                    let init = self.inject_input(init);
 
                     self.buffer.write_tab();
                     self.buffer.write_str("initial begin\n");
@@ -72,32 +72,19 @@ impl<'n> Verilog<'n> {
     }
 
     fn inject_input(&self, node_out_id: NodeOutId) -> Cow<'static, str> {
-        self.inject_node(node_out_id, false)
-    }
-
-    fn inject_const(&self, node_out_id: NodeOutId) -> Cow<'static, str> {
-        self.inject_node(node_out_id, true)
-    }
-
-    fn inject_node(&self, node_out_id: NodeOutId, from_const: bool) -> Cow<'static, str> {
         let node_out = &self.net_list[node_out_id];
         let node_id = node_out_id.node_id();
         let node = &self.net_list[node_id];
 
-        let should_be_injected = if !from_const {
-            node.inject || node_out.inject
-        } else {
-            node.from_const
-        };
+        let should_be_injected = node.inject || node_out.inject;
 
         if should_be_injected {
             let mut buf = Buffer::new();
-            self.inject_node_(
+            self.inject_node(
                 node_out_id.node_id().module_id(),
                 node_out_id,
                 &mut buf,
                 false,
-                from_const,
             );
             return buf.buffer.into();
         }
@@ -105,29 +92,24 @@ impl<'n> Verilog<'n> {
         self.net_list[node_out_id].sym.as_str().into()
     }
 
-    fn inject_node_(
+    fn inject_node(
         &self,
         module_id: ModuleId,
         node_out_id: NodeOutId,
         expr: &mut Buffer,
         nested_expr: bool,
-        from_const: bool,
     ) {
         let node_out = &self.net_list[node_out_id];
         let node_id = node_out_id.node_id();
         let node = &self.net_list[node_id];
 
-        if !from_const {
-            if !node_out.inject {
-                let mod_id = node_id.module_id();
-                if module_id != mod_id {
-                    panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", self.net_list[module_id].name, self.net_list[mod_id].name);
-                }
-                expr.write_str(self.net_list[node_out_id].sym.as_str());
-                return;
+        if !node_out.inject {
+            let mod_id = node_id.module_id();
+            if module_id != mod_id {
+                panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", self.net_list[module_id].name, self.net_list[mod_id].name);
             }
-        } else if !node.from_const {
-            panic!("Node {:#?} is not const", node);
+            expr.write_str(self.net_list[node_out_id].sym.as_str());
+            return;
         }
 
         if let Some(const_val) = self.net_list.to_const(node_out_id) {
@@ -137,19 +119,19 @@ impl<'n> Verilog<'n> {
 
         match &node.kind {
             NodeKind::Pass(Pass { input, .. }) => {
-                self.inject_node_(module_id, *input, expr, false, from_const);
+                self.inject_node(module_id, *input, expr, false);
             }
             NodeKind::MultiPass(MultiPass { inputs, .. }) => {
                 let input = inputs[node_out_id.out_id()];
-                self.inject_node_(module_id, input, expr, false, from_const);
+                self.inject_node(module_id, input, expr, false);
             }
             NodeKind::BitNot(BitNot { input, .. }) => {
                 expr.write_str("~");
-                self.inject_node_(module_id, *input, expr, true, from_const);
+                self.inject_node(module_id, *input, expr, true);
             }
             NodeKind::Not(Not { input, .. }) => {
                 expr.write_str("!");
-                self.inject_node_(module_id, *input, expr, true, from_const);
+                self.inject_node(module_id, *input, expr, true);
             }
             NodeKind::BinOp(BinOpNode {
                 bin_op,
@@ -160,9 +142,9 @@ impl<'n> Verilog<'n> {
                     expr.write_str("( ");
                 }
 
-                self.inject_node_(module_id, *left, expr, true, from_const);
+                self.inject_node(module_id, *left, expr, true);
                 expr.write_fmt(format_args!(" {bin_op} "));
-                self.inject_node_(module_id, *right, expr, true, from_const);
+                self.inject_node(module_id, *right, expr, true);
 
                 if nested_expr {
                     expr.write_str(" )");
@@ -188,7 +170,7 @@ impl<'n> Verilog<'n> {
                     }
                 }
 
-                self.inject_node_(module_id, *input, expr, false, from_const);
+                self.inject_node(module_id, *input, expr, false);
                 let width = outputs[out_id].width();
 
                 if *rev {
@@ -209,7 +191,7 @@ impl<'n> Verilog<'n> {
                     Either::Right(inputs.iter().rev())
                 };
                 expr.intersperse(", ", inputs, |expr, input| {
-                    self.inject_node_(module_id, *input, expr, false, from_const);
+                    self.inject_node(module_id, *input, expr, false);
                 });
                 expr.write_str(" }");
             }
@@ -310,6 +292,7 @@ impl<'n> Visitor for Verilog<'n> {
         self.buffer.push_tab();
         for node_id in module.nodes() {
             let node = &self.net_list[node_id];
+
             if node.is_skip || node.inject {
                 continue;
             }

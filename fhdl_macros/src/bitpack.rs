@@ -8,19 +8,15 @@ use either::Either;
 use fhdl_const_func::clog2_len;
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{
-    punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute, Error, Expr,
-    ExprLit, GenericParam, Generics, Ident, Index, Lit, Meta, MetaNameValue,
-    PredicateType, Type, TypeParam, TypePath, WherePredicate,
-};
+use syn::{GenericParam, Generics, Ident, Index, Type};
 
-use crate::utils::{self, TEither};
+use crate::utils::{self, Bounds, TEither};
 
 pub struct BitPackDerive {
     ident: Ident,
     generics: Generics,
     data: Data<BitPackVariant, BitPackField>,
-    attrs: BitPackAttrs,
+    attrs: Bounds,
 }
 
 impl FromDeriveInput for BitPackDerive {
@@ -42,7 +38,7 @@ impl FromDeriveInput for BitPackDerive {
             ident: input.ident.clone(),
             generics: Generics::from_generics(&input.generics)?,
             data: Data::try_from(&input.data)?,
-            attrs: BitPackAttrs::from_attributes(&attrs)?,
+            attrs: Bounds::from_attributes(&attrs)?,
         })
     }
 }
@@ -75,56 +71,6 @@ impl BitPackField {
 pub struct BitPackVariant {
     ident: Ident,
     fields: Fields<BitPackField>,
-}
-
-#[derive(Debug)]
-pub struct BitPackAttrs {
-    bounds: Vec<WherePredicate>,
-}
-
-impl BitPackAttrs {
-    fn contains_ty_param(&self, tparam: &TypeParam) -> bool {
-        self.bounds.iter().any(|bound| match bound {
-            WherePredicate::Type(PredicateType {
-                bounded_ty: Type::Path(TypePath { path, .. }),
-                ..
-            }) => path.is_ident(&tparam.ident),
-            _ => false,
-        })
-    }
-}
-
-impl FromAttributes for BitPackAttrs {
-    fn from_attributes(attrs: &[Attribute]) -> darling::Result<Self> {
-        let mut bounds = vec![];
-        for attr in attrs {
-            let nested =
-                attr.parse_args_with(Punctuated::<Meta, Comma>::parse_terminated)?;
-
-            for meta in nested {
-                match meta {
-                    Meta::NameValue(MetaNameValue {
-                        path,
-                        value:
-                            Expr::Lit(ExprLit {
-                                lit: Lit::Str(value),
-                                ..
-                            }),
-                        ..
-                    }) if path.is_ident("bound") => {
-                        let predicates = value.parse_with(
-                            Punctuated::<WherePredicate, Comma>::parse_separated_nonempty,
-                        )?;
-                        bounds.extend(predicates);
-                    }
-                    _ => {
-                        return Err(Error::new(meta.span(), "Invalid attribute").into());
-                    }
-                }
-            }
-        }
-        Ok(BitPackAttrs { bounds })
-    }
 }
 
 impl BitPackDerive {
@@ -232,6 +178,14 @@ impl BitPackDerive {
                         #ident: ::ferrum_hdl::bitpack::BitSize
                     })
                 }),
+        );
+
+        let predicates = predicates.chain(
+            self.attrs
+                .0
+                .iter()
+                .filter(|bound| !Bounds::is_array_constr(bound))
+                .map(TEither::AsIs),
         );
 
         let where_clause = utils::into_where_clause(predicates);
@@ -458,7 +412,7 @@ impl BitPackDerive {
                 }),
         );
 
-        let predicates = predicates.chain(self.attrs.bounds.iter().map(TEither::AsIs));
+        let predicates = predicates.chain(self.attrs.0.iter().map(TEither::AsIs));
 
         let predicates = if !add_array_constr {
             Either::Left(predicates)

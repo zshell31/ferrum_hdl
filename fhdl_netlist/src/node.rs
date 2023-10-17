@@ -86,7 +86,6 @@ pub struct Node {
     // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
-    pub from_const: bool,
 }
 
 impl Node {
@@ -96,12 +95,9 @@ impl Node {
     }
 
     pub fn new_from_ref(kind: &'static mut NodeKind) -> Self {
-        let from_const = kind.is_const();
-
         Self {
             kind,
             is_skip: true,
-            from_const,
             inject: false,
         }
     }

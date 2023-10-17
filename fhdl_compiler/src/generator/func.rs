@@ -230,6 +230,9 @@ impl<'tcx> Generator<'tcx> {
                 let (is_self_param, sig_ty) = match path.res {
                     Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
                     Res::SelfTyAlias { alias_to, .. } => (true, find_sig_ty(alias_to)?),
+                    Res::PrimTy(HirPrimTy::Bool) => {
+                        (false, SignalTy::new(None, PrimTy::Bool.into()))
+                    }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U8)) => {
                         (false, SignalTy::new(None, PrimTy::U8.into()))
                     }
@@ -348,8 +351,8 @@ impl<'tcx> Generator<'tcx> {
             net_list.add_node(node_id.module_id(), pass)
         } else {
             let node = &mut net_list[node_id];
-            if !node.kind.is_pass() {
-                for out in node.kind.outputs_mut().items_mut() {
+            for out in node.kind.outputs_mut().items_mut() {
+                if out.out.sym.as_str().starts_with("__tmp") {
                     let sym = idents.for_module(module_id).out();
                     out.out.sym = sym;
                 }

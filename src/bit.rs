@@ -16,7 +16,7 @@ use crate::{
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[blackbox_ty(Bit)]
 #[repr(transparent)]
-pub struct Bit(bool);
+pub struct Bit(pub bool);
 
 pub fn bit_value(value: bool) -> u128 {
     match value {

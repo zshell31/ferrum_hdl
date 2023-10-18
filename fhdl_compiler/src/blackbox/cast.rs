@@ -57,7 +57,37 @@ impl StdConversion {
         from
     }
 
+    #[inline(always)]
+    fn to_u8(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::U8, generator)
+    }
+
+    #[inline(always)]
+    fn to_u16(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::U16, generator)
+    }
+
+    #[inline(always)]
+    fn to_u32(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::U32, generator)
+    }
+
+    #[inline(always)]
+    fn to_u64(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::U64, generator)
+    }
+
+    #[inline(always)]
+    fn to_u128(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::U128, generator)
+    }
+
+    #[inline(always)]
     fn to_unsigned(from: ItemId, width: u128, generator: &mut Generator<'_>) -> ItemId {
+        Self::to_unsigned_(from, PrimTy::Unsigned(width), generator)
+    }
+
+    fn to_unsigned_(from: ItemId, ty: PrimTy, generator: &mut Generator<'_>) -> ItemId {
         let node_id = from.node_id();
         let module_id = node_id.module_id();
         let node_out_id = generator.net_list[node_id]
@@ -68,14 +98,11 @@ impl StdConversion {
 
         generator
             .net_list
-            .add_node(
+            .add(
                 module_id,
                 Splitter::new(
                     node_out_id,
-                    [(
-                        PrimTy::Unsigned(width),
-                        generator.idents.for_module(module_id).tmp(),
-                    )],
+                    [(ty, generator.idents.for_module(module_id).tmp())],
                     None,
                     false,
                 ),
@@ -107,12 +134,23 @@ impl StdConversion {
                 assert_convert::<u8, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
+            (SignalTyKind::Prim(PrimTy::Unsigned(_)), SignalTyKind::Prim(PrimTy::U8)) => {
+                assert_convert::<Unsigned<1>, u8>();
+                Ok(Self::to_u8(from, generator))
+            }
             (
                 SignalTyKind::Prim(PrimTy::U16),
                 SignalTyKind::Prim(PrimTy::Unsigned(n)),
             ) => {
                 assert_convert::<u16, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
+            }
+            (
+                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Prim(PrimTy::U16),
+            ) => {
+                assert_convert::<Unsigned<1>, u16>();
+                Ok(Self::to_u16(from, generator))
             }
             (
                 SignalTyKind::Prim(PrimTy::U32),
@@ -122,6 +160,13 @@ impl StdConversion {
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
+                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Prim(PrimTy::U32),
+            ) => {
+                assert_convert::<Unsigned<1>, u32>();
+                Ok(Self::to_u32(from, generator))
+            }
+            (
                 SignalTyKind::Prim(PrimTy::U64),
                 SignalTyKind::Prim(PrimTy::Unsigned(n)),
             ) => {
@@ -129,11 +174,25 @@ impl StdConversion {
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
+                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Prim(PrimTy::U64),
+            ) => {
+                assert_convert::<Unsigned<1>, u64>();
+                Ok(Self::to_u64(from, generator))
+            }
+            (
                 SignalTyKind::Prim(PrimTy::U128),
                 SignalTyKind::Prim(PrimTy::Unsigned(n)),
             ) => {
                 assert_convert::<u128, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
+            }
+            (
+                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Prim(PrimTy::U128),
+            ) => {
+                assert_convert::<Unsigned<1>, u128>();
+                Ok(Self::to_u128(from, generator))
             }
             (
                 SignalTyKind::Prim(PrimTy::Unsigned(_)),

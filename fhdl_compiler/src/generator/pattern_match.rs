@@ -3,11 +3,8 @@ use std::iter;
 use either::Either;
 use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{
-    group::ItemId,
-    net_list::ModuleId,
-    node::{BitVecMask, IsNode},
-    params::Outputs,
-    sig_ty::SignalTy,
+    bvm::BitVecMask, group::ItemId, net_list::ModuleId, node::IsNode, params::Outputs,
+    sig_ty::SignalTy, symbol::Symbol,
 };
 use rustc_ast::ast::LitKind;
 use rustc_hir::{
@@ -36,10 +33,9 @@ impl<'tcx> Generator<'tcx> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
+                let sym = Some(Symbol::new(ident.as_str()));
                 match item_id {
                     ItemId::Node(node_id) => {
-                        let sym = self.idents.for_module(module_id).ident(ident.as_str());
-
                         self.net_list[node_id]
                             .kind
                             .outputs_mut()
@@ -49,9 +45,6 @@ impl<'tcx> Generator<'tcx> {
                     }
                     ItemId::Group(group) => {
                         for node_id in group.into_iter() {
-                            let sym =
-                                self.idents.for_module(module_id).ident(ident.as_str());
-
                             self.net_list[node_id]
                                 .kind
                                 .outputs_mut()

@@ -28,6 +28,14 @@ pub const fn max(n: usize, m: usize) -> usize {
     [n, m][(n < m) as usize]
 }
 
+pub const fn mask(n: u128) -> u128 {
+    if n == 128 {
+        u128::MAX
+    } else {
+        (1 << n) - 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

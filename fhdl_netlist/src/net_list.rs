@@ -1,6 +1,3 @@
-mod const_val;
-mod transform;
-
 use std::ops::{Index, IndexMut};
 
 use fnv::{FnvBuildHasher, FnvHashMap, FnvHashSet};
@@ -8,11 +5,11 @@ use indexmap::IndexSet;
 use smallvec::SmallVec;
 
 use crate::{
+    const_val::ConstVal,
     group::ItemId,
-    node::{Input, IsNode, MultiPass, Node, NodeKind, NodeOutput, Pass},
+    node::{Const, Input, IsNode, MultiConst, Node, NodeKind, NodeOutput},
     params::{Inputs, Outputs},
     symbol::Symbol,
-    visitor::{InjectNodes, Reachability},
 };
 
 pub type OutId = usize;
@@ -74,7 +71,7 @@ pub struct Module {
     pub is_skip: bool,
     pub inject: bool,
     module_id: ModuleId,
-    nodes: Vec<Node>,
+    nodes: FnvHashMap<usize, Node>,
     inputs: FnvIndexSet<NodeId>,
     outputs: FnvIndexSet<NodeOutId>,
 }
@@ -86,7 +83,7 @@ impl Module {
             is_skip: true,
             inject: false,
             module_id,
-            nodes: Vec::with_capacity(16),
+            nodes: FnvHashMap::default(),
             inputs: FnvIndexSet::default(),
             outputs: FnvIndexSet::default(),
         }
@@ -95,13 +92,13 @@ impl Module {
     // Private because nodes can refer to nodes from other modules (it's necessary for injecting
     // const values, for example)
     fn node(&self, node_id: NodeId) -> &Node {
-        &self.nodes[node_id.1]
+        self.nodes.get(&node_id.1).unwrap()
     }
 
     // Private because nodes can refer to nodes from other modules (it's necessary for injecting
     // const values, for example)
     fn node_mut(&mut self, node_id: NodeId) -> &mut Node {
-        &mut self.nodes[node_id.1]
+        self.nodes.get_mut(&node_id.1).unwrap()
     }
 
     fn add_node(&mut self, node: Node) -> NodeId {
@@ -111,7 +108,7 @@ impl Module {
             self.inputs.insert(node_id);
         }
 
-        self.nodes.push(node);
+        self.nodes.insert(node_id.1, node);
 
         node_id
     }
@@ -139,8 +136,8 @@ impl Module {
     }
 
     fn add_all_outputs(&mut self, node_id: NodeId) {
-        let node = &self.nodes[node_id.1].kind;
-        for out in node.outputs().items() {
+        let node = self.nodes.get(&node_id.1).unwrap();
+        for out in node.kind.outputs().items() {
             self.outputs.insert(out.node_out_id(node_id));
         }
     }
@@ -260,11 +257,6 @@ impl NetList {
         Self::default()
     }
 
-    pub fn run_stages(&mut self) {
-        Reachability::new(self).run();
-        InjectNodes::new(self).run();
-    }
-
     pub fn add_module(&mut self, name: Symbol) -> ModuleId {
         let module_id = ModuleId(self.modules.len());
         let module = Module::new(name, module_id);
@@ -272,11 +264,14 @@ impl NetList {
         module_id
     }
 
-    pub fn add_node<N: IsNode>(&mut self, module_id: ModuleId, node: N) -> NodeId {
+    pub fn add<N: IsNode>(&mut self, module_id: ModuleId, node: N) -> NodeId {
         let node: NodeKind = node.into();
         let node: Node = node.into();
-        let node = self.transform(node);
+        self.add_node(module_id, node)
+    }
 
+    pub(crate) fn add_node(&mut self, module_id: ModuleId, node: Node) -> NodeId {
+        // let node = self.transform(node);
         let module = &mut self[module_id];
         let node_id = module.add_node(node);
         self.add_links(node_id);
@@ -288,40 +283,27 @@ impl NetList {
         let node = self.modules[node_id.module_id().0].node(node_id);
         for input in node.kind.inputs().items() {
             let links = self.rev_links.entry(input).or_default();
-            links.remove(&node_id);
-        }
-
-        self.replace_inputs(node_id);
-
-        let node = self.modules[node_id.module_id().0].node(node_id);
-        for input in node.kind.inputs().items() {
-            let links = self.rev_links.entry(input).or_default();
             links.insert(node_id);
         }
     }
 
-    fn replace_inputs(&mut self, node_id: NodeId) {
-        // TODO: refactor
-        let node = &self[node_id];
-
-        let mut new_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
+    fn remove_links(&mut self, node_id: NodeId) {
+        let node = self.modules[node_id.module_id().0].node(node_id);
         for input in node.kind.inputs().items() {
-            let input_node = &self[input.node_id()];
-
-            let new_input = match &input_node.kind {
-                NodeKind::Pass(Pass { input, .. }) => Some(*input),
-                NodeKind::MultiPass(MultiPass { inputs, .. }) => {
-                    Some(inputs[input.out_id()])
-                }
-                _ => None,
-            };
-
-            new_inputs.push(new_input);
+            let links = self.rev_links.entry(input).or_default();
+            links.remove(&node_id);
         }
+    }
 
-        let node = &mut self[node_id];
+    pub(crate) fn replace_inputs(
+        &mut self,
+        node_id: NodeId,
+        new_inputs: impl IntoIterator<Item = Option<NodeOutId>>,
+    ) {
+        let node = &mut self.modules[node_id.module_id().0].node_mut(node_id);
         for (input, new_input) in node.kind.inputs_mut().items_mut().zip(new_inputs) {
             if let Some(new_input) = new_input {
+                self.rev_links.remove(input);
                 *input = new_input;
             }
         }
@@ -340,32 +322,38 @@ impl NetList {
 
     pub fn add_dummy_node(&mut self, module_id: ModuleId, node: Input) -> NodeId {
         let node = NodeKind::DummyInput(node);
-        self.add_node(module_id, node)
+        self.add(module_id, node)
     }
 
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
-        let outputs_len = self[node_id].kind.outputs().len();
-
         let node: NodeKind = node.into();
         let node: Node = node.into();
-        let node = self.transform(node);
-        assert_eq!(outputs_len, node.kind.outputs().len());
+        self.replace_node(node_id, node);
+    }
+
+    pub(crate) fn replace_node(&mut self, node_id: NodeId, node: Node) {
+        assert_eq!(
+            self[node_id].kind.outputs().len(),
+            node.kind.outputs().len()
+        );
+        // let node = self.transform(node);
+        self.remove_links(node_id);
 
         let module = &mut self[node_id.module_id()];
         module.replace(node_id, node);
         self.add_links(node_id);
 
-        let all_links = self[node_id]
-            .kind
-            .node_out_ids(node_id)
-            .flat_map(|output| self.rev_links.get(&output))
-            .flat_map(|links| links.iter())
-            .copied()
-            .collect::<SmallVec<[_; 8]>>();
+        // let all_links = self[node_id]
+        //     .kind
+        //     .node_out_ids(node_id)
+        //     .flat_map(|output| self.rev_links.get(&output))
+        //     .flat_map(|links| links.iter())
+        //     .copied()
+        //     .collect::<SmallVec<[_; 8]>>();
 
-        for link in all_links {
-            self.add_links(link);
-        }
+        // for link in all_links {
+        //     self.add_links(link);
+        // }
     }
 
     pub fn add_output(&mut self, node_id: NodeId, out: OutId) {
@@ -378,7 +366,7 @@ impl NetList {
         module.add_all_outputs(node_id);
     }
 
-    pub fn is_output(&mut self, node_out_id: NodeOutId) -> bool {
+    pub fn is_output(&self, node_out_id: NodeOutId) -> bool {
         let module = &self[node_out_id.node_id().module_id()];
         module.is_output(node_out_id)
     }
@@ -451,5 +439,18 @@ impl NetList {
 
     pub fn module_len(&self, module_id: ModuleId) -> usize {
         self[module_id].len()
+    }
+
+    pub(crate) fn to_const(&self, node_out_id: NodeOutId) -> Option<ConstVal> {
+        match &self[node_out_id.node_id()].kind {
+            NodeKind::Const(Const { value, output }) => {
+                Some(ConstVal::new(*value, output.width()))
+            }
+            NodeKind::MultiConst(MultiConst { values, outputs }) => {
+                let out_id = node_out_id.out_id();
+                Some(ConstVal::new(values[out_id], outputs[out_id].width()))
+            }
+            _ => None,
+        }
     }
 }

@@ -39,11 +39,7 @@ impl<'tcx> Generator<'tcx> {
                 .map(|out| {
                     (
                         out.out.ty,
-                        Pass::new(
-                            out.out.ty,
-                            out.node_out_id(node_id),
-                            self.idents.for_module(module_id).tmp(),
-                        ),
+                        Pass::new(out.out.ty, out.node_out_id(node_id), None),
                     )
                 })
                 .collect::<SmallVec<[_; 8]>>();
@@ -55,7 +51,7 @@ impl<'tcx> Generator<'tcx> {
                 .unwrap();
 
             self.make_struct_group(ty, nodes, |generator, (_, node)| {
-                Ok(generator.net_list.add_node(module_id, node).into())
+                Ok(generator.net_list.add(module_id, node).into())
             })
             .unwrap()
         } else {
@@ -76,12 +72,8 @@ impl<'tcx> Generator<'tcx> {
                     let width = node_out.out.ty.width();
                     let node_out_id = node_out.node_out_id(node_id);
 
-                    let pass = Pass::new(
-                        PrimTy::BitVec(width),
-                        node_out_id,
-                        self.idents.for_module(module_id).tmp(),
-                    );
-                    let node_id = self.net_list.add_node(module_id, pass);
+                    let pass = Pass::new(PrimTy::BitVec(width), node_out_id, None);
+                    let node_id = self.net_list.add(module_id, pass);
 
                     self.net_list[node_id]
                         .kind
@@ -92,7 +84,6 @@ impl<'tcx> Generator<'tcx> {
             }
             ItemId::Group(group) => {
                 let width = group.width();
-                let sym = self.idents.for_module(module_id).tmp();
 
                 let merger = Merger::new(
                     width,
@@ -100,11 +91,11 @@ impl<'tcx> Generator<'tcx> {
                         .item_ids()
                         .iter()
                         .map(|item_id| self.to_bitvec(module_id, *item_id)),
-                    sym,
                     false,
+                    None,
                 );
 
-                let node_id = self.net_list.add_node(module_id, merger);
+                let node_id = self.net_list.add(module_id, merger);
                 self.net_list[node_id]
                     .kind
                     .outputs()
@@ -140,11 +131,8 @@ impl<'tcx> Generator<'tcx> {
 
         match sig_ty.kind {
             SignalTyKind::Prim(ty) => {
-                // TODO: подумать, можно ли избавиться от Pass здесь
-                // Если да, то это бы упростило код в функции pattern_match
-                let pass =
-                    Pass::new(ty, node_out_id, self.idents.for_module(module_id).tmp());
-                self.net_list.add_node(module_id, pass).into()
+                let pass = Pass::new(ty, node_out_id, None);
+                self.net_list.add(module_id, pass).into()
             }
             SignalTyKind::Array(ty) => {
                 let item_width = ty.item_width();
@@ -154,14 +142,13 @@ impl<'tcx> Generator<'tcx> {
                     node_out_id,
                     ty.tys().map(|_| {
                         n += 1;
-                        let sym = self.idents.for_module(module_id).tmp();
-                        (PrimTy::BitVec(item_width), sym)
+                        (PrimTy::BitVec(item_width), None)
                     }),
                     None,
                     true,
                 );
 
-                let node_id = self.net_list.add_node(module_id, splitter);
+                let node_id = self.net_list.add(module_id, splitter);
                 let outputs = self.net_list[node_id]
                     .kind
                     .outputs()
@@ -186,14 +173,13 @@ impl<'tcx> Generator<'tcx> {
                     node_out_id,
                     ty.tys().iter().map(|ty| {
                         n += 1;
-                        let sym = self.idents.for_module(module_id).tmp();
-                        (PrimTy::BitVec(ty.inner.width()), sym)
+                        (PrimTy::BitVec(ty.inner.width()), None)
                     }),
                     None,
                     true,
                 );
 
-                let node_id = self.net_list.add_node(module_id, splitter);
+                let node_id = self.net_list.add(module_id, splitter);
                 let outputs = self.net_list[node_id]
                     .kind
                     .outputs()
@@ -216,12 +202,8 @@ impl<'tcx> Generator<'tcx> {
                 .unwrap()
             }
             SignalTyKind::Enum(ty) => {
-                let pass = Pass::new(
-                    ty.prim_ty(),
-                    node_out_id,
-                    self.idents.for_module(module_id).tmp(),
-                );
-                self.net_list.add_node(module_id, pass).into()
+                let pass = Pass::new(ty.prim_ty(), node_out_id, None);
+                self.net_list.add(module_id, pass).into()
             }
         }
     }
@@ -251,14 +233,13 @@ impl<'tcx> Generator<'tcx> {
         }
 
         let scrutinee_out = self.net_list[scrutinee].kind.outputs().only_one();
-        let sym = self.idents.for_module(module_id).tmp();
         let scrutinee = scrutinee_out.node_out_id(scrutinee);
 
-        let data_part = self.net_list.add_node(
+        let data_part = self.net_list.add(
             module_id,
             Splitter::new(
                 scrutinee,
-                [(PrimTy::BitVec(sig_ty.width()), sym)],
+                [(PrimTy::BitVec(sig_ty.width()), None)],
                 Some(enum_ty.data_width()),
                 true,
             ),
@@ -280,13 +261,9 @@ impl<'tcx> Generator<'tcx> {
         data_part: ItemId,
     ) -> ItemId {
         let discr_val = enum_ty.discr_val(variant_idx);
-        let discr_val = self.net_list.add_node(
+        let discr_val = self.net_list.add(
             module_id,
-            Const::new(
-                PrimTy::BitVec(enum_ty.discr_width()),
-                discr_val,
-                self.idents.for_module(module_id).tmp(),
-            ),
+            Const::new(PrimTy::BitVec(enum_ty.discr_width()), discr_val, None),
         );
         let discr_val = self.net_list[discr_val]
             .kind
@@ -302,15 +279,7 @@ impl<'tcx> Generator<'tcx> {
         };
 
         self.net_list
-            .add_node(
-                module_id,
-                Merger::new(
-                    enum_ty.width(),
-                    inputs,
-                    self.idents.for_module(module_id).tmp(),
-                    false,
-                ),
-            )
+            .add(module_id, Merger::new(enum_ty.width(), inputs, false, None))
             .into()
     }
 }

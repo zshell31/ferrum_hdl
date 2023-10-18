@@ -9,6 +9,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct ModInst {
     pub name: Symbol,
+    pub inlined: bool,
     pub module_id: ModuleId,
     pub inputs: Vec<NodeOutId>,
     pub outputs: Vec<NodeOutput>,
@@ -18,11 +19,13 @@ impl ModInst {
     pub fn new(
         name: Symbol,
         module_id: ModuleId,
+        inlined: bool,
         inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
+        outputs: impl IntoIterator<Item = (PrimTy, Option<Symbol>)>,
     ) -> Self {
         Self {
             name,
+            inlined,
             module_id,
             inputs: Vec::collect_from(inputs),
             outputs: Vec::collect_from(

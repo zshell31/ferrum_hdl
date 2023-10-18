@@ -8,7 +8,7 @@ pub struct Not {
 }
 
 impl Not {
-    pub fn new(ty: PrimTy, input: NodeOutId, sym: Symbol) -> Self {
+    pub fn new(ty: PrimTy, input: NodeOutId, sym: Option<Symbol>) -> Self {
         Self {
             input,
             output: NodeOutput::wire(ty, sym),

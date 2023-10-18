@@ -14,7 +14,7 @@ pub struct Splitter {
 impl Splitter {
     pub fn new(
         input: NodeOutId,
-        outputs: impl IntoIterator<Item = (PrimTy, Symbol)>,
+        outputs: impl IntoIterator<Item = (PrimTy, impl Into<Option<Symbol>>)>,
         start: Option<u128>,
         rev: bool,
     ) -> Self {
@@ -23,7 +23,7 @@ impl Splitter {
             outputs: Vec::collect_from(
                 outputs
                     .into_iter()
-                    .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+                    .map(|(ty, sym)| NodeOutput::wire(ty, sym.into())),
             ),
             start,
             rev,

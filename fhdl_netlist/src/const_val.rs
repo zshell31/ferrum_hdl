@@ -4,6 +4,8 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
+use fhdl_const_func::mask;
+
 // TODO: use long arithmetic
 #[derive(Debug, Clone, Copy)]
 pub struct ConstVal {
@@ -18,7 +20,7 @@ impl Display for ConstVal {
 }
 
 impl ConstVal {
-    pub(super) fn new(val: u128, width: u128) -> Self {
+    pub(crate) fn new(val: u128, width: u128) -> Self {
         Self { val, width }
     }
 
@@ -35,18 +37,14 @@ impl ConstVal {
     }
 
     fn val_(&self, width: u128) -> u128 {
-        let mask = if width >= 128 {
-            u128::MAX
-        } else {
-            (1 << width) - 1
-        };
+        let mask = mask(width);
         self.val & mask
     }
 
     pub(crate) fn slice(&self, start: u128, width: u128, rev: bool) -> Self {
         assert!(start <= self.width);
 
-        let mask = (1 << width) - 1;
+        let mask = mask(width);
         let val = if !rev {
             (self.val >> start) & mask
         } else {
@@ -57,11 +55,11 @@ impl ConstVal {
         Self { val, width }
     }
 
-    pub(super) fn shift(&mut self, new_val: Self) {
+    pub(crate) fn shift(&mut self, new_val: Self) {
         let Self { val, width } = new_val;
         self.width += width;
         self.val <<= width;
-        self.val |= val & ((1 << width) - 1);
+        self.val |= val & mask(width);
     }
 }
 

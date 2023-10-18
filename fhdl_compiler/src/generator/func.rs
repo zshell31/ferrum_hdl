@@ -6,72 +6,31 @@ use fhdl_netlist::{
     node::{Input, IsNode, Pass},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy, SignalTyKind},
+    symbol::Symbol,
 };
 use rustc_ast::{Mutability, UintTy};
 use rustc_hir::{
     def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
     Param, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
-use rustc_middle::ty::{GenericArgsRef, List, TyKind};
+use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::symbol::Ident;
-use smallvec::SmallVec;
 
 use super::{EvalContext, Generator};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    idents::Idents,
+    idents::{Idents, SymIdent},
 };
 
-#[derive(Debug, Clone, Copy)]
-pub enum ModuleOrItemId {
-    Module(ModuleId),
-    Item(ItemId),
-}
-
-impl From<ModuleId> for ModuleOrItemId {
-    fn from(module_id: ModuleId) -> Self {
-        Self::Module(module_id)
-    }
-}
-
-impl From<ItemId> for ModuleOrItemId {
-    fn from(item_id: ItemId) -> Self {
-        Self::Item(item_id)
-    }
-}
-
-impl ModuleOrItemId {
-    pub fn module_id(self) -> ModuleId {
-        match self {
-            Self::Module(module_id) => module_id,
-            _ => panic!("expected module_id"),
-        }
-    }
-}
-
 impl<'tcx> Generator<'tcx> {
-    pub fn evaluate_top_module(&mut self, item: &Item<'tcx>) -> Result<ModuleId, Error> {
-        if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
-            return self.evaluate_fn_for_module(
-                item.ident.as_str(),
-                decl,
-                body_id,
-                List::empty(),
-            );
-        }
-
-        Err(Error::MissingTopModule)
-    }
-
     pub fn evaluate_fn_item(
         &mut self,
         item: &Item<'tcx>,
-        ctx: &EvalContext<'tcx>,
-        inlined: bool,
-    ) -> Result<Option<ModuleOrItemId>, Error> {
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
             return self
-                .evaluate_fn(item.ident.as_str(), decl, body_id, ctx, inlined)
+                .evaluate_fn(item.ident.as_str(), decl, body_id, generic_args)
                 .map(Some);
         }
 
@@ -81,9 +40,8 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_impl_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
-        ctx: &EvalContext<'tcx>,
-        inlined: bool,
-    ) -> Result<Option<ModuleOrItemId>, Error> {
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> Result<Option<ModuleId>, Error> {
         let self_ty = self
             .tcx
             .hir()
@@ -106,7 +64,7 @@ impl<'tcx> Generator<'tcx> {
         };
         if let ImplItemKind::Fn(FnSig { decl, .. }, body_id) = impl_item.kind {
             return self
-                .evaluate_fn(ident.as_ref(), decl, body_id, ctx, inlined)
+                .evaluate_fn(ident.as_ref(), decl, body_id, generic_args)
                 .map(Some);
         }
 
@@ -118,44 +76,12 @@ impl<'tcx> Generator<'tcx> {
         name: &str,
         fn_decl: &FnDecl<'tcx>,
         body_id: BodyId,
-        ctx: &EvalContext<'tcx>,
-        inlined: bool,
-    ) -> Result<ModuleOrItemId, Error> {
-        if inlined {
-            // TODO: how to inject already synthesized module
-            let body = self.tcx.hir().body(body_id);
-            let inputs = fn_decl.inputs.iter().zip(body.params.iter());
-
-            let mut item_ids = SmallVec::<[ItemId; 8]>::new();
-            self.evaluate_inputs(inputs, ctx, true, &mut |item_id| {
-                item_ids.push(item_id)
-            })?;
-
-            let inlined = self.evaluate_expr(body.value, ctx)?;
-
-            self.net_list.add_dummy_inputs(
-                inlined,
-                item_ids.into_iter().flat_map(|item_id| item_id.into_iter()),
-            );
-
-            Ok(inlined.into())
-        } else {
-            self.evaluate_fn_for_module(name, fn_decl, body_id, ctx.generic_args)
-                .map(Into::into)
-        }
-    }
-
-    fn evaluate_fn_for_module(
-        &mut self,
-        name: &str,
-        fn_decl: &FnDecl<'tcx>,
-        body_id: BodyId,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Result<ModuleId, Error> {
         let body = self.tcx.hir().body(body_id);
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
 
-        let module_sym = self.idents.module(name);
+        let module_sym = Symbol::new(name);
         let module_id = self.net_list.add_module(module_sym);
 
         self.idents.for_module(module_id).push_scope();
@@ -296,11 +222,11 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         match sig_ty.kind {
             SignalTyKind::Prim(prim_ty) => {
-                let input = Input::new(prim_ty, self.idents.for_module(module_id).tmp());
+                let input = Input::new(prim_ty, None);
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
                 } else {
-                    self.net_list.add_node(module_id, input)
+                    self.net_list.add(module_id, input)
                 })
                 .into()
             }
@@ -319,12 +245,11 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap(),
             SignalTyKind::Enum(ty) => {
-                let input =
-                    Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp());
+                let input = Input::new(ty.prim_ty(), None);
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
                 } else {
-                    self.net_list.add_node(module_id, input)
+                    self.net_list.add(module_id, input)
                 })
                 .into()
             }
@@ -342,19 +267,14 @@ impl<'tcx> Generator<'tcx> {
         let node = &net_list[node_id];
         let node_id = if node.kind.is_input() {
             let out = node.kind.outputs().only_one();
-            let pass = Pass::new(
-                out.out.ty,
-                out.node_out_id(node_id),
-                idents.for_module(module_id).tmp(),
-            );
+            let pass = Pass::new(out.out.ty, out.node_out_id(node_id), SymIdent::Out);
 
-            net_list.add_node(node_id.module_id(), pass)
+            net_list.add(node_id.module_id(), pass)
         } else {
             let node = &mut net_list[node_id];
             for out in node.kind.outputs_mut().items_mut() {
-                if out.out.sym.as_str().starts_with("__tmp") {
-                    let sym = idents.for_module(module_id).out();
-                    out.out.sym = sym;
+                if out.out.sym.is_none() {
+                    out.out.sym = SymIdent::Out.into();
                 }
             }
 

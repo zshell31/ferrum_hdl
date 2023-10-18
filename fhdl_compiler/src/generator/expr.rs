@@ -6,10 +6,10 @@ use std::{
 
 use fhdl_netlist::{
     group::ItemId,
-    net_list::{NodeId, NodeOutId},
+    net_list::{ModuleId, NodeId, NodeOutId},
     node::{
-        BinOp, BinOpNode, BitNot, Case, Const, Input, IsNode, ModInst, MultiPass, Mux2,
-        Not, Pass, Splitter,
+        BinOp, BinOpNode, BitNot, Case, Const, Input, IsNode, ModInst, Mux2, Not, Pass,
+        Splitter,
     },
     params::Outputs,
     sig_ty::{PrimTy, SignalTy, SignalTyKind},
@@ -32,8 +32,8 @@ use rustc_span::{source_map::Spanned, Span, Symbol as RustSymbol};
 use smallvec::SmallVec;
 
 use super::{
-    arg_matcher::ArgMatcher, func::ModuleOrItemId, generic::Generic, EvalContext,
-    Generator, MonoItem, TraitKind,
+    arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator, MonoItem,
+    TraitKind,
 };
 use crate::{
     blackbox::{cast::StdConversion, lit, EvaluateExpr},
@@ -219,10 +219,9 @@ impl<'tcx> Generator<'tcx> {
 
         match sig_ty.kind {
             SignalTyKind::Prim(ty) => {
-                let dummy_input = self.net_list.add_dummy_node(
-                    module_id,
-                    Input::new(ty, self.idents.for_module(module_id).tmp()),
-                );
+                let dummy_input = self
+                    .net_list
+                    .add_dummy_node(module_id, Input::new(ty, None));
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
             }
@@ -249,10 +248,9 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap(),
             SignalTyKind::Enum(ty) => {
-                let dummy_input = self.net_list.add_dummy_node(
-                    module_id,
-                    Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp()),
-                );
+                let dummy_input = self
+                    .net_list
+                    .add_dummy_node(module_id, Input::new(ty.prim_ty(), None));
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
             }
@@ -323,14 +321,12 @@ impl<'tcx> Generator<'tcx> {
                                     let out =
                                         &self.net_list[node_id].kind.outputs().only_one();
                                     self.net_list
-                                        .add_node(
+                                        .add(
                                             ctx.module_id,
                                             Pass::new(
                                                 out.out.ty,
                                                 out.node_out_id(node_id),
-                                                self.idents
-                                                    .for_module(ctx.module_id)
-                                                    .tmp(),
+                                                None,
                                             ),
                                         )
                                         .into()
@@ -396,7 +392,6 @@ impl<'tcx> Generator<'tcx> {
                                     generic_args,
                                     args.iter().map(Into::into),
                                     ctx,
-                                    expr.span,
                                 )
                             } else {
                                 let blackbox =
@@ -542,15 +537,9 @@ impl<'tcx> Generator<'tcx> {
                 let if_block = self.maybe_to_bitvec(ctx.module_id, if_block);
                 let else_block = self.maybe_to_bitvec(ctx.module_id, else_block);
 
-                let mux = self.net_list.add_node(
+                let mux = self.net_list.add(
                     ctx.module_id,
-                    Mux2::new(
-                        sig_ty.maybe_to_bitvec(),
-                        cond,
-                        if_block,
-                        else_block,
-                        self.idents.for_module(ctx.module_id).tmp(),
-                    ),
+                    Mux2::new(sig_ty.maybe_to_bitvec(), cond, if_block, else_block, None),
                 );
                 let mux = self.net_list[mux]
                     .kind
@@ -578,20 +567,12 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(self
                     .net_list
-                    .add_node(
-                        ctx.module_id,
-                        Const::new(
-                            prim_ty,
-                            value,
-                            self.idents.for_module(ctx.module_id).tmp(),
-                        ),
-                    )
+                    .add(ctx.module_id, Const::new(prim_ty, value, None))
                     .into())
             }
             ExprKind::Match(sel, arms, _) => {
                 let expr_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
 
-                let sel_span = sel.span;
                 let sel = self.evaluate_expr(sel, ctx)?;
                 let sel_sig_ty = self.item_ty(sel);
 
@@ -636,16 +617,10 @@ impl<'tcx> Generator<'tcx> {
                             let variant = *variants_map.get(&def_id).unwrap();
                             self.pattern_match(arm.pat, variant, ctx.module_id)?;
                         }
-                        SignalTyKind::Array(_) | SignalTyKind::Struct(_) => {
+                        SignalTyKind::Prim(_)
+                        | SignalTyKind::Array(_)
+                        | SignalTyKind::Struct(_) => {
                             self.pattern_match(arm.pat, sel, ctx.module_id)?;
-                        }
-                        _ => {
-                            println!("{:?}", sel_sig_ty);
-                            return Err(SpanError::new(
-                                SpanErrorKind::NonMatchableExpr,
-                                sel_span,
-                            )
-                            .into());
                         }
                     }
 
@@ -669,14 +644,11 @@ impl<'tcx> Generator<'tcx> {
                     let sel_out = self.net_list[sel];
                     let sel_width = sel_out.width();
 
-                    let new_sel = self.net_list.add_node(
+                    let new_sel = self.net_list.add(
                         ctx.module_id,
                         Splitter::new(
                             sel,
-                            [(
-                                PrimTy::BitVec(sel_width - small_mask_ones),
-                                self.idents.for_module(ctx.module_id).tmp(),
-                            )],
+                            [(PrimTy::BitVec(sel_width - small_mask_ones), None)],
                             None,
                             true,
                         ),
@@ -692,15 +664,9 @@ impl<'tcx> Generator<'tcx> {
                     }
                 }
 
-                let case = self.net_list.add_node(
+                let case = self.net_list.add(
                     ctx.module_id,
-                    Case::new(
-                        expr_ty.maybe_to_bitvec(),
-                        sel,
-                        inputs,
-                        default,
-                        self.idents.for_module(ctx.module_id).tmp(),
-                    ),
+                    Case::new(expr_ty.maybe_to_bitvec(), sel, inputs, default, None),
                 );
                 let case = self.net_list[case]
                     .kind
@@ -725,7 +691,6 @@ impl<'tcx> Generator<'tcx> {
                         Some(rec.into()),
                         args.iter().map(Into::into),
                         ctx,
-                        expr.span,
                     ),
                     None => {
                         let blackbox = self.find_blackbox(fn_did, generic_args, span)?;
@@ -746,7 +711,6 @@ impl<'tcx> Generator<'tcx> {
                                         Some(rec.into()),
                                         args.iter().map(Into::into),
                                         ctx,
-                                        expr.span,
                                     );
                                 }
                             }
@@ -773,13 +737,9 @@ impl<'tcx> Generator<'tcx> {
                             let sig_ty =
                                 self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
 
-                            let node = self.net_list.add_node(
+                            let node = self.net_list.add(
                                 ctx.module_id,
-                                Const::new(
-                                    sig_ty.maybe_to_bitvec(),
-                                    const_val,
-                                    self.idents.for_module(ctx.module_id).tmp(),
-                                ),
+                                Const::new(sig_ty.maybe_to_bitvec(), const_val, None),
                             );
                             let node_out_id = self.net_list[node]
                                 .kind
@@ -814,14 +774,7 @@ impl<'tcx> Generator<'tcx> {
 
                     Ok(self
                         .net_list
-                        .add_node(
-                            ctx.module_id,
-                            Const::new(
-                                prim_ty,
-                                value,
-                                self.idents.for_module(ctx.module_id).tmp(),
-                            ),
-                        )
+                        .add(ctx.module_id, Const::new(prim_ty, value, None))
                         .into())
                 }
                 Res::Def(DefKind::Ctor(CtorOf::Variant, ..), variant_ctor_did)
@@ -864,13 +817,9 @@ impl<'tcx> Generator<'tcx> {
                                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
                                 return Ok(self
                                     .net_list
-                                    .add_node(
+                                    .add(
                                         ctx.module_id,
-                                        Const::new(
-                                            sig_ty.prim_ty(),
-                                            const_val,
-                                            self.idents.for_module(ctx.module_id).tmp(),
-                                        ),
+                                        Const::new(sig_ty.prim_ty(), const_val, None),
                                     )
                                     .into());
                             }
@@ -930,16 +879,15 @@ impl<'tcx> Generator<'tcx> {
                 let comb = self.evaluate_expr(inner, ctx)?.node_id();
                 let prim_ty =
                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
-                let sym = self.idents.for_module(ctx.module_id).tmp();
 
                 let comb = self.net_list.only_one_node_out_id(comb);
 
                 Ok((if prim_ty.is_bool() {
                     self.net_list
-                        .add_node(ctx.module_id, Not::new(prim_ty, comb, sym))
+                        .add(ctx.module_id, Not::new(prim_ty, comb, None))
                 } else {
                     self.net_list
-                        .add_node(ctx.module_id, BitNot::new(prim_ty, comb, sym))
+                        .add(ctx.module_id, BitNot::new(prim_ty, comb, None))
                 })
                 .into())
             }
@@ -1001,14 +949,12 @@ impl<'tcx> Generator<'tcx> {
                         Some(input.into()),
                         [],
                         ctx,
-                        expr.span,
                     )?,
                     None => self.evaluate_fn_call(
                         fn_id.expect_local(),
                         generic_args,
                         [input.into()],
                         ctx,
-                        expr.span,
                     )?,
                 };
 
@@ -1037,7 +983,6 @@ impl<'tcx> Generator<'tcx> {
                                         Some(input.into()),
                                         [],
                                         ctx,
-                                        expr.span,
                                     )?)
                                 }
                                 None => None,
@@ -1116,79 +1061,40 @@ impl<'tcx> Generator<'tcx> {
 
     fn instantiate_module(
         &mut self,
-        id: ModuleOrItemId,
+        module_id: ModuleId,
         inputs: SmallVec<[ItemId; 8]>,
+        inlined: bool,
         ctx: &EvalContext<'tcx>,
-        span: Span,
     ) -> Result<ItemId, Error> {
-        let node_id = match id {
-            ModuleOrItemId::Module(module_id) => {
-                let inputs = inputs
-                    .into_iter()
-                    .flat_map(|input| {
-                        input.into_iter().flat_map(|node_id| {
-                            self.net_list[node_id]
-                                .kind
-                                .outputs()
-                                .items()
-                                .map(move |out| out.node_out_id(node_id))
-                        })
-                    })
-                    .collect::<SmallVec<[NodeOutId; 8]>>();
+        let inputs = inputs
+            .into_iter()
+            .flat_map(|input| {
+                input.into_iter().flat_map(|node_id| {
+                    self.net_list[node_id]
+                        .kind
+                        .outputs()
+                        .items()
+                        .map(move |out| out.node_out_id(node_id))
+                })
+            })
+            .collect::<SmallVec<[NodeOutId; 8]>>();
 
-                let outputs = self.net_list[module_id]
-                    .outputs()
-                    .map(|node_out_id| {
-                        (
-                            self.net_list[node_out_id].ty,
-                            self.idents.for_module(ctx.module_id).tmp(),
-                        )
-                    })
-                    .collect::<Vec<_>>();
+        let outputs = self.net_list[module_id]
+            .outputs()
+            .map(|node_out_id| (self.net_list[node_out_id].ty, None))
+            .collect::<Vec<_>>();
 
-                assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
+        assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
 
-                let inst_sym = self
-                    .idents
-                    .for_module(ctx.module_id)
-                    .inst(self.net_list[module_id].name);
+        let inst_sym = self.net_list[module_id].name;
 
-                self.net_list.add_node(
-                    ctx.module_id,
-                    ModInst::new(inst_sym, module_id, inputs, outputs),
-                )
-            }
-            ModuleOrItemId::Item(item_id) => {
-                self.link_dummy_inputs(&inputs, item_id)
-                    .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedCall, span))?;
-
-                let pass_inputs = item_id
-                    .into_iter()
-                    .flat_map(|node_id| {
-                        self.net_list[node_id]
-                            .kind
-                            .outputs()
-                            .items()
-                            .map(move |out| out.node_out_id(node_id))
-                    })
-                    .collect::<SmallVec<[NodeOutId; 8]>>();
-
-                let pass_outputs = pass_inputs
-                    .iter()
-                    .map(|node_out_id| {
-                        (
-                            self.net_list[*node_out_id].ty,
-                            self.idents.for_module(ctx.module_id).tmp(),
-                        )
-                    })
-                    .collect::<SmallVec<[(PrimTy, Symbol); 8]>>();
-
-                self.net_list
-                    .add_node(ctx.module_id, MultiPass::new(pass_inputs, pass_outputs))
-            }
-        };
-
-        Ok(node_id.into())
+        Ok(self
+            .net_list
+            .add(
+                ctx.module_id,
+                ModInst::new(inst_sym, module_id, inlined, inputs, outputs),
+            )
+            .into())
     }
 
     pub fn find_local_impl_id(
@@ -1254,45 +1160,26 @@ impl<'tcx> Generator<'tcx> {
         generic_args: GenericArgsRef<'tcx>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
-        span: Span,
     ) -> Result<ItemId, Error> {
         let item = self.tcx.hir().expect_item(fn_id);
-        let inlined = self.is_inlined(fn_id);
 
         let args = self.eval_fn_args(None, args, ctx)?;
+        let inlined = self.is_inlined(fn_id);
 
-        let id = if inlined {
-            self.evaluate_fn_item(
-                item,
-                &EvalContext::new(generic_args, ctx.module_id),
-                inlined,
-            )?
-            .unwrap()
-        } else {
+        let module_id = {
             let mono_item = MonoItem::new(fn_id, generic_args);
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                // println!(
-                //     "evaluate fn call: fn_id = {:?}, generic_args = {:?}",
-                //     fn_id, generic_args
-                // );
-                let module_id = self
-                    .evaluate_fn_item(
-                        item,
-                        &EvalContext::new(generic_args, ctx.module_id),
-                        inlined,
-                    )?
-                    .unwrap()
-                    .module_id();
+                let module_id = self.evaluate_fn_item(item, generic_args)?.unwrap();
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
 
-            (*self.evaluated_modules.get(&mono_item).unwrap()).into()
+            *self.evaluated_modules.get(&mono_item).unwrap()
         };
 
-        self.instantiate_module(id, args, ctx, span)
+        self.instantiate_module(module_id, args, inlined, ctx)
     }
 
     pub fn evaluate_impl_fn_call(
@@ -1302,21 +1189,13 @@ impl<'tcx> Generator<'tcx> {
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
-        span: Span,
     ) -> Result<ItemId, Error> {
         let impl_item = self.tcx.hir().expect_impl_item(impl_id);
-        let inlined = self.is_inlined(impl_id);
 
         let args = self.eval_fn_args(self_arg, args, ctx)?;
+        let inlined = self.is_inlined(impl_id);
 
-        let id = if inlined {
-            self.evaluate_impl_item(
-                impl_item,
-                &EvalContext::new(generic_args, ctx.module_id),
-                true,
-            )?
-            .unwrap()
-        } else {
+        let module_id = {
             let mono_item = MonoItem::new(impl_id, generic_args);
 
             #[allow(clippy::map_entry)]
@@ -1325,22 +1204,16 @@ impl<'tcx> Generator<'tcx> {
                 //     "evaluate impl fn call: impl_id = {:?}, generic_args = {:?}",
                 //     impl_id, generic_args
                 // );
-                let module_id = self
-                    .evaluate_impl_item(
-                        impl_item,
-                        &EvalContext::new(generic_args, ctx.module_id),
-                        false,
-                    )?
-                    .unwrap()
-                    .module_id();
+                let module_id =
+                    self.evaluate_impl_item(impl_item, generic_args)?.unwrap();
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
 
-            (*self.evaluated_modules.get(&mono_item).unwrap()).into()
+            *self.evaluated_modules.get(&mono_item).unwrap()
         };
 
-        self.instantiate_module(id, args, ctx, span)
+        self.instantiate_module(module_id, args, inlined, ctx)
     }
 
     fn is_inlined(&self, did: LocalDefId) -> bool {
@@ -1451,15 +1324,9 @@ impl<'tcx> Generator<'tcx> {
 
         Ok(self
             .net_list
-            .add_node(
+            .add(
                 ctx.module_id,
-                BinOpNode::new(
-                    prim_ty,
-                    bin_op,
-                    lhs,
-                    rhs,
-                    self.idents.for_module(ctx.module_id).tmp(),
-                ),
+                BinOpNode::new(prim_ty, bin_op, lhs, rhs, None),
             )
             .into())
     }
@@ -1482,7 +1349,6 @@ impl<'tcx> Generator<'tcx> {
                 None,
                 args.iter().map(Into::into),
                 ctx,
-                expr.span,
             ),
             None => {
                 let blackbox =
@@ -1510,14 +1376,9 @@ impl<'tcx> Generator<'tcx> {
                     .node_out_id(expr.node_id());
                 Ok(self
                     .net_list
-                    .add_node(
+                    .add(
                         ctx.module_id,
-                        Splitter::new(
-                            indexed,
-                            [(PrimTy::Bit, self.idents.for_module(ctx.module_id).tmp())],
-                            Some(ind),
-                            false,
-                        ),
+                        Splitter::new(indexed, [(PrimTy::Bit, None)], Some(ind), false),
                     )
                     .into())
             }

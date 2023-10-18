@@ -3,7 +3,7 @@ mod bit_not;
 mod case;
 mod cons;
 mod dff;
-mod expr;
+// mod expr;
 mod input;
 mod loops;
 mod merger;
@@ -21,10 +21,10 @@ pub(crate) use self::cons::MultiConst;
 pub use self::{
     bin_op::{BinOp, BinOpNode},
     bit_not::BitNot,
-    case::{BitVecMask, Case, CaseInputs},
+    case::{Case, CaseInputs},
     cons::Const,
     dff::{DFFInputs, DFF},
-    expr::Expr,
+    // expr::Expr,
     input::Input,
     loops::{LoopEnd, LoopStart},
     merger::Merger,
@@ -36,7 +36,6 @@ pub use self::{
 };
 use crate::{
     arena::with_arena,
-    net_kind::NetKind,
     net_list::{NodeId, NodeOutId, OutId},
     params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
     sig_ty::PrimTy,
@@ -44,29 +43,35 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy)]
+pub enum NetKind {
+    Wire,
+    Reg(NodeOutId),
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct NodeOutput {
     pub ty: PrimTy,
-    pub sym: Symbol,
     pub kind: NetKind,
+    pub sym: Option<Symbol>,
     // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
 }
 
 impl NodeOutput {
-    pub fn wire(ty: PrimTy, sym: Symbol) -> Self {
-        Self::new(ty, sym, NetKind::Wire)
+    pub fn wire(ty: PrimTy, sym: Option<Symbol>) -> Self {
+        Self::new(ty, NetKind::Wire, sym)
     }
 
-    pub fn reg(ty: PrimTy, sym: Symbol) -> Self {
-        Self::new(ty, sym, NetKind::Reg)
+    pub fn reg(ty: PrimTy, sym: Option<Symbol>, init: NodeOutId) -> Self {
+        Self::new(ty, NetKind::Reg(init), sym)
     }
 
-    fn new(ty: PrimTy, sym: Symbol, kind: NetKind) -> Self {
+    fn new(ty: PrimTy, kind: NetKind, sym: Option<Symbol>) -> Self {
         Self {
             ty,
-            sym,
             kind,
+            sym,
             is_skip: true,
             inject: false,
         }
@@ -275,7 +280,7 @@ define_nodes!(
     ModInst => ModInst,
     LoopStart => LoopStart,
     LoopEnd => LoopEnd,
-    Expr => Expr,
+    // Expr => Expr,
     Pass => Pass,
     MultiPass => MultiPass,
     Const => Const,
@@ -325,35 +330,5 @@ impl NodeKind {
 
     pub fn is_mod_inst(&self) -> bool {
         matches!(self, Self::ModInst(_))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn print_mem_size<T>() {
-        use std::any;
-        println!("{} {}", any::type_name::<T>(), mem::size_of::<T>());
-    }
-
-    #[test]
-    fn maxsize() {
-        print_mem_size::<NodeKind>();
-        print_mem_size::<Input>();
-        print_mem_size::<ModInst>();
-        print_mem_size::<LoopStart>();
-        print_mem_size::<LoopEnd>();
-        print_mem_size::<Expr>();
-        print_mem_size::<Pass>();
-        print_mem_size::<Const>();
-        print_mem_size::<Splitter>();
-        print_mem_size::<Merger>();
-        print_mem_size::<Case>();
-        print_mem_size::<BinOpNode>();
-        print_mem_size::<BitNot>();
-        print_mem_size::<Not>();
-        print_mem_size::<Mux2>();
-        print_mem_size::<DFF>();
     }
 }

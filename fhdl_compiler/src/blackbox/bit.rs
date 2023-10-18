@@ -27,12 +27,8 @@ impl BitVal {
             false => 0,
         };
 
-        let cons = Const::new(
-            PrimTy::Bit,
-            value,
-            generator.idents.for_module(ctx.module_id).tmp(),
-        );
-        Ok(generator.net_list.add_node(ctx.module_id, cons).into())
+        let cons = Const::new(PrimTy::Bit, value, None);
+        Ok(generator.net_list.add(ctx.module_id, cons).into())
     }
 }
 

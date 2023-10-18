@@ -9,7 +9,11 @@ pub struct LoopStart {
 }
 
 impl LoopStart {
-    pub fn new(genvar: Symbol, count: u128, out: Option<(PrimTy, Symbol)>) -> Self {
+    pub fn new(
+        genvar: Symbol,
+        count: u128,
+        out: Option<(PrimTy, Option<Symbol>)>,
+    ) -> Self {
         Self {
             genvar,
             count,
@@ -17,7 +21,7 @@ impl LoopStart {
         }
     }
 
-    pub fn set_out(&mut self, out: Option<(PrimTy, Symbol)>) {
+    pub fn set_out(&mut self, out: Option<(PrimTy, Option<Symbol>)>) {
         self.output = out.map(|(ty, sym)| NodeOutput::wire(ty, sym))
     }
 }

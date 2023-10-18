@@ -11,6 +11,7 @@ use super::EvaluateExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     generator::{EvalContext, Generator},
+    idents::SymIdent,
     utils,
 };
 
@@ -90,7 +91,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
 
         let prim_ty = sig_ty.maybe_to_bitvec();
 
-        let dff = generator.net_list.add_node(
+        let dff = generator.net_list.add(
             ctx.module_id,
             DFF::new(
                 prim_ty,
@@ -99,7 +100,11 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
                 en,
                 rst_val,
                 comb_out,
-                generator.idents.for_module(ctx.module_id).tmp(),
+                if en.is_none() {
+                    SymIdent::Dff
+                } else {
+                    SymIdent::DffEn
+                },
             ),
         );
         let dff_out = generator.net_list[dff]

@@ -13,7 +13,7 @@ impl Mux2 {
         sel: NodeOutId,
         input1: NodeOutId,
         input2: NodeOutId,
-        sym: Symbol,
+        sym: Option<Symbol>,
     ) -> Self {
         Self {
             inputs: Mux2Inputs {

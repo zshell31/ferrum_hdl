@@ -21,14 +21,16 @@ impl Display for ConstVal {
 
 impl ConstVal {
     pub(crate) fn new(val: u128, width: u128) -> Self {
-        Self { val, width }
+        let mask = mask(width);
+        Self {
+            val: val & mask,
+            width,
+        }
     }
 
     fn bin_op(val: u128, lhs: Self, rhs: Self) -> Self {
-        Self {
-            val,
-            width: Self::width(&lhs, &rhs),
-        }
+        let width = Self::width(&lhs, &rhs);
+        Self::new(val, width)
     }
 
     fn width(lhs: &Self, rhs: &Self) -> u128 {
@@ -44,15 +46,14 @@ impl ConstVal {
     pub(crate) fn slice(&self, start: u128, width: u128, rev: bool) -> Self {
         assert!(start <= self.width);
 
-        let mask = mask(width);
         let val = if !rev {
-            (self.val >> start) & mask
+            self.val >> start
         } else {
             assert!(start >= width);
-            (self.val >> (start - width)) & mask
+            self.val >> (start - width)
         };
 
-        Self { val, width }
+        Self::new(val, width)
     }
 
     pub(crate) fn shift(&mut self, new_val: Self) {
@@ -66,9 +67,9 @@ impl ConstVal {
 impl From<bool> for ConstVal {
     fn from(value: bool) -> Self {
         if value {
-            ConstVal { val: 1, width: 1 }
+            ConstVal::new(1, 1)
         } else {
-            ConstVal { val: 0, width: 1 }
+            ConstVal::new(0, 1)
         }
     }
 }
@@ -99,10 +100,7 @@ impl Not for ConstVal {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        Self {
-            val: !self.val,
-            width: self.width,
-        }
+        Self::new(!self.val, self.width)
     }
 }
 

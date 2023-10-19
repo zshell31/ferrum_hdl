@@ -533,7 +533,11 @@ impl<'tcx> Generator<'tcx> {
                 let if_block = self.evaluate_expr(if_block, ctx)?;
                 let else_block = self.evaluate_expr(else_block, ctx)?;
 
-                let cond = self.net_list.only_one_node_out_id(cond);
+                let cond = self.net_list[cond]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(cond);
                 let if_block = self.maybe_to_bitvec(ctx.module_id, if_block);
                 let else_block = self.maybe_to_bitvec(ctx.module_id, else_block);
 
@@ -880,7 +884,11 @@ impl<'tcx> Generator<'tcx> {
                 let prim_ty =
                     self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
 
-                let comb = self.net_list.only_one_node_out_id(comb);
+                let comb = self.net_list[comb]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(comb);
 
                 Ok((if prim_ty.is_bool() {
                     self.net_list
@@ -1079,20 +1087,19 @@ impl<'tcx> Generator<'tcx> {
             })
             .collect::<SmallVec<[NodeOutId; 8]>>();
 
-        let outputs = self.net_list[module_id]
-            .outputs()
+        let outputs = self
+            .net_list
+            .mod_outputs(module_id)
             .map(|node_out_id| (self.net_list[node_out_id].ty, None))
             .collect::<Vec<_>>();
 
         assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
 
-        let inst_sym = self.net_list[module_id].name;
-
         Ok(self
             .net_list
             .add(
                 ctx.module_id,
-                ModInst::new(inst_sym, module_id, inlined, inputs, outputs),
+                ModInst::new(None, module_id, inlined, inputs, outputs),
             )
             .into())
     }
@@ -1171,7 +1178,8 @@ impl<'tcx> Generator<'tcx> {
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.evaluate_fn_item(item, generic_args)?.unwrap();
+                let module_id =
+                    self.evaluate_fn_item(item, false, generic_args)?.unwrap();
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }

@@ -1,4 +1,4 @@
-use fhdl_netlist::{group::ItemId, node::Const, sig_ty::PrimTy};
+use fhdl_netlist::{group::ItemId, node::Const, sig_ty::NodeTy};
 use rustc_hir::Expr;
 
 use super::EvaluateExpr;
@@ -27,7 +27,7 @@ impl BitVal {
             false => 0,
         };
 
-        let cons = Const::new(PrimTy::Bit, value, None);
+        let cons = Const::new(NodeTy::Bit, value, None);
         Ok(generator.net_list.add(ctx.module_id, cons).into())
     }
 }

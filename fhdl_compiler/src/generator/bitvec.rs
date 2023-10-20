@@ -4,7 +4,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{Const, IsNode, Merger, Pass, Splitter},
     params::Outputs,
-    sig_ty::{EnumTy, PrimTy, SignalTy, SignalTyKind},
+    sig_ty::{EnumTy, NodeTy, SignalTy, SignalTyKind},
 };
 use smallvec::SmallVec;
 
@@ -72,7 +72,7 @@ impl<'tcx> Generator<'tcx> {
                     let width = node_out.out.ty.width();
                     let node_out_id = node_out.node_out_id(node_id);
 
-                    let pass = Pass::new(PrimTy::BitVec(width), node_out_id, None);
+                    let pass = Pass::new(NodeTy::BitVec(width), node_out_id, None);
                     let node_id = self.net_list.add(module_id, pass);
 
                     self.net_list[node_id]
@@ -130,7 +130,7 @@ impl<'tcx> Generator<'tcx> {
         assert_eq!(node_width, sig_ty.width());
 
         match sig_ty.kind {
-            SignalTyKind::Prim(ty) => {
+            SignalTyKind::Node(ty) => {
                 let pass = Pass::new(ty, node_out_id, None);
                 self.net_list.add(module_id, pass).into()
             }
@@ -142,7 +142,7 @@ impl<'tcx> Generator<'tcx> {
                     node_out_id,
                     ty.tys().map(|_| {
                         n += 1;
-                        (PrimTy::BitVec(item_width), None)
+                        (NodeTy::BitVec(item_width), None)
                     }),
                     None,
                     true,
@@ -173,7 +173,7 @@ impl<'tcx> Generator<'tcx> {
                     node_out_id,
                     ty.tys().iter().map(|ty| {
                         n += 1;
-                        (PrimTy::BitVec(ty.inner.width()), None)
+                        (NodeTy::BitVec(ty.inner.width()), None)
                     }),
                     None,
                     true,
@@ -239,7 +239,7 @@ impl<'tcx> Generator<'tcx> {
             module_id,
             Splitter::new(
                 scrutinee,
-                [(PrimTy::BitVec(sig_ty.width()), None)],
+                [(NodeTy::BitVec(sig_ty.width()), None)],
                 Some(enum_ty.data_width()),
                 true,
             ),
@@ -263,7 +263,7 @@ impl<'tcx> Generator<'tcx> {
         let discr_val = enum_ty.discr_val(variant_idx);
         let discr_val = self.net_list.add(
             module_id,
-            Const::new(PrimTy::BitVec(enum_ty.discr_width()), discr_val, None),
+            Const::new(NodeTy::BitVec(enum_ty.discr_width()), discr_val, None),
         );
         let discr_val = self.net_list[discr_val]
             .kind

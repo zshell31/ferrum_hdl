@@ -1,7 +1,7 @@
 use std::fmt::{self, Display};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub enum BinOp {
@@ -59,7 +59,7 @@ pub struct BinOpNode {
 
 impl BinOpNode {
     pub fn new(
-        ty: PrimTy,
+        ty: NodeTy,
         bin_op: BinOp,
         input1: NodeOutId,
         input2: NodeOutId,

@@ -24,21 +24,17 @@ impl<'n> Transform<'n> {
     }
 
     fn transform(&mut self, node_id: NodeId, cursor: &mut NodeCursor) -> Option<Node> {
-        let prev = self.net_list[node_id].prev();
-        let mut should_be_inlined = false;
-        let mod_inst_id =
-            if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
-                Some(mod_inst.module_id)
-            } else {
-                None
-            };
-        if let Some(mod_inst_id) = mod_inst_id {
-            // transform nodes before transforming mod instance
-            self.visit_module(mod_inst_id);
-        }
+        if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
+            let module_id = mod_inst.module_id;
 
+            // transform nodes before transforming mod instance
+            self.visit_module(module_id);
+        };
+
+        let mut should_be_inlined = false;
         let res = self.transform_(node_id, &mut should_be_inlined);
 
+        let prev = self.net_list[node_id].prev();
         if should_be_inlined && self.net_list.inline_mod(node_id) {
             cursor.set_node_id(prev);
         }
@@ -267,11 +263,16 @@ impl<'n> Visitor for Transform<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         let mut cursor = self.net_list.mod_cursor(module_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {
-            self.net_list.replace_inputs(node_id);
+            self.net_list.exclude_pass_nodes(node_id);
 
             if let Some(new_node) = self.transform(node_id, &mut cursor) {
                 self.net_list.replace_node(node_id, new_node);
             }
+        }
+
+        let mut cursor = self.net_list.mod_cursor(module_id);
+        while let Some(node_id) = self.net_list.next(&mut cursor) {
+            self.net_list.exclude_pass_nodes(node_id);
         }
     }
 

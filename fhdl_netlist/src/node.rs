@@ -41,7 +41,7 @@ use crate::{
     const_val::ConstVal,
     net_list::{NodeId, NodeOutId},
     params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
-    sig_ty::PrimTy,
+    sig_ty::NodeTy,
     symbol::Symbol,
 };
 
@@ -53,7 +53,7 @@ pub enum NetKind {
 
 #[derive(Debug, Clone, Copy)]
 pub struct NodeOutput {
-    pub ty: PrimTy,
+    pub ty: NodeTy,
     pub kind: NetKind,
     pub sym: Option<Symbol>,
     // TODO: use flags
@@ -62,15 +62,15 @@ pub struct NodeOutput {
 }
 
 impl NodeOutput {
-    pub fn wire(ty: PrimTy, sym: Option<Symbol>) -> Self {
+    pub fn wire(ty: NodeTy, sym: Option<Symbol>) -> Self {
         Self::new(ty, NetKind::Wire, sym)
     }
 
-    pub fn reg(ty: PrimTy, sym: Option<Symbol>, init: NodeOutId) -> Self {
+    pub fn reg(ty: NodeTy, sym: Option<Symbol>, init: NodeOutId) -> Self {
         Self::new(ty, NetKind::Reg(init), sym)
     }
 
-    fn new(ty: PrimTy, kind: NetKind, sym: Option<Symbol>) -> Self {
+    fn new(ty: NodeTy, kind: NetKind, sym: Option<Symbol>) -> Self {
         Self {
             ty,
             kind,

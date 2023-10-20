@@ -8,7 +8,7 @@ use fhdl_netlist::{
     group::ItemId,
     node::{IsNode, Splitter, ZeroExtend},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy, SignalTyKind},
+    sig_ty::{NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_hir::Expr;
 use rustc_span::Span;
@@ -44,7 +44,7 @@ impl StdConversion {
             .kind
             .outputs_mut()
             .only_one_mut();
-        node_out.out.ty = PrimTy::Bit;
+        node_out.out.ty = NodeTy::Bit;
         from
     }
 
@@ -53,41 +53,41 @@ impl StdConversion {
             .kind
             .outputs_mut()
             .only_one_mut();
-        node_out.out.ty = PrimTy::Bool;
+        node_out.out.ty = NodeTy::Bool;
         from
     }
 
     #[inline(always)]
     fn to_u8(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::U8, generator)
+        Self::to_unsigned_(from, NodeTy::U8, generator)
     }
 
     #[inline(always)]
     fn to_u16(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::U16, generator)
+        Self::to_unsigned_(from, NodeTy::U16, generator)
     }
 
     #[inline(always)]
     fn to_u32(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::U32, generator)
+        Self::to_unsigned_(from, NodeTy::U32, generator)
     }
 
     #[inline(always)]
     fn to_u64(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::U64, generator)
+        Self::to_unsigned_(from, NodeTy::U64, generator)
     }
 
     #[inline(always)]
     fn to_u128(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::U128, generator)
+        Self::to_unsigned_(from, NodeTy::U128, generator)
     }
 
     #[inline(always)]
     fn to_unsigned(from: ItemId, width: u128, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, PrimTy::Unsigned(width), generator)
+        Self::to_unsigned_(from, NodeTy::Unsigned(width), generator)
     }
 
-    fn to_unsigned_(from: ItemId, ty: PrimTy, generator: &mut Generator<'_>) -> ItemId {
+    fn to_unsigned_(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
         let node_id = from.node_id();
         let module_id = node_id.module_id();
         let node_out_id = generator.net_list[node_id]
@@ -124,87 +124,87 @@ impl StdConversion {
         }
 
         match (from_ty.kind, to_ty.kind) {
-            (SignalTyKind::Prim(PrimTy::Bool), SignalTyKind::Prim(PrimTy::Bit)) => {
+            (SignalTyKind::Node(NodeTy::Bool), SignalTyKind::Node(NodeTy::Bit)) => {
                 assert_convert::<bool, Bit>();
                 Ok(Self::bool_to_bit(from, generator))
             }
-            (SignalTyKind::Prim(PrimTy::Bit), SignalTyKind::Prim(PrimTy::Bool)) => {
+            (SignalTyKind::Node(NodeTy::Bit), SignalTyKind::Node(NodeTy::Bool)) => {
                 assert_convert::<Bit, bool>();
                 Ok(Self::bit_to_bool(from, generator))
             }
-            (SignalTyKind::Prim(PrimTy::U8), SignalTyKind::Prim(PrimTy::Unsigned(n))) => {
+            (SignalTyKind::Node(NodeTy::U8), SignalTyKind::Node(NodeTy::Unsigned(n))) => {
                 assert_convert::<u8, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
-            (SignalTyKind::Prim(PrimTy::Unsigned(_)), SignalTyKind::Prim(PrimTy::U8)) => {
+            (SignalTyKind::Node(NodeTy::Unsigned(_)), SignalTyKind::Node(NodeTy::U8)) => {
                 assert_convert::<Unsigned<1>, u8>();
                 Ok(Self::to_u8(from, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::U16),
-                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+                SignalTyKind::Node(NodeTy::U16),
+                SignalTyKind::Node(NodeTy::Unsigned(n)),
             ) => {
                 assert_convert::<u16, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::Unsigned(_)),
-                SignalTyKind::Prim(PrimTy::U16),
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Node(NodeTy::U16),
             ) => {
                 assert_convert::<Unsigned<1>, u16>();
                 Ok(Self::to_u16(from, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::U32),
-                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+                SignalTyKind::Node(NodeTy::U32),
+                SignalTyKind::Node(NodeTy::Unsigned(n)),
             ) => {
                 assert_convert::<u32, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::Unsigned(_)),
-                SignalTyKind::Prim(PrimTy::U32),
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Node(NodeTy::U32),
             ) => {
                 assert_convert::<Unsigned<1>, u32>();
                 Ok(Self::to_u32(from, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::U64),
-                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+                SignalTyKind::Node(NodeTy::U64),
+                SignalTyKind::Node(NodeTy::Unsigned(n)),
             ) => {
                 assert_convert::<u64, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::Unsigned(_)),
-                SignalTyKind::Prim(PrimTy::U64),
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Node(NodeTy::U64),
             ) => {
                 assert_convert::<Unsigned<1>, u64>();
                 Ok(Self::to_u64(from, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::U128),
-                SignalTyKind::Prim(PrimTy::Unsigned(n)),
+                SignalTyKind::Node(NodeTy::U128),
+                SignalTyKind::Node(NodeTy::Unsigned(n)),
             ) => {
                 assert_convert::<u128, Unsigned<1>>();
                 Ok(Self::to_unsigned(from, n, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::Unsigned(_)),
-                SignalTyKind::Prim(PrimTy::U128),
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Node(NodeTy::U128),
             ) => {
                 assert_convert::<Unsigned<1>, u128>();
                 Ok(Self::to_u128(from, generator))
             }
             (
-                SignalTyKind::Prim(PrimTy::Unsigned(_)),
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
                 SignalTyKind::Struct(struct_ty),
             ) if to_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
                 assert_convert::<Unsigned<1>, u<1>>();
                 generator
                     .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
             }
-            (SignalTyKind::Struct(_), SignalTyKind::Prim(PrimTy::Unsigned(n)))
+            (SignalTyKind::Struct(_), SignalTyKind::Node(NodeTy::Unsigned(n)))
                 if from_ty.is_unsigned_short() && from_ty.width() == to_ty.width() =>
             {
                 assert_convert::<u<1>, Unsigned<1>>();

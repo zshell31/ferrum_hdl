@@ -1,7 +1,7 @@
 use std::{fmt::Debug, ops::Index};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Splitter {
@@ -14,7 +14,7 @@ pub struct Splitter {
 impl Splitter {
     pub fn new(
         input: NodeOutId,
-        outputs: impl IntoIterator<Item = (PrimTy, impl Into<Option<Symbol>>)>,
+        outputs: impl IntoIterator<Item = (NodeTy, impl Into<Option<Symbol>>)>,
         start: Option<u128>,
         rev: bool,
     ) -> Self {

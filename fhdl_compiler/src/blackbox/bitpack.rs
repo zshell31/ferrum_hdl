@@ -1,7 +1,7 @@
 use fhdl_netlist::{
     group::ItemId,
     node::Splitter,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{NodeTy, SignalTy},
 };
 use rustc_hir::Expr;
 
@@ -64,7 +64,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         bitvec::bit_vec_trans(generator, rec, ctx, |generator, ctx, bit_vec| {
-            let ty = PrimTy::Bit;
+            let ty = NodeTy::Bit;
 
             Ok((
                 generator.net_list.add(

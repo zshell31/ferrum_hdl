@@ -4,7 +4,7 @@ use std::{
 };
 
 use fhdl_blackbox::Blackbox;
-use fhdl_netlist::sig_ty::PrimTy;
+use fhdl_netlist::sig_ty::NodeTy;
 use rustc_span::{symbol::Ident, Span};
 
 #[derive(Debug, thiserror::Error)]
@@ -80,9 +80,9 @@ pub enum SpanErrorKind {
     NonIndexableExpr,
 
     #[error("prim type {0:?} does not have values")]
-    PrimTyWithoutValue(PrimTy),
+    PrimTyWithoutValue(NodeTy),
     #[error("unexpected literal value for prim type {0:?}")]
-    UnexpectedLitValue(PrimTy),
+    UnexpectedLitValue(NodeTy),
     #[error("unsupported conversion")]
     UnsupportedConversion,
     #[error("incompatible types ('{0}' and '{1}') in binary expression")]

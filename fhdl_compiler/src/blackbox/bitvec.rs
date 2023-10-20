@@ -3,7 +3,7 @@ use fhdl_netlist::{
     net_list::{NodeId, NodeOutId},
     node::{IsNode, LoopEnd, LoopStart, NodeKind, Splitter},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy},
+    sig_ty::{NodeTy, SignalTy},
     symbol::Symbol,
 };
 use rustc_hir::Expr;
@@ -74,7 +74,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
         generator.net_list.add(ctx.module_id, LoopEnd {});
 
         if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
-            node.set_out(Some((PrimTy::BitVec(count * width), output)));
+            node.set_out(Some((NodeTy::BitVec(count * width), output)));
         }
 
         Ok((loop_id, SignalTy::mk_array(None, count, sig_ty)))
@@ -105,7 +105,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
             .net_list
             .add(
                 ctx.module_id,
-                Splitter::new(rec, [(PrimTy::BitVec(width), None)], None, false),
+                Splitter::new(rec, [(NodeTy::BitVec(width), None)], None, false),
             )
             .into())
     }
@@ -138,7 +138,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
             .net_list
             .add(
                 ctx.module_id,
-                Splitter::new(rec, [(PrimTy::BitVec(width), None)], Some(start), false),
+                Splitter::new(rec, [(NodeTy::BitVec(width), None)], Some(start), false),
             )
             .into())
     }

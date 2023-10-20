@@ -1,7 +1,7 @@
 use either::Either;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, params::Inputs, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, params::Inputs, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct DFF {
@@ -11,7 +11,7 @@ pub struct DFF {
 
 impl DFF {
     pub fn new(
-        ty: PrimTy,
+        ty: NodeTy,
         clk: NodeOutId,
         rst: NodeOutId,
         en: Option<NodeOutId>,

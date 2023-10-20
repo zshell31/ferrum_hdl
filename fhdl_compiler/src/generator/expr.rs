@@ -12,7 +12,7 @@ use fhdl_netlist::{
         Splitter,
     },
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy, SignalTyKind},
+    sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
 use if_chain::if_chain;
@@ -38,6 +38,7 @@ use super::{
 use crate::{
     blackbox::{cast::StdConversion, lit, EvaluateExpr},
     error::{Error, SpanError, SpanErrorKind},
+    scopes::SymIdent,
     utils,
 };
 
@@ -218,7 +219,7 @@ impl<'tcx> Generator<'tcx> {
         let module_id = ctx.module_id;
 
         match sig_ty.kind {
-            SignalTyKind::Prim(ty) => {
+            SignalTyKind::Node(ty) => {
                 let dummy_input = self
                     .net_list
                     .add_dummy_node(module_id, Input::new(ty, None));
@@ -543,7 +544,13 @@ impl<'tcx> Generator<'tcx> {
 
                 let mux = self.net_list.add(
                     ctx.module_id,
-                    Mux2::new(sig_ty.maybe_to_bitvec(), cond, if_block, else_block, None),
+                    Mux2::new(
+                        sig_ty.maybe_to_bitvec(),
+                        cond,
+                        if_block,
+                        else_block,
+                        SymIdent::Mux2,
+                    ),
                 );
                 let mux = self.net_list[mux]
                     .kind
@@ -621,7 +628,7 @@ impl<'tcx> Generator<'tcx> {
                             let variant = *variants_map.get(&def_id).unwrap();
                             self.pattern_match(arm.pat, variant, ctx.module_id)?;
                         }
-                        SignalTyKind::Prim(_)
+                        SignalTyKind::Node(_)
                         | SignalTyKind::Array(_)
                         | SignalTyKind::Struct(_) => {
                             self.pattern_match(arm.pat, sel, ctx.module_id)?;
@@ -652,7 +659,7 @@ impl<'tcx> Generator<'tcx> {
                         ctx.module_id,
                         Splitter::new(
                             sel,
-                            [(PrimTy::BitVec(sel_width - small_mask_ones), None)],
+                            [(NodeTy::BitVec(sel_width - small_mask_ones), None)],
                             None,
                             true,
                         ),
@@ -670,7 +677,13 @@ impl<'tcx> Generator<'tcx> {
 
                 let case = self.net_list.add(
                     ctx.module_id,
-                    Case::new(expr_ty.maybe_to_bitvec(), sel, inputs, default, None),
+                    Case::new(
+                        expr_ty.maybe_to_bitvec(),
+                        sel,
+                        inputs,
+                        default,
+                        SymIdent::Mux,
+                    ),
                 );
                 let case = self.net_list[case]
                     .kind
@@ -1292,7 +1305,7 @@ impl<'tcx> Generator<'tcx> {
         let rhs_prim_ty = self.find_sig_ty(rhs_ty, ctx.generic_args, span)?.prim_ty();
 
         let subexpr_ty =
-            PrimTy::ty_for_bin_expr(lhs_prim_ty, rhs_prim_ty).ok_or_else(|| {
+            NodeTy::ty_for_bin_expr(lhs_prim_ty, rhs_prim_ty).ok_or_else(|| {
                 SpanError::new(
                     SpanErrorKind::IncompatibleTypes(
                         lhs_ty.to_string(),
@@ -1303,7 +1316,7 @@ impl<'tcx> Generator<'tcx> {
             })?;
 
         let mut subnode =
-            |expr: &'tcx Expr<'tcx>, prim_ty: PrimTy| -> Result<NodeOutId, Error> {
+            |expr: &'tcx Expr<'tcx>, prim_ty: NodeTy| -> Result<NodeOutId, Error> {
                 let span = expr.span;
                 let node = self.evaluate_expr(expr, ctx)?;
 
@@ -1375,7 +1388,7 @@ impl<'tcx> Generator<'tcx> {
         let span = expr.span;
         let expr = self.evaluate_expr(expr, ctx)?;
         match self.item_ty(expr).kind {
-            SignalTyKind::Prim(prim) => {
+            SignalTyKind::Node(prim) => {
                 assert!(ind < prim.width());
                 let indexed = self.net_list[expr.node_id()]
                     .kind
@@ -1386,7 +1399,7 @@ impl<'tcx> Generator<'tcx> {
                     .net_list
                     .add(
                         ctx.module_id,
-                        Splitter::new(indexed, [(PrimTy::Bit, None)], Some(ind), false),
+                        Splitter::new(indexed, [(NodeTy::Bit, None)], Some(ind), false),
                     )
                     .into())
             }

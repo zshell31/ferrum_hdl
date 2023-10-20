@@ -3,7 +3,7 @@ use std::{fmt::Debug, iter};
 use fhdl_blackbox::{Blackbox, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
-    sig_ty::{PrimTy, SignalTy, SignalTyKind},
+    sig_ty::{NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
@@ -206,22 +206,22 @@ impl<'tcx> Generator<'tcx> {
                             sig_ty = Some(SignalTy::mk_array(None, cons, *ty));
                         }
                         TyKind::Bool => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::Bool.into()));
+                            sig_ty = Some(SignalTy::new(None, NodeTy::Bool.into()));
                         }
                         TyKind::Uint(UintTy::U8) => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::U8.into()))
+                            sig_ty = Some(SignalTy::new(None, NodeTy::U8.into()))
                         }
                         TyKind::Uint(UintTy::U16) => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::U16.into()))
+                            sig_ty = Some(SignalTy::new(None, NodeTy::U16.into()))
                         }
                         TyKind::Uint(UintTy::U32) => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::U32.into()))
+                            sig_ty = Some(SignalTy::new(None, NodeTy::U32.into()))
                         }
                         TyKind::Uint(UintTy::U64 | UintTy::Usize) => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::U64.into()))
+                            sig_ty = Some(SignalTy::new(None, NodeTy::U64.into()))
                         }
                         TyKind::Uint(UintTy::U128) => {
-                            sig_ty = Some(SignalTy::new(None, PrimTy::U128.into()))
+                            sig_ty = Some(SignalTy::new(None, NodeTy::U128.into()))
                         }
                         TyKind::Tuple(ty) => {
                             sig_ty = Some(SignalTy::new(
@@ -273,20 +273,20 @@ impl<'tcx> Generator<'tcx> {
                 BlackboxTy::Signal => key.generic_ty(1),
                 BlackboxTy::Wrapped => key.generic_ty(1),
                 BlackboxTy::BitVec => key.generic_const(0).map(|val| {
-                    SignalTy::new(Some(blackbox_ty), PrimTy::BitVec(val).into())
+                    SignalTy::new(Some(blackbox_ty), NodeTy::BitVec(val).into())
                 }),
                 BlackboxTy::Bit => {
-                    Some(SignalTy::new(Some(blackbox_ty), PrimTy::Bit.into()))
+                    Some(SignalTy::new(Some(blackbox_ty), NodeTy::Bit.into()))
                 }
                 BlackboxTy::Clock => {
-                    Some(SignalTy::new(Some(blackbox_ty), PrimTy::Clock.into()))
+                    Some(SignalTy::new(Some(blackbox_ty), NodeTy::Clock.into()))
                 }
                 BlackboxTy::Unsigned => key.generic_const(0).map(|val| {
-                    SignalTy::new(Some(blackbox_ty), PrimTy::Unsigned(val).into())
+                    SignalTy::new(Some(blackbox_ty), NodeTy::Unsigned(val).into())
                 }),
                 BlackboxTy::UnsignedShort => {
                     let n = key.generic_const(0).unwrap();
-                    self.make_tuple_ty(iter::once(PrimTy::Unsigned(n)), |_, prim_ty| {
+                    self.make_tuple_ty(iter::once(NodeTy::Unsigned(n)), |_, prim_ty| {
                         Ok(SignalTy::new(None, prim_ty.into()))
                     })
                     .ok()

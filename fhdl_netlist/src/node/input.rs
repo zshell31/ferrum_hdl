@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Input {
@@ -9,7 +9,7 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new(ty: PrimTy, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, sym: Option<Symbol>) -> Self {
         Self {
             output: NodeOutput::wire(ty, sym),
         }

@@ -3,8 +3,13 @@ use std::iter;
 use either::Either;
 use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{
-    bvm::BitVecMask, group::ItemId, net_list::ModuleId, node::IsNode, params::Outputs,
-    sig_ty::SignalTy, symbol::Symbol,
+    bvm::BitVecMask,
+    group::{Group, ItemId},
+    net_list::ModuleId,
+    node::IsNode,
+    params::Outputs,
+    sig_ty::{SignalTy, SignalTyKind, StructTy},
+    symbol::Symbol,
 };
 use rustc_ast::ast::LitKind;
 use rustc_hir::{
@@ -24,6 +29,40 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
+    fn assign_names_to_group(&mut self, ident: &str, item_id: ItemId) {
+        match item_id {
+            ItemId::Node(node_id) => {
+                let sym = Some(Symbol::new(ident));
+
+                self.net_list[node_id]
+                    .kind
+                    .outputs_mut()
+                    .only_one_mut()
+                    .out
+                    .sym = sym;
+            }
+            ItemId::Group(group) => match group.sig_ty.kind {
+                SignalTyKind::Enum(_)
+                | SignalTyKind::Array(_)
+                | SignalTyKind::Node(_) => {
+                    for (idx, item_id) in group.item_ids().iter().enumerate() {
+                        let ident = format!("{}{}", ident, idx);
+                        self.assign_names_to_group(&ident, *item_id);
+                    }
+                }
+                SignalTyKind::Struct(ty) => {
+                    ty.tys()
+                        .iter()
+                        .zip(group.item_ids())
+                        .for_each(|(ty, item_id)| {
+                            let ident = format!("{}{}", ident, ty.name);
+                            self.assign_names_to_group(&ident, *item_id);
+                        });
+                }
+            },
+        }
+    }
+
     pub fn pattern_match(
         &mut self,
         pat: &Pat<'tcx>,
@@ -33,27 +72,7 @@ impl<'tcx> Generator<'tcx> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
-                let sym = Some(Symbol::new(ident.as_str()));
-                match item_id {
-                    ItemId::Node(node_id) => {
-                        self.net_list[node_id]
-                            .kind
-                            .outputs_mut()
-                            .only_one_mut()
-                            .out
-                            .sym = sym;
-                    }
-                    ItemId::Group(group) => {
-                        for node_id in group.into_iter() {
-                            self.net_list[node_id]
-                                .kind
-                                .outputs_mut()
-                                .only_one_mut()
-                                .out
-                                .sym = sym;
-                        }
-                    }
-                }
+                self.assign_names_to_group(ident.as_str(), item_id);
 
                 self.idents
                     .for_module(module_id)

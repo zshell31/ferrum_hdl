@@ -4,7 +4,7 @@ use either::Either;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    arena::Vec, bvm::BitVecMask, net_list::NodeOutId, params::Inputs, sig_ty::PrimTy,
+    arena::Vec, bvm::BitVecMask, net_list::NodeOutId, params::Inputs, sig_ty::NodeTy,
     symbol::Symbol,
 };
 
@@ -16,11 +16,11 @@ pub struct Case {
 
 impl Case {
     pub fn new(
-        ty: PrimTy,
+        ty: NodeTy,
         sel: NodeOutId,
         variants: impl IntoIterator<Item = (BitVecMask, NodeOutId)>,
         default: Option<NodeOutId>,
-        sym: Option<Symbol>,
+        sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
             inputs: CaseInputs {
@@ -28,7 +28,7 @@ impl Case {
                 variants: Vec::collect_from(variants),
                 default,
             },
-            output: NodeOutput::wire(ty, sym),
+            output: NodeOutput::wire(ty, sym.into()),
         }
     }
 }

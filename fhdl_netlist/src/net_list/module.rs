@@ -66,6 +66,14 @@ impl Module {
         self.outputs.insert(node_out_id);
     }
 
+    pub(super) fn replace_output(&mut self, old_id: NodeOutId, new_id: NodeOutId) {
+        if let Some(old_idx) = self.outputs.get_index_of(&old_id) {
+            let (new_idx, _) = self.outputs.replace_full(new_id);
+            self.outputs.swap_indices(old_idx, new_idx);
+            self.outputs.shift_remove(&old_id);
+        }
+    }
+
     pub(super) fn is_output(&self, node_out_id: NodeOutId) -> bool {
         self.outputs.contains(&node_out_id)
     }

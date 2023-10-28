@@ -14,7 +14,6 @@ use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
     net_list::{ModuleId, NetList},
-    node::Pass,
     sig_ty::SignalTy,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -27,14 +26,14 @@ use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::{
     mir::UnevaluatedConst,
-    ty::{AssocKind, EarlyBinder, GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
+    ty::{AssocKind, GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
-use rustc_type_ir::fold::TypeFoldable;
 
 use self::{generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
+    eval_context::EvalContext,
     scopes::Scopes,
     utils,
 };
@@ -82,29 +81,6 @@ fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
     }
 
     Err(Error::MissingTopModule)
-}
-
-#[derive(Clone, Copy)]
-pub struct EvalContext<'tcx> {
-    pub generic_args: GenericArgsRef<'tcx>,
-    pub module_id: ModuleId,
-}
-
-impl<'tcx> EvalContext<'tcx> {
-    fn new(generic_args: GenericArgsRef<'tcx>, module_id: ModuleId) -> Self {
-        Self {
-            generic_args,
-            module_id,
-        }
-    }
-
-    pub fn instantiate<T: TypeFoldable<TyCtxt<'tcx>>>(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        foldable: T,
-    ) -> T {
-        EarlyBinder::bind(foldable).instantiate(tcx, self.generic_args)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -302,38 +278,31 @@ impl<'tcx> Generator<'tcx> {
         astconv.ast_ty_to_ty(ty)
     }
 
-    pub fn link_dummy_inputs(
-        &mut self,
-        inputs: &[ItemId],
-        closure: ItemId,
-    ) -> Option<()> {
-        let dummy_inputs_len = self.net_list.dummy_inputs_len(closure)?;
+    // pub fn link_closure_inputs(
+    //     &mut self,
+    //     ctx: &mut EvalContext<'tcx>,
+    //     inputs: &[ItemId],
+    // ) {
+    //     let inputs_len = inputs.iter().map(|input| input.len()).sum::<usize>();
+    //     let closure_inputs_len = ctx
+    //         .closure_inputs
+    //         .iter()
+    //         .map(|input| input.len())
+    //         .sum::<usize>();
+    //     assert_eq!(inputs_len, closure_inputs_len);
 
-        let mut n = 0;
+    //     let inputs = inputs.iter().flat_map(|input| input.into_iter());
+    //     let closure_inputs = ctx
+    //         .closure_inputs
+    //         .iter()
+    //         .flat_map(|input| input.into_iter());
 
-        for (ind, node_id) in inputs
-            .iter()
-            .flat_map(|input| input.into_iter())
-            .enumerate()
-        {
-            n += 1;
-            let dummy_input = self.net_list.dummy_input(closure, ind)?;
-            if dummy_input == node_id {
-                continue;
-            }
+    //     for (input, closure_input) in inputs.zip(closure_inputs) {
+    //         self.net_list.reconnect_input(closure_input, input);
+    //     }
 
-            let node_out = self.net_list[node_id].only_one_out();
-            let dummy_out = self.net_list[dummy_input].only_one_out();
-            let sym = dummy_out.sym;
-
-            let pass = Pass::new(node_out.ty, node_out.node_out_id(), sym);
-            self.net_list.replace(dummy_input, pass);
-        }
-
-        assert_eq!(n, dummy_inputs_len);
-
-        Some(())
-    }
+    //     ctx.closure_inputs.clear()
+    // }
 
     pub fn method_call_generics(
         &mut self,

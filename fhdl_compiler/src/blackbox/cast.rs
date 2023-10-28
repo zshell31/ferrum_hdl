@@ -15,7 +15,8 @@ use rustc_span::Span;
 use super::EvaluateExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    generator::{EvalContext, Generator},
+    eval_context::EvalContext,
+    generator::Generator,
     utils,
 };
 
@@ -26,7 +27,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Cast {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         StdConversion { from: false }.evaluate_expr(generator, expr, ctx)
     }
@@ -39,14 +40,12 @@ pub struct StdConversion {
 
 impl StdConversion {
     fn bool_to_bit(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        let mut node_out = generator.net_list[from.node_id()].only_one_out_mut();
-        node_out.ty = NodeTy::Bit;
+        generator.net_list[from.node_out_id()].ty = NodeTy::Bit;
         from
     }
 
     fn bit_to_bool(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        let mut node_out = generator.net_list[from.node_id()].only_one_out_mut();
-        node_out.ty = NodeTy::Bool;
+        generator.net_list[from.node_out_id()].ty = NodeTy::Bool;
         from
     }
 
@@ -81,14 +80,13 @@ impl StdConversion {
     }
 
     fn to_unsigned_(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
-        let node_id = from.node_id();
-        let module_id = node_id.module_id();
-        let node_out_id = generator.net_list[node_id].only_one_out().node_out_id();
+        let node_out_id = from.node_out_id();
+        let module_id = node_out_id.node_id().module_id();
 
         if generator.item_ty(from).width() >= ty.width() {
             generator
                 .net_list
-                .add(
+                .add_and_get_out(
                     module_id,
                     Splitter::new(node_out_id, [(ty, None)], None, false),
                 )
@@ -96,7 +94,7 @@ impl StdConversion {
         } else {
             generator
                 .net_list
-                .add(module_id, ZeroExtend::new(ty, node_out_id, None))
+                .add_and_get_out(module_id, ZeroExtend::new(ty, node_out_id, None))
                 .into()
         }
     }
@@ -229,7 +227,7 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as from);
 

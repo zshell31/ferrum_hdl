@@ -1,5 +1,9 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::{NetList, NodeOutId},
+    sig_ty::NodeTy,
+    symbol::Symbol,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ZeroExtend {
@@ -40,5 +44,16 @@ impl IsNode for ZeroExtend {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn validate(&self, net_list: &NetList) {
+        let input_width = net_list[self.input].width();
+        if input_width > self.output.width() {
+            panic!(
+                "ZeroExtend: output width {} < input width {}",
+                self.output.width(),
+                input_width
+            );
+        }
     }
 }

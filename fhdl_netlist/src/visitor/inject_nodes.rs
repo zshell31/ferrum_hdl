@@ -31,30 +31,22 @@ impl<'n> InjectNodes<'n> {
         }
     }
 
-    fn is_out_node(&self, node_id: NodeId) -> bool {
-        self.net_list.is_out_node(node_id)
-    }
-
     pub fn maybe_to_inject(node: &Node) -> bool {
-        node.is_const()
-            || node.is_pass()
-            || node.is_expr()
-            || node.is_splitter()
-            || node.is_merger()
+        node.is_const() || node.is_expr() || node.is_splitter() || node.is_merger()
     }
 
     fn try_inject(
         &mut self,
         node_id: NodeId,
-        check: impl Fn(&Self, NodeId, &Node, NodeOutId) -> bool,
+        check: impl Fn(&Self, &Node, NodeOutId) -> bool,
     ) {
         let node = &self.net_list[node_id];
 
         let mut inject_outs: SmallVec<[NodeOutId; 8]> = SmallVec::new();
 
         for node_out_id in node.node_out_ids() {
-            for (link_id, link) in self.net_list.links(node_out_id) {
-                if !link.is_skip && check(self, link_id, link, node_out_id) {
+            for link in self.net_list.links(node_out_id) {
+                if !link.is_skip && check(self, link, node_out_id) {
                     inject_outs.push(node_out_id);
                 }
             }
@@ -99,9 +91,8 @@ impl<'n> Visitor for InjectNodes<'n> {
         let node = &self.net_list[node_id];
 
         if node.is_const() || node.is_expr() || node.is_splitter() {
-            self.try_inject(node_id, |this, link_id, link, link_out_id| {
-                (link.is_pass() && this.is_out_node(link_id))
-                    || link.is_expr()
+            self.try_inject(node_id, |this, link, link_out_id| {
+                link.is_expr()
                     || link.is_mux()
                     || link.is_merger()
                     || link.is_mod_inst()
@@ -111,9 +102,8 @@ impl<'n> Visitor for InjectNodes<'n> {
         }
 
         if node.is_merger() || node.is_zero_extend() {
-            self.try_inject(node_id, |this, link_id, link, link_out_id| {
-                (link.is_pass() && this.is_out_node(link_id))
-                    || link.is_merger()
+            self.try_inject(node_id, |this, link, link_out_id| {
+                link.is_merger()
                     || link.is_mux()
                     || link.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)

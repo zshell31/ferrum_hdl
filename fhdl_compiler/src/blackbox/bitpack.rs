@@ -7,9 +7,7 @@ use rustc_hir::Expr;
 
 use super::{bitvec, EvaluateExpr};
 use crate::{
-    error::Error,
-    generator::{EvalContext, Generator},
-    scopes::SymIdent,
+    error::Error, eval_context::EvalContext, generator::Generator, scopes::SymIdent,
     utils,
 };
 
@@ -20,12 +18,12 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
         let rec = generator.evaluate_expr(rec, ctx)?;
 
-        Ok(generator.to_bitvec(ctx.module_id, rec).node_id().into())
+        Ok(generator.to_bitvec(ctx.module_id, rec).into())
     }
 }
 
@@ -36,7 +34,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
@@ -57,7 +55,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 

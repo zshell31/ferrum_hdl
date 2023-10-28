@@ -29,28 +29,35 @@ use crate::{
 impl<'tcx> Generator<'tcx> {
     fn assign_names_to_group(&mut self, ident: &str, item_id: ItemId) {
         match item_id {
-            ItemId::Node(node_id) => {
+            ItemId::Node(node_out_id) => {
                 let sym = Some(Symbol::new(ident));
 
-                self.net_list[node_id].only_one_out_mut().sym = sym;
+                self.net_list[node_out_id].sym = sym;
             }
             ItemId::Group(group) => match group.sig_ty.kind {
                 SignalTyKind::Enum(_)
                 | SignalTyKind::Array(_)
                 | SignalTyKind::Node(_) => {
-                    for (idx, item_id) in group.item_ids().iter().enumerate() {
-                        let ident = format!("{}{}", ident, idx);
-                        self.assign_names_to_group(&ident, *item_id);
+                    if group.item_ids().len() == 1 {
+                        self.assign_names_to_group(ident, group.item_ids()[0]);
+                    } else {
+                        for (idx, item_id) in group.item_ids().iter().enumerate() {
+                            let ident = format!("{}${}", ident, idx);
+                            self.assign_names_to_group(&ident, *item_id);
+                        }
                     }
                 }
                 SignalTyKind::Struct(ty) => {
-                    ty.tys()
-                        .iter()
-                        .zip(group.item_ids())
-                        .for_each(|(ty, item_id)| {
-                            let ident = format!("{}{}", ident, ty.name);
-                            self.assign_names_to_group(&ident, *item_id);
-                        });
+                    if group.item_ids().len() == 1 {
+                        self.assign_names_to_group(ident, group.item_ids()[0]);
+                    } else {
+                        ty.tys().iter().zip(group.item_ids()).for_each(
+                            |(ty, item_id)| {
+                                let ident = format!("{}${}", ident, ty.name);
+                                self.assign_names_to_group(&ident, *item_id);
+                            },
+                        );
+                    }
                 }
             },
         }

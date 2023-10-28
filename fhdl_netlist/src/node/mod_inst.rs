@@ -1,7 +1,8 @@
+use smallvec::SmallVec;
+
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    arena::Vec,
-    net_list::{ModuleId, NodeOutId},
+    net_list::{ModuleId, NetList, NodeOutId},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -11,8 +12,8 @@ pub struct ModInst {
     pub name: Option<Symbol>,
     pub inlined: bool,
     pub module_id: ModuleId,
-    pub inputs: Vec<NodeOutId>,
-    pub outputs: Vec<NodeOutput>,
+    pub inputs: SmallVec<[NodeOutId; 8]>,
+    pub outputs: SmallVec<[NodeOutput; 8]>,
 }
 
 impl ModInst {
@@ -27,12 +28,11 @@ impl ModInst {
             name,
             inlined,
             module_id,
-            inputs: Vec::collect_from(inputs),
-            outputs: Vec::collect_from(
-                outputs
-                    .into_iter()
-                    .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
-            ),
+            inputs: inputs.into_iter().collect(),
+            outputs: outputs
+                .into_iter()
+                .map(|(ty, sym)| NodeOutput::wire(ty, sym))
+                .collect(),
         }
     }
 }
@@ -61,5 +61,10 @@ impl IsNode for ModInst {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         self.outputs.as_mut_slice()
+    }
+
+    fn validate(&self, net_list: &NetList) {
+        assert_eq!(self.inputs.len(), net_list[self.module_id].inputs_len());
+        assert_eq!(self.outputs.len(), net_list[self.module_id].outputs_len());
     }
 }

@@ -1,5 +1,7 @@
+use smallvec::SmallVec;
+
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Const {
@@ -45,8 +47,8 @@ impl IsNode for Const {
 
 #[derive(Debug, Clone)]
 pub struct MultiConst {
-    pub values: Vec<u128>,
-    pub outputs: Vec<NodeOutput>,
+    pub values: SmallVec<[u128; 8]>,
+    pub outputs: SmallVec<[NodeOutput; 8]>,
 }
 
 impl MultiConst {
@@ -55,8 +57,8 @@ impl MultiConst {
         outputs: impl IntoIterator<Item = NodeOutput>,
     ) -> Self {
         Self {
-            values: Vec::collect_from(values),
-            outputs: Vec::collect_from(outputs),
+            values: values.into_iter().collect(),
+            outputs: outputs.into_iter().collect(),
         }
     }
 }

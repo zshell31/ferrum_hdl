@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use super::{ident::IsId, NodeOutId};
+use super::{ident::IsId, NodeInId, NodeOutId};
 
 #[derive(Debug, Clone, Copy)]
 pub struct WithId<Id: IsId, T>(Id, T);
@@ -33,7 +33,15 @@ impl<Id: IsId, T> DerefMut for WithId<Id, T> {
     }
 }
 
+impl<T> WithId<NodeInId, T> {
+    #[inline(always)]
+    pub fn node_in_id(&self) -> NodeInId {
+        self.id()
+    }
+}
+
 impl<T> WithId<NodeOutId, T> {
+    #[inline(always)]
     pub fn node_out_id(&self) -> NodeOutId {
         self.id()
     }

@@ -25,7 +25,7 @@ impl<'n> Visitor for Dump<'n> {
             if self.skip && module.is_skip {
                 continue;
             }
-            module.dump();
+            module.dump(module_id);
             self.visit_module(module_id);
         }
 
@@ -42,9 +42,9 @@ impl<'n> Visitor for Dump<'n> {
                 continue;
             }
 
-            let prefix = format!("{:>4}    ", node_id.idx().unwrap());
+            let prefix = format!("{:>4}    ", node_id.idx());
 
-            node.dump(&prefix, tab);
+            node.dump(self.net_list, &prefix, tab);
 
             println!("\n{}links:", tab);
             for out in node.node_out_ids() {
@@ -55,7 +55,7 @@ impl<'n> Visitor for Dump<'n> {
                         out.out_id(),
                         self.net_list
                             .links(out)
-                            .map(|(node_id, _)| node_id.idx().unwrap().to_string())
+                            .map(|node| node.node_id().idx().to_string())
                             .intersperse(", ".to_string())
                             .collect::<String>()
                     );

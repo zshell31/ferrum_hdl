@@ -3,10 +3,9 @@ use crate::{
     const_val::ConstVal,
     net_list::{ModuleId, NetList, NodeCursor, NodeId},
     node::{
-        BinOp, BinOpNode, BitNot, Case, CaseInputs, Const, IsNode, Merger, MultiConst,
-        Node, NodeKind, Not, Pass, ZeroExtend,
+        BinOp, BinOpNode, BitNot, Case, CaseInputs, Const, Merger, MultiConst, Node,
+        NodeKind, Not, Pass, ZeroExtend,
     },
-    params::Inputs,
     visitor::Visitor,
 };
 
@@ -24,7 +23,7 @@ impl<'n> Transform<'n> {
     }
 
     fn transform(&mut self, node_id: NodeId, cursor: &mut NodeCursor) -> Option<Node> {
-        if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
+        if let NodeKind::ModInst(mod_inst) = &*self.net_list[node_id].kind {
             let module_id = mod_inst.module_id;
 
             // transform nodes before transforming mod instance
@@ -32,7 +31,9 @@ impl<'n> Transform<'n> {
         };
 
         let mut should_be_inlined = false;
-        let res = self.transform_(node_id, &mut should_be_inlined);
+        let res = self
+            .transform_(node_id, &mut should_be_inlined)
+            .map(|kind| Node::new(node_id, kind));
 
         let prev = self.net_list[node_id].prev();
         if should_be_inlined && self.net_list.inline_mod(node_id) {
@@ -46,9 +47,9 @@ impl<'n> Transform<'n> {
         &mut self,
         node_id: NodeId,
         should_be_inlined: &mut bool,
-    ) -> Option<Node> {
+    ) -> Option<NodeKind> {
         let node = &self.net_list[node_id];
-        match &node.kind {
+        match &*node.kind {
             NodeKind::Pass(Pass { input, output, .. }) => self
                 .net_list
                 .to_const(*input)
@@ -74,9 +75,9 @@ impl<'n> Transform<'n> {
                     }
                     None => {
                         *should_be_inlined = mod_inst.inlined
-                            || mod_inst.inputs().items().all(|input| {
-                                self.net_list[input.node_id()].kind.is_const()
-                            });
+                            || node
+                                .inputs()
+                                .all(|input| self.net_list[input.node_id()].is_const());
 
                         None
                     }
@@ -227,27 +228,30 @@ impl<'n> Transform<'n> {
                 }
             }
 
-            NodeKind::Case(Case {
-                inputs:
-                    CaseInputs {
-                        sel,
-                        variants,
-                        default,
-                    },
-                output,
-            }) => self.net_list.to_const(*sel).and_then(|const_val| {
-                for (mask, variant) in variants {
-                    if mask.is_match(const_val) {
-                        return Some(Pass::new(output.ty, *variant, output.sym).into());
+            NodeKind::Case(node @ Case { output, .. }) => {
+                let CaseInputs {
+                    sel,
+                    default,
+                    variant_inputs,
+                    variants,
+                } = node.case_inputs();
+
+                self.net_list.to_const(sel).and_then(|const_val| {
+                    for (mask, variant) in variants.iter().zip(variant_inputs) {
+                        if mask.is_match(const_val) {
+                            return Some(
+                                Pass::new(output.ty, *variant, output.sym).into(),
+                            );
+                        }
                     }
-                }
 
-                if let Some(default) = default {
-                    return Some(Pass::new(output.ty, *default, output.sym).into());
-                }
+                    if let Some(default) = default {
+                        return Some(Pass::new(output.ty, default, output.sym).into());
+                    }
 
-                None
-            }),
+                    None
+                })
+            }
             _ => None,
         }
     }

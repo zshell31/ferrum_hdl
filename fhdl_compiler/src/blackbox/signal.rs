@@ -1,8 +1,7 @@
 use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{
     group::ItemId,
-    node::{BinOp, IsNode, DFF},
-    params::Outputs,
+    node::{BinOp, DFF},
 };
 use rustc_hir::Expr;
 use rustc_span::Span;
@@ -59,13 +58,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
         let rst = generator
             .evaluate_expr(rst, ctx)
             .map(|item_id| item_id.node_id())
-            .map(|node_id| {
-                generator.net_list[node_id]
-                    .kind
-                    .outputs()
-                    .only_one()
-                    .node_out_id(node_id)
-            })?;
+            .map(|node_id| generator.net_list[node_id].only_one_out().node_out_id())?;
 
         let en = en
             .map(|en| {
@@ -73,11 +66,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
                     .evaluate_expr(en, ctx)
                     .map(|item_id| item_id.node_id())
                     .map(|node_id| {
-                        generator.net_list[node_id]
-                            .kind
-                            .outputs()
-                            .only_one()
-                            .node_out_id(node_id)
+                        generator.net_list[node_id].only_one_out().node_out_id()
                     })
             })
             .transpose()?;
@@ -95,11 +84,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             ctx.module_id,
             DFF::new(
                 prim_ty,
-                generator.net_list[clk]
-                    .kind
-                    .outputs()
-                    .only_one()
-                    .node_out_id(clk),
+                generator.net_list[clk].only_one_out().node_out_id(),
                 rst,
                 en,
                 rst_val,
@@ -111,11 +96,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
                 },
             ),
         );
-        let dff_out = generator.net_list[dff]
-            .kind
-            .outputs()
-            .only_one()
-            .node_out_id(dff);
+        let dff_out = generator.net_list[dff].only_one_out().node_out_id();
 
         let dff_out = generator.maybe_from_bitvec(ctx.module_id, dff_out, sig_ty);
 

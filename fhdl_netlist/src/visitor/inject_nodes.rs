@@ -2,8 +2,7 @@ use smallvec::SmallVec;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{IsNode, Node, NodeKind, DFF},
-    params::Outputs,
+    node::{Node, NodeKind},
     visitor::Visitor,
 };
 
@@ -21,8 +20,9 @@ impl<'n> InjectNodes<'n> {
     }
 
     fn linked_by_dff(&self, link: &Node, link_out_id: NodeOutId) -> bool {
-        match link.kind {
-            NodeKind::DFF(DFF { ref inputs, .. }) => {
+        match &*link.kind {
+            NodeKind::DFF(node) => {
+                let inputs = node.dff_inputs();
                 inputs.rst_val == link_out_id
                     || inputs.data == link_out_id
                     || (inputs.en.is_some() && inputs.en.unwrap() == link_out_id)
@@ -36,11 +36,11 @@ impl<'n> InjectNodes<'n> {
     }
 
     pub fn maybe_to_inject(node: &Node) -> bool {
-        node.kind.is_const()
-            || node.kind.is_pass()
-            || node.kind.is_expr()
-            || node.kind.is_splitter()
-            || node.kind.is_merger()
+        node.is_const()
+            || node.is_pass()
+            || node.is_expr()
+            || node.is_splitter()
+            || node.is_merger()
     }
 
     fn try_inject(
@@ -52,7 +52,7 @@ impl<'n> InjectNodes<'n> {
 
         let mut inject_outs: SmallVec<[NodeOutId; 8]> = SmallVec::new();
 
-        for node_out_id in node.kind.node_out_ids(node_id) {
+        for node_out_id in node.node_out_ids() {
             for (link_id, link) in self.net_list.links(node_out_id) {
                 if !link.is_skip && check(self, link_id, link, node_out_id) {
                     inject_outs.push(node_out_id);
@@ -63,14 +63,10 @@ impl<'n> InjectNodes<'n> {
         let node = &mut self.net_list[node_id];
 
         for node_out_id in inject_outs {
-            node.kind
-                .outputs_mut()
-                .by_ind_mut(node_out_id.out_id())
-                .out
-                .inject = true;
+            node.output_by_ind_mut(node_out_id.out_id()).inject = true;
         }
 
-        if node.kind.outputs().items().all(|output| output.out.inject) {
+        if node.outputs().all(|output| output.inject) {
             node.inject = true;
         }
     }
@@ -102,24 +98,24 @@ impl<'n> Visitor for InjectNodes<'n> {
     fn visit_node(&mut self, node_id: NodeId) {
         let node = &self.net_list[node_id];
 
-        if node.kind.is_const() || node.kind.is_expr() || node.kind.is_splitter() {
+        if node.is_const() || node.is_expr() || node.is_splitter() {
             self.try_inject(node_id, |this, link_id, link, link_out_id| {
-                (link.kind.is_pass() && this.is_out_node(link_id))
-                    || link.kind.is_expr()
-                    || link.kind.is_mux()
-                    || link.kind.is_merger()
-                    || link.kind.is_mod_inst()
+                (link.is_pass() && this.is_out_node(link_id))
+                    || link.is_expr()
+                    || link.is_mux()
+                    || link.is_merger()
+                    || link.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)
             });
             return;
         }
 
-        if node.kind.is_merger() || node.kind.is_zero_extend() {
+        if node.is_merger() || node.is_zero_extend() {
             self.try_inject(node_id, |this, link_id, link, link_out_id| {
-                (link.kind.is_pass() && this.is_out_node(link_id))
-                    || link.kind.is_merger()
-                    || link.kind.is_mux()
-                    || link.kind.is_mod_inst()
+                (link.is_pass() && this.is_out_node(link_id))
+                    || link.is_merger()
+                    || link.is_mux()
+                    || link.is_mod_inst()
                     || this.linked_by_dff(link, link_out_id)
             });
         }

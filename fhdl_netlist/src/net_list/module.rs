@@ -46,10 +46,6 @@ impl Module {
         self.inputs.insert(node_id);
     }
 
-    pub(super) fn remove_input(&mut self, node_id: NodeId) {
-        self.inputs.shift_remove(&node_id);
-    }
-
     pub(super) fn is_input(&self, node_id: NodeId) -> bool {
         self.inputs.contains(&node_id)
     }

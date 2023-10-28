@@ -4,11 +4,9 @@ use either::Either;
 use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{
     bvm::BitVecMask,
-    group::{Group, ItemId},
+    group::ItemId,
     net_list::ModuleId,
-    node::IsNode,
-    params::Outputs,
-    sig_ty::{SignalTy, SignalTyKind, StructTy},
+    sig_ty::{SignalTy, SignalTyKind},
     symbol::Symbol,
 };
 use rustc_ast::ast::LitKind;
@@ -34,12 +32,7 @@ impl<'tcx> Generator<'tcx> {
             ItemId::Node(node_id) => {
                 let sym = Some(Symbol::new(ident));
 
-                self.net_list[node_id]
-                    .kind
-                    .outputs_mut()
-                    .only_one_mut()
-                    .out
-                    .sym = sym;
+                self.net_list[node_id].only_one_out_mut().sym = sym;
             }
             ItemId::Group(group) => match group.sig_ty.kind {
                 SignalTyKind::Enum(_)

@@ -3,8 +3,7 @@ use fnv::FnvHashSet;
 use super::Visitor;
 use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{IsNode, ModInst, NodeKind},
-    params::Inputs,
+    node::{ModInst, NodeKind},
 };
 
 pub struct Reachability<'n> {
@@ -58,11 +57,11 @@ impl<'n> Visitor for Reachability<'n> {
             let node = &mut self.net_list[node_id];
             node.is_skip = false;
 
-            if let NodeKind::ModInst(ModInst { module_id, .. }) = node.kind {
+            if let NodeKind::ModInst(ModInst { module_id, .. }) = &*node.kind {
                 self.modules.insert(*module_id);
             }
 
-            self.node_out_ids.extend(node.kind.inputs().items());
+            self.node_out_ids.extend(node.inputs());
         }
     }
 

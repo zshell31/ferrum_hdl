@@ -12,9 +12,9 @@ pub struct ArrayReverse;
 impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
     fn evaluate_expr(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        _generator: &mut Generator<'tcx>,
+        _expr: &'tcx Expr<'tcx>,
+        _ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         todo!()
         // utils::args!(expr as rec);
@@ -61,9 +61,9 @@ pub struct ArrayMap;
 impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
     fn evaluate_expr(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        _generator: &mut Generator<'tcx>,
+        _expr: &'tcx Expr<'tcx>,
+        _ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         todo!()
         // utils::args!(expr as rec, closure);

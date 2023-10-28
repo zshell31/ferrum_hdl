@@ -6,8 +6,7 @@ use ferrum_hdl::{
 };
 use fhdl_netlist::{
     group::ItemId,
-    node::{IsNode, Splitter, ZeroExtend},
-    params::Outputs,
+    node::{Splitter, ZeroExtend},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_hir::Expr;
@@ -40,20 +39,14 @@ pub struct StdConversion {
 
 impl StdConversion {
     fn bool_to_bit(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        let node_out = generator.net_list[from.node_id()]
-            .kind
-            .outputs_mut()
-            .only_one_mut();
-        node_out.out.ty = NodeTy::Bit;
+        let mut node_out = generator.net_list[from.node_id()].only_one_out_mut();
+        node_out.ty = NodeTy::Bit;
         from
     }
 
     fn bit_to_bool(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        let node_out = generator.net_list[from.node_id()]
-            .kind
-            .outputs_mut()
-            .only_one_mut();
-        node_out.out.ty = NodeTy::Bool;
+        let mut node_out = generator.net_list[from.node_id()].only_one_out_mut();
+        node_out.ty = NodeTy::Bool;
         from
     }
 
@@ -90,11 +83,7 @@ impl StdConversion {
     fn to_unsigned_(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
         let node_id = from.node_id();
         let module_id = node_id.module_id();
-        let node_out_id = generator.net_list[node_id]
-            .kind
-            .outputs()
-            .only_one()
-            .node_out_id(node_id);
+        let node_out_id = generator.net_list[node_id].only_one_out().node_out_id();
 
         if generator.item_ty(from).width() >= ty.width() {
             generator

@@ -14,14 +14,14 @@ use crate::{
 pub struct BitPackPack;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
 
         Ok(generator.to_bitvec(ctx.module_id, rec).into())
     }
@@ -30,7 +30,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
 pub struct BitPackRepack;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -38,7 +38,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
         let to = generator.to_bitvec(ctx.module_id, rec);
 
         let ty = generator.node_type(expr.hir_id, ctx);
@@ -51,7 +51,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
 pub struct BitPackMsb;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -59,7 +59,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
 
         bitvec::bit_vec_trans(generator, rec, ctx, |generator, ctx, bit_vec| {
             let ty = NodeTy::Bit;

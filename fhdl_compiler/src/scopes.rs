@@ -9,6 +9,8 @@ pub enum SymIdent {
     DffEn,
     Msb,
     Out,
+    Fsm,
+    NewFsm,
 }
 
 impl SymIdent {
@@ -19,6 +21,8 @@ impl SymIdent {
             Self::DffEn => "dff_en",
             Self::Msb => "msb",
             Self::Out => "out",
+            Self::Fsm => "fsm_state",
+            Self::NewFsm => "new_fsm_state",
         }
     }
 }

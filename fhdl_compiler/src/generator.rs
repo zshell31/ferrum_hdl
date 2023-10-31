@@ -194,7 +194,7 @@ impl<'tcx> Generator<'tcx> {
         self.collect_local_trait_impls();
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_fn_item(item, true, GenericArgs::empty())?;
+        self.eval_fn_item(item, true, GenericArgs::empty())?;
 
         self.net_list.run_stages();
 

@@ -10,10 +10,10 @@ pub struct Const {
 }
 
 impl Const {
-    pub fn new(ty: NodeTy, value: u128, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, value: u128, sym: impl Into<Option<Symbol>>) -> Self {
         Self {
             value,
-            output: NodeOutput::wire(ty, sym),
+            output: NodeOutput::wire(ty, sym.into()),
         }
     }
 }

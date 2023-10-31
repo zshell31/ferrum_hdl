@@ -23,13 +23,13 @@ use crate::{
 pub struct Cast;
 
 impl<'tcx> EvaluateExpr<'tcx> for Cast {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        StdConversion { from: false }.evaluate_expr(generator, expr, ctx)
+        StdConversion { from: false }.eval_expr(generator, expr, ctx)
     }
 }
 
@@ -223,7 +223,7 @@ impl StdConversion {
 fn assert_convert<F, T: From<F>>() {}
 
 impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -245,7 +245,7 @@ impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
             span,
         )?;
 
-        let from = generator.evaluate_expr(from, ctx)?;
+        let from = generator.eval_expr(from, ctx)?;
 
         Self::convert(from_ty, to_ty, from, generator, expr.span)
     }

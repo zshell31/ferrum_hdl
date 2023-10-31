@@ -23,7 +23,7 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
-    pub fn evaluate_fn_item(
+    pub fn eval_fn_item(
         &mut self,
         item: &Item<'tcx>,
         top_module: bool,
@@ -31,14 +31,14 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
             return self
-                .evaluate_fn(item.ident.as_str(), decl, body_id, top_module, generic_args)
+                .eval_fn(item.ident.as_str(), decl, body_id, top_module, generic_args)
                 .map(Some);
         }
 
         Ok(None)
     }
 
-    pub fn evaluate_impl_item(
+    pub fn eval_impl_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
@@ -65,14 +65,14 @@ impl<'tcx> Generator<'tcx> {
         };
         if let ImplItemKind::Fn(FnSig { decl, .. }, body_id) = impl_item.kind {
             return self
-                .evaluate_fn(ident.as_ref(), decl, body_id, false, generic_args)
+                .eval_fn(ident.as_ref(), decl, body_id, false, generic_args)
                 .map(Some);
         }
 
         Ok(None)
     }
 
-    pub fn evaluate_fn(
+    pub fn eval_fn(
         &mut self,
         name: &str,
         fn_decl: &FnDecl<'tcx>,
@@ -90,16 +90,16 @@ impl<'tcx> Generator<'tcx> {
 
         let mut ctx = EvalContext::new(generic_args, module_id);
 
-        self.evaluate_inputs(inputs, &mut ctx, false)?;
-        let item_id = self.evaluate_expr(body.value, &mut ctx)?;
-        self.evaluate_outputs(item_id);
+        self.eval_inputs(inputs, &mut ctx, false)?;
+        let item_id = self.eval_expr(body.value, &mut ctx)?;
+        self.eval_outputs(item_id);
 
         self.idents.for_module(module_id).pop_scope();
 
         Ok(module_id)
     }
 
-    pub fn evaluate_inputs<'a>(
+    pub fn eval_inputs<'a>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
         ctx: &mut EvalContext<'tcx>,
@@ -253,7 +253,7 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn evaluate_outputs(&mut self, item_id: ItemId) {
+    fn eval_outputs(&mut self, item_id: ItemId) {
         for node_out_id in item_id.into_iter() {
             let out = &mut self.net_list[node_out_id];
             if out.sym.is_none() {

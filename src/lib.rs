@@ -1,5 +1,8 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(coroutines)]
+#![feature(coroutine_trait)]
+#![feature(iter_from_coroutine)]
 #![feature(register_tool)]
 #![register_tool(fhdl_tool)]
 

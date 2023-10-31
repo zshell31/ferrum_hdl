@@ -127,7 +127,7 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<Blackbox, Error> {
         let key = key.make(self.tcx, generics);
-        let key = self.evaluate_generics(key, generics, span)?;
+        let key = self.eval_generics(key, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -186,7 +186,7 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<SignalTy, Error> {
         let key = key.make(self.tcx, generics);
-        let key = self.evaluate_generics(key, generics, span)?;
+        let key = self.eval_generics(key, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -195,7 +195,7 @@ impl<'tcx> Generator<'tcx> {
 
             if let Some(ty) = &key.ty() {
                 if key.is_local() {
-                    sig_ty = Some(self.evaluate_adt_ty(ty, generics, span)?);
+                    sig_ty = Some(self.eval_adt_ty(ty, generics, span)?);
                 } else {
                     match ty.kind() {
                         TyKind::Array(..) => {
@@ -322,7 +322,7 @@ impl<'tcx> Generator<'tcx> {
         self.find_sig_ty(ty, generics, span)
     }
 
-    pub fn evaluate_generics(
+    pub fn eval_generics(
         &mut self,
         ty_or_def_id: TyOrDefId<'tcx>,
         generics: GenericArgsRef<'tcx>,

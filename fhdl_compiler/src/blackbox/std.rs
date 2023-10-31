@@ -7,7 +7,7 @@ use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils
 pub struct StdClone;
 
 impl<'tcx> EvaluateExpr<'tcx> for StdClone {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -15,6 +15,6 @@ impl<'tcx> EvaluateExpr<'tcx> for StdClone {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        generator.evaluate_expr(rec, ctx)
+        generator.eval_expr(rec, ctx)
     }
 }

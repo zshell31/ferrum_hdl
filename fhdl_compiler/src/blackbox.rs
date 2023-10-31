@@ -16,7 +16,7 @@ use rustc_hir::Expr;
 use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub trait EvaluateExpr<'tcx> {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -24,12 +24,12 @@ pub trait EvaluateExpr<'tcx> {
     ) -> Result<ItemId, Error>;
 }
 
-macro_rules! evaluate_expr {
+macro_rules! eval_expr {
     (
         $( $blackbox_kind:ident => $eval:expr ),+
     ) => {
         impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
-            fn evaluate_expr(
+            fn eval_expr(
                 &self,
                 generator: &mut Generator<'tcx>,
                 expr: &'tcx Expr<'tcx>,
@@ -37,7 +37,7 @@ macro_rules! evaluate_expr {
             ) -> Result<ItemId, Error> {
                 match self {
                     $(
-                        Self::$blackbox_kind => $eval.evaluate_expr(generator, expr, ctx),
+                        Self::$blackbox_kind => $eval.eval_expr(generator, expr, ctx),
                     )+
                 }
             }
@@ -45,7 +45,7 @@ macro_rules! evaluate_expr {
     };
 }
 
-evaluate_expr!(
+eval_expr!(
     ArrayReverse => array::ArrayReverse,
     ArrayMap => array::ArrayMap,
 
@@ -79,6 +79,7 @@ evaluate_expr!(
     SignalReset => bit::BitVal(false),
     SignalValue => signal::SignalValue,
     SignalWatch => signal::SignalWatch,
+    SignalFsm => signal::SignalFsm,
 
     UnsignedIndex => index::UnsignedIndex,
 

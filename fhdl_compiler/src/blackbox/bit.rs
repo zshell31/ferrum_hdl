@@ -33,7 +33,7 @@ impl BitVal {
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for BitVal {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,

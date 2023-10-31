@@ -76,6 +76,10 @@ pub enum SpanErrorKind {
     ExpectedConst,
     #[error("non-indexable expression")]
     NonIndexableExpr,
+    #[error("expected loop in fsm method")]
+    ExpectedLoopInFsm,
+    #[error("no yield statements in fsm method")]
+    NoYieldInFsm,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(NodeTy),

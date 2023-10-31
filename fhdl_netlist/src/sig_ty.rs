@@ -408,7 +408,7 @@ impl SignalTy {
         }
     }
 
-    pub fn maybe_to_bitvec(&self) -> NodeTy {
+    pub fn to_bitvec(&self) -> NodeTy {
         match self.kind {
             SignalTyKind::Node(prim_ty) => prim_ty,
             _ => {

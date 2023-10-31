@@ -1,10 +1,14 @@
 use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{
+    bvm::BitVecMask,
     group::ItemId,
-    node::{BinOp, DFF},
+    net_list::NodeOutId,
+    node::{BinOp, Case, Const, DFF},
+    sig_ty::{NodeTy, SignalTy},
 };
 use rustc_hir::Expr;
 use rustc_span::Span;
+use smallvec::SmallVec;
 
 use super::EvaluateExpr;
 use crate::{
@@ -19,22 +23,24 @@ pub struct SignalReg {
     pub has_en: bool,
 }
 
-impl SignalReg {
-    fn make_err(&self, span: Span) -> Error {
-        SpanError::new(
-            SpanErrorKind::NotSynthBlackboxExpr(if !self.has_en {
-                Blackbox::SignalReg
-            } else {
-                Blackbox::SignalRegEn
-            }),
-            span,
-        )
-        .into()
-    }
+fn make_err(blackbox: Blackbox, span: Span) -> Error {
+    SpanError::new(SpanErrorKind::NotSynthBlackboxExpr(blackbox), span).into()
+}
+
+fn signal_value_ty<'tcx>(
+    blackbox: Blackbox,
+    generator: &mut Generator<'tcx>,
+    expr: &'tcx Expr<'tcx>,
+    ctx: &EvalContext<'tcx>,
+) -> Result<SignalTy, Error> {
+    let ty = generator.node_type(expr.hir_id, ctx);
+    let value_ty =
+        utils::subst_type(ty, 1).ok_or_else(|| make_err(blackbox, expr.span))?;
+    generator.find_sig_ty(value_ty, ctx.generic_args, expr.span)
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -42,30 +48,31 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
     ) -> Result<ItemId, Error> {
         let args = utils::expected_call(expr)?;
 
-        let ty = generator.node_type(expr.hir_id, ctx);
-        let value_ty =
-            utils::subst_type(ty, 1).ok_or_else(|| self.make_err(expr.span))?;
-        let sig_ty = generator.find_sig_ty(value_ty, ctx.generic_args, expr.span)?;
-
+        let blackbox = if !self.has_en {
+            Blackbox::SignalReg
+        } else {
+            Blackbox::SignalRegEn
+        };
+        let sig_ty = signal_value_ty(blackbox, generator, expr, ctx)?;
         let (clk, rst, en, rst_val, comb) = match self.has_en {
             true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),
             false => (&args[0], &args[1], None, &args[2], &args[3]),
         };
 
-        let clk = generator.evaluate_expr(clk, ctx)?.node_out_id();
+        let clk = generator.eval_expr(clk, ctx)?.node_out_id();
         let rst = generator
-            .evaluate_expr(rst, ctx)
+            .eval_expr(rst, ctx)
             .map(|item_id| item_id.node_out_id())?;
         let en = en
             .map(|en| {
                 generator
-                    .evaluate_expr(en, ctx)
+                    .eval_expr(en, ctx)
                     .map(|item_id| item_id.node_out_id())
             })
             .transpose()?;
-        let rst_val = generator.evaluate_expr(rst_val, ctx)?;
+        let rst_val = generator.eval_expr(rst_val, ctx)?;
         let rst_val = generator.to_bitvec(ctx.module_id, rst_val);
-        let prim_ty = sig_ty.maybe_to_bitvec();
+        let prim_ty = sig_ty.to_bitvec();
 
         let dff = generator.net_list.add(
             ctx.module_id,
@@ -88,7 +95,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
         let dff_out = generator.from_bitvec(ctx.module_id, dff_out, sig_ty);
 
         ctx.new_closure_inputs().push(dff_out);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
         let comb_out = generator.to_bitvec(ctx.module_id, comb);
 
         generator.net_list.set_dff_data(dff, comb_out);
@@ -100,7 +107,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
 pub struct SignalLift;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -108,14 +115,14 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as arg);
 
-        generator.evaluate_expr(arg, ctx)
+        generator.eval_expr(arg, ctx)
     }
 }
 
 pub struct SignalMap;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -123,9 +130,9 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec, comb);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
         ctx.new_closure_inputs().push(rec);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -134,7 +141,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
 pub struct SignalAndThen;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -142,9 +149,9 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec, comb);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
         ctx.new_closure_inputs().push(rec);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -153,7 +160,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
 pub struct SignalApply2;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -161,10 +168,10 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as arg1, arg2, comb);
 
-        let arg1 = generator.evaluate_expr(arg1, ctx)?;
-        let arg2 = generator.evaluate_expr(arg2, ctx)?;
+        let arg1 = generator.eval_expr(arg1, ctx)?;
+        let arg2 = generator.eval_expr(arg2, ctx)?;
         ctx.new_closure_inputs().push(arg1).push(arg2);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -173,7 +180,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
 pub struct SignalValue;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -181,14 +188,14 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        generator.evaluate_expr(rec, ctx)
+        generator.eval_expr(rec, ctx)
     }
 }
 
 pub struct SignalWatch;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -196,7 +203,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        generator.evaluate_expr(rec, ctx)
+        generator.eval_expr(rec, ctx)
     }
 }
 
@@ -205,7 +212,7 @@ pub struct SignalOp {
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -214,6 +221,55 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
         utils::args!(expr as lhs, rhs);
         let ty = generator.node_type(expr.hir_id, ctx);
 
-        generator.bin_op(ty, self.op, lhs, rhs, ctx, expr.span)
+        generator.eval_bin_op(ty, self.op, lhs, rhs, ctx, expr.span)
+    }
+}
+
+pub struct SignalFsm;
+
+impl<'tcx> EvaluateExpr<'tcx> for SignalFsm {
+    fn eval_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        utils::args!(expr as fsm);
+
+        ctx.new_fsm();
+        let res = generator.eval_expr(fsm, ctx)?;
+        let states = ctx.take_fsm_states(expr.span).unwrap()?;
+        if states.is_empty() {
+            return Err(SpanError::new(SpanErrorKind::NoYieldInFsm, expr.span).into());
+        }
+        let len = states.len();
+        let width = len as u128;
+        let state_sel = generator.net_list.add_and_get_out(
+            ctx.module_id,
+            Const::new(NodeTy::BitVec(width), 0, SymIdent::Fsm),
+        );
+
+        let variants = states[0 .. len - 1]
+            .iter()
+            .enumerate()
+            .map(|(idx, state)| {
+                (
+                    BitVecMask::new(idx as u128, width),
+                    generator.to_bitvec(ctx.module_id, *state),
+                )
+            })
+            .collect::<SmallVec<[(BitVecMask, NodeOutId); 8]>>();
+
+        let default = states.last().unwrap();
+
+        let sig_ty =
+            signal_value_ty(Blackbox::SignalFsm, generator, expr, ctx)?.to_bitvec();
+
+        // let case = generator.net_list.add_and_get_out(
+        //     ctx.module_id,
+        //     Case::new(sig_ty, state_sel, variants, default, ),
+        // );
+
+        todo!()
     }
 }

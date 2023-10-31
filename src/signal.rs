@@ -1,8 +1,9 @@
 use std::{
     cell::RefCell,
     fmt::Debug,
+    iter,
     marker::PhantomData,
-    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Coroutine, Div, Mul, Not, Sub},
     rc::Rc,
 };
 
@@ -118,6 +119,15 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         T: PartialEq<U>,
     {
         self.apply2(other, |this, other| this == other)
+    }
+
+    #[blackbox(SignalFsm)]
+    pub fn fsm<G>(gen: G) -> Signal<D, G::Yield>
+    where
+        G: Coroutine<Return = ()> + Unpin + 'static,
+        G::Yield: SignalValue,
+    {
+        iter::from_coroutine(gen).into_signal()
     }
 }
 
@@ -461,7 +471,11 @@ pub trait Bundle {
 #[cfg(test)]
 mod tests {
     use super::{SignalIterExt, *};
-    use crate::{domain::TestSystem4, unsigned::Unsigned};
+    use crate::{
+        bit::{H, L},
+        domain::TestSystem4,
+        unsigned::Unsigned,
+    };
 
     #[test]
     fn test_iter() {
@@ -481,6 +495,18 @@ mod tests {
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+        ]);
+    }
+
+    #[test]
+    fn test_fsm() {
+        let fsm = Signal::<TestSystem4, Bit>::fsm(|| loop {
+            yield H;
+            yield L;
+        });
+
+        assert_eq!(fsm.simulate().take(10).collect::<Vec<_>>(), [
+            H, L, H, L, H, L, H, L, H, L
         ]);
     }
 }

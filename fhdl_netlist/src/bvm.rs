@@ -9,6 +9,12 @@ pub struct BitVecMask {
 }
 
 impl BitVecMask {
+    pub fn new(val: u128, width: u128) -> Self {
+        let mut bvm = BitVecMask::default();
+        bvm.set_val(val, width);
+        bvm
+    }
+
     pub fn set_val(&mut self, val: u128, width: u128) {
         self.val |= val & mask(width);
     }

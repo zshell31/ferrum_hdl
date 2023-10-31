@@ -33,6 +33,7 @@ pub enum Blackbox {
     SignalReset,
     SignalValue,
     SignalWatch,
+    SignalFsm,
 
     UnsignedIndex,
 

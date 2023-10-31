@@ -7,7 +7,7 @@ use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 pub struct ArrayReverse;
 
 impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         _generator: &mut Generator<'tcx>,
         _expr: &'tcx Expr<'tcx>,
@@ -27,7 +27,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
         // let width = item_ty.width();
         // let count = array_ty.count();
 
-        // let rec = generator.evaluate_expr(rec, ctx)?;
+        // let rec = generator.eval_expr(rec, ctx)?;
 
         // bitvec::bit_vec_trans_in_loop(
         //     generator,
@@ -56,7 +56,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
 pub struct ArrayMap;
 
 impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         _generator: &mut Generator<'tcx>,
         _expr: &'tcx Expr<'tcx>,
@@ -77,7 +77,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         // let width = item_ty.width();
         // let count = array_ty.count();
 
-        // let rec = generator.evaluate_expr(rec, ctx)?;
+        // let rec = generator.eval_expr(rec, ctx)?;
 
         // bitvec::bit_vec_trans_in_loop(
         //     generator,
@@ -103,7 +103,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         //             .node_out_id(input);
         //         let input = generator.from_bitvec(ctx.module_id, input, *item_ty);
 
-        //         let closure = generator.evaluate_expr(closure, ctx)?;
+        //         let closure = generator.eval_expr(closure, ctx)?;
         //         generator
         //             .link_dummy_inputs(&[input], closure)
         //             .ok_or_else(|| {

@@ -7,7 +7,7 @@ use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils
 pub struct UnsignedIndex;
 
 impl<'tcx> EvaluateExpr<'tcx> for UnsignedIndex {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -18,6 +18,6 @@ impl<'tcx> EvaluateExpr<'tcx> for UnsignedIndex {
         let generics = generator.method_call_generics(expr, ctx)?;
         let ind: u128 = generics.as_const(1).unwrap();
 
-        generator.index(rec, ind, ctx)
+        generator.eval_index(rec, ind, ctx)
     }
 }

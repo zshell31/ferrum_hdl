@@ -78,7 +78,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
 pub struct BitVecShrink;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -86,7 +86,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
 
         let ty = generator.node_type(expr.hir_id, ctx);
         let width = generator
@@ -108,7 +108,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
 pub struct BitVecSlice;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -116,7 +116,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let rec = generator.evaluate_expr(rec, ctx)?.node_out_id();
+        let rec = generator.eval_expr(rec, ctx)?.node_out_id();
 
         let generics = generator.method_call_generics(expr, ctx)?;
 
@@ -140,7 +140,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
 pub struct BitVecUnpack;
 
 impl<'tcx> EvaluateExpr<'tcx> for BitVecUnpack {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
@@ -148,7 +148,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecUnpack {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let rec = generator.evaluate_expr(rec, ctx)?.node_out_id();
+        let rec = generator.eval_expr(rec, ctx)?.node_out_id();
 
         let ty = generator.node_type(expr.hir_id, ctx);
         let sig_ty = generator.find_sig_ty(ty, ctx.generic_args, expr.span)?;

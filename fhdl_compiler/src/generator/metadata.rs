@@ -68,9 +68,6 @@ impl<'tcx> Generator<'tcx> {
     }
 
     pub fn encode_netlist<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
-        self.net_list.dump(false);
-        println!("{:#?}", self.metadata);
-
         let mut encoder = NetListEncoder::new(self, path)?;
         let encoder = &mut encoder;
 

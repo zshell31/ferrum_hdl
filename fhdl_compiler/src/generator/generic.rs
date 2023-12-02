@@ -10,7 +10,7 @@ use rustc_middle::ty::{
 };
 use rustc_span::Span;
 
-use super::{GenMode, Generator};
+use super::Generator;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -134,7 +134,7 @@ impl Generic {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Generics {
-    mode: GenMode,
+    is_primary: bool,
     generics: &'static [Generic],
 }
 
@@ -167,7 +167,7 @@ impl Generics {
                     .into();
 
                 Ok(Some(Self {
-                    mode: generator.mode,
+                    is_primary: generator.is_primary,
                     generics: unsafe { with_arena().alloc_slice(&[sig_ty, cons]) },
                 }))
             }
@@ -199,7 +199,7 @@ impl Generics {
         span: Span,
     ) -> Result<Self, Error> {
         Ok(Self {
-            mode: generator.mode,
+            is_primary: generator.is_primary,
             generics: unsafe {
                 with_arena().alloc_from_res_iter(
                     generic_args

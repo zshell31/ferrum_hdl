@@ -22,7 +22,7 @@ use rustc_type_ir::{
     UintTy,
 };
 
-use super::{generic::Generics, GenMode, Generator, SigTyInfo};
+use super::{generic::Generics, Generator, SigTyInfo};
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
@@ -195,21 +195,18 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn is_local_key(&self, key: TyOrDefIdWithGen<'tcx>) -> bool {
-        match self.mode {
-            GenMode::Crate(_) => {
-                key.is_local()
-                    || key
-                        .def_id()
-                        .map(|def_id| self.is_synth_ty(def_id))
-                        .unwrap_or_default()
-            }
-            GenMode::Fhdl => {
-                key.is_local()
-                    && key
-                        .def_id()
-                        .map(|def_id| self.is_synth_ty(def_id))
-                        .unwrap_or_default()
-            }
+        if !self.crates.is_local_ferrum_hdl() {
+            key.is_local()
+                || key
+                    .def_id()
+                    .map(|def_id| self.is_synth_ty(def_id))
+                    .unwrap_or_default()
+        } else {
+            key.is_local()
+                && key
+                    .def_id()
+                    .map(|def_id| self.is_synth_ty(def_id))
+                    .unwrap_or_default()
         }
     }
 

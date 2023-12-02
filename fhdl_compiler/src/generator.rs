@@ -9,8 +9,9 @@ pub mod metadata;
 pub mod pattern_match;
 pub mod ty_or_def_id;
 
-use std::{env, fs, path::Path as StdPath};
+use std::{env, error::Error as StdError, fmt::Display, fs, io, path::Path as StdPath};
 
+use cargo_toml::Manifest;
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
@@ -31,6 +32,7 @@ use rustc_middle::{
     ty::{AssocKind, GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
+use serde::Deserialize;
 
 use self::{generic::Generics, metadata::Metadata, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
@@ -48,32 +50,89 @@ impl Callbacks for CompilerCallbacks {
         _compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
-        queries
-            .global_ctxt()
-            .unwrap()
-            .enter(|tcx| match init_generator(tcx) {
-                Ok(mut generator) => {
-                    generator.generate();
-                }
+        let res = queries.global_ctxt().unwrap().enter(|tcx| {
+            let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+            let should_be_synthesized = match should_be_synthesized(is_primary) {
+                Ok(should_be_synthesized) => should_be_synthesized,
                 Err(e) => {
                     tcx.sess.err(e.to_string());
+                    return false;
                 }
-            });
+            };
 
-        Compilation::Continue
+            if should_be_synthesized {
+                match init_generator(tcx, is_primary) {
+                    Ok(mut generator) => {
+                        generator.generate();
+                        true
+                    }
+                    Err(e) => {
+                        tcx.sess.err(e.to_string());
+                        false
+                    }
+                }
+            } else {
+                true
+            }
+        });
+
+        if res {
+            Compilation::Continue
+        } else {
+            Compilation::Stop
+        }
     }
 }
 
-fn init_generator(tcx: TyCtxt<'_>) -> Result<Generator, Error> {
-    let mode = if env::var_os("FHDL_SYNTH").is_some() {
-        GenMode::Fhdl
+fn should_be_synthesized(is_primary: bool) -> Result<bool, Box<dyn StdError>> {
+    if is_primary {
+        Ok(true)
     } else {
-        let top_module = find_top_module(tcx)?;
-        GenMode::Crate(top_module)
-    };
-    let crates = Crates::find_crates(tcx, mode)?;
+        let manifest = env::var_os("CARGO_MANIFEST_DIR")
+            .and_then(|var| var.to_str().map(|var| StdPath::new(var).join("Cargo.toml")))
+            .ok_or("`CARGO_MANIFEST_DIR` is not specified")?;
 
-    Ok(Generator::new(tcx, crates, mode))
+        let manifest = fs::read(&manifest).map_err(|e| {
+            format!(
+                "Failed to read from `{}`: {}",
+                manifest.to_string_lossy(),
+                e
+            )
+        })?;
+
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        struct FhdlMetadata {
+            #[serde(default)]
+            synth: bool,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Deserialize)]
+        struct Metadata {
+            ferrum_hdl: Option<FhdlMetadata>,
+        }
+
+        let manifest = Manifest::<Metadata>::from_slice_with_metadata(&manifest)?;
+
+        Ok(manifest
+            .package
+            .and_then(|package| package.metadata)
+            .and_then(|metadata| metadata.ferrum_hdl)
+            .map(|metadata| metadata.synth)
+            .unwrap_or_default())
+    }
+}
+
+fn init_generator(tcx: TyCtxt<'_>, is_primary: bool) -> Result<Generator, Error> {
+    let top_module = if is_primary {
+        Some(find_top_module(tcx)?)
+    } else {
+        None
+    };
+    let crates = Crates::find_crates(tcx, is_primary)?;
+
+    Ok(Generator::new(tcx, is_primary, top_module, crates))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -111,7 +170,11 @@ struct Crates {
 }
 
 impl Crates {
-    fn find_crates(tcx: TyCtxt<'_>, mode: GenMode) -> Result<Self, Error> {
+    fn find_crates(tcx: TyCtxt<'_>, is_primary: bool) -> Result<Self, Error> {
+        const CORE: &str = "core";
+        const STD: &str = "std";
+        const FERRUM_HDL: &str = "ferrum_hdl";
+
         let mut core = None;
         let mut std = None;
         let mut ferrum_hdl = None;
@@ -120,26 +183,33 @@ impl Crates {
             let crate_name = tcx.crate_name(*krate);
             let crate_name = crate_name.as_str();
 
-            if crate_name == "core" {
+            if crate_name == CORE {
                 core = Some(*krate);
+                continue;
             }
-            if crate_name == "std" {
+            if crate_name == STD {
                 std = Some(*krate);
+                continue;
             }
-
-            if mode.is_crate() && crate_name == "ferrum_hdl" {
+            if crate_name == FERRUM_HDL {
                 ferrum_hdl = Some(*krate);
             }
         }
 
-        let core = core.ok_or_else(|| Error::MissingCrate("core"))?;
-        let std = std.ok_or_else(|| Error::MissingCrate("std"))?;
-        let ferrum_hdl = match mode {
-            GenMode::Crate(_) => {
-                ferrum_hdl.ok_or_else(|| Error::MissingCrate("ferrum_hdl"))?
-            }
-            GenMode::Fhdl => LOCAL_CRATE,
-        };
+        let core = core.ok_or_else(|| Error::MissingCrate(CORE))?;
+        let std = std.ok_or_else(|| Error::MissingCrate(STD))?;
+        let ferrum_hdl = (if is_primary {
+            ferrum_hdl
+        } else {
+            ferrum_hdl.or_else(|| {
+                if tcx.crate_name(LOCAL_CRATE).as_str() == FERRUM_HDL {
+                    Some(LOCAL_CRATE)
+                } else {
+                    None
+                }
+            })
+        })
+        .ok_or_else(|| Error::MissingCrate(FERRUM_HDL))?;
 
         Ok(Self {
             core,
@@ -155,6 +225,10 @@ impl Crates {
     pub(crate) fn is_ferrum_hdl(&self, def_id: DefId) -> bool {
         def_id.krate == self.ferrum_hdl
     }
+
+    pub(crate) fn is_local_ferrum_hdl(&self) -> bool {
+        self.ferrum_hdl == LOCAL_CRATE
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -163,15 +237,15 @@ pub struct SigTyInfo<'tcx> {
     pub ty_or_def_id: TyOrDefIdWithGen<'tcx>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum GenMode {
-    Fhdl,
-    Crate(HirItemId),
+pub struct Settings {
+    pub trace_eval_expr: bool,
 }
 
-impl GenMode {
-    pub fn is_crate(&self) -> bool {
-        matches!(self, Self::Crate(_))
+impl Settings {
+    fn new() -> Self {
+        Self {
+            trace_eval_expr: env::var("TRACE_EVAL_EXPR").is_ok(),
+        }
     }
 }
 
@@ -179,27 +253,36 @@ pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub net_list: NetList,
     pub idents: Scopes,
-    mode: GenMode,
+    pub settings: Settings,
+    is_primary: bool,
+    top_module: Option<HirItemId>,
+    crates: Crates,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
-    crates: Crates,
     metadata: Metadata<'tcx>,
 }
 
 impl<'tcx> Generator<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>, crates: Crates, mode: GenMode) -> Self {
+    fn new(
+        tcx: TyCtxt<'tcx>,
+        is_primary: bool,
+        top_module: Option<HirItemId>,
+        crates: Crates,
+    ) -> Self {
         Self {
             tcx,
             net_list: NetList::new(),
             idents: Scopes::new(),
-            mode,
+            settings: Settings::new(),
+            top_module,
+            is_primary,
+            crates,
             blackbox: Default::default(),
             sig_ty: Default::default(),
             local_trait_impls: Default::default(),
             evaluated_modules: Default::default(),
-            crates,
             metadata: Default::default(),
         }
     }
@@ -211,65 +294,103 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn generate_inner(&mut self) -> Result<(), Error> {
-        let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-        // let name = env::var("CARGO_PKG_NAME").unwrap();
-        let name = "top_module";
-
-        let path = StdPath::new(&dir).join("generated").join("verilog");
-        fs::create_dir_all(&path)?;
-
-        let mut path = path.join(name);
-        path.set_extension("v");
+        let crate_name = self.tcx.crate_name(LOCAL_CRATE);
 
         self.collect_local_trait_impls();
 
         let generic_args = GenericArgs::empty();
-        match self.mode {
-            GenMode::Fhdl => {
-                for body_id in self.tcx.hir().body_owners() {
-                    if self.is_synth(body_id.into()) {
-                        match self.tcx.hir().get_by_def_id(body_id) {
-                            HirNode::Item(item) => {
-                                self.eval_fn_item(item, false, generic_args)?;
-                            }
-                            HirNode::ImplItem(impl_item) => {
-                                self.eval_impl_item(impl_item, generic_args)?;
-                            }
-                            _ => {
-                                return Err(SpanError::new(
-                                    SpanErrorKind::NotSynthItem,
-                                    self.tcx
-                                        .def_ident_span(body_id)
-                                        .unwrap_or_else(|| self.tcx.def_span(body_id)),
-                                )
-                                .into());
-                            }
-                        };
-                    }
+        if !self.is_primary {
+            self.print_message(&"Synthesizing", Some(&crate_name.as_str()))?;
+
+            for body_id in self.tcx.hir().body_owners() {
+                if self.is_synth(body_id.into()) {
+                    match self.tcx.hir().get_by_def_id(body_id) {
+                        HirNode::Item(item) => {
+                            self.eval_fn_item(item, false, generic_args)?;
+                        }
+                        HirNode::ImplItem(impl_item) => {
+                            self.eval_impl_item(impl_item, generic_args)?;
+                        }
+                        _ => {
+                            return Err(SpanError::new(
+                                SpanErrorKind::NotSynthItem,
+                                self.tcx
+                                    .def_ident_span(body_id)
+                                    .unwrap_or_else(|| self.tcx.def_span(body_id)),
+                            )
+                            .into());
+                        }
+                    };
                 }
-
-                self.net_list.transform();
-                self.net_list.reachability();
-
-                let path = StdPath::new(&dir).join("src/fhdl.net_list");
-                self.encode_netlist(path)?;
-
-                Ok(())
             }
-            GenMode::Crate(top_module) => {
-                let item = self.tcx.hir().item(top_module);
-                self.eval_fn_item(item, true, GenericArgs::empty())?;
 
-                self.net_list.transform();
-                self.net_list.reachability();
-                self.net_list.set_names();
-                self.net_list.inject_nodes();
+            self.net_list.transform();
+            self.net_list.reachability();
 
-                let verilog = Verilog::new(&self.net_list).generate();
+            let output_filenames = self.tcx.output_filenames(());
+            let path = output_filenames.with_extension("net_list");
+            self.encode_netlist(path)?;
+            self.net_list.dump(true);
 
-                Ok(fs::write(path, verilog)?)
-            }
+            Ok(())
+        } else {
+            let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+            let name = "top_module";
+
+            let path = StdPath::new(&dir).join("generated").join("verilog");
+            fs::create_dir_all(&path)?;
+
+            let mut path = path.join(name);
+            path.set_extension("v");
+
+            self.print_message(
+                &"Synthesizing",
+                Some(&format!(
+                    "{} into verilog {}",
+                    crate_name.as_str(),
+                    path.to_string_lossy()
+                )),
+            )?;
+
+            let top_module = self.top_module.unwrap();
+            let item = self.tcx.hir().item(top_module);
+            self.eval_fn_item(item, true, GenericArgs::empty())?;
+
+            self.net_list.transform();
+            self.net_list.reachability();
+            self.net_list.set_names();
+            self.net_list.inject_nodes();
+
+            let verilog = Verilog::new(&self.net_list).generate();
+
+            Ok(fs::write(path, verilog)?)
         }
+    }
+
+    fn print_message(
+        &self,
+        status: &dyn Display,
+        message: Option<&dyn Display>,
+    ) -> io::Result<()> {
+        // TODO: use Cargo settings for colors
+        // Code from https://github.com/rust-lang/cargo/blob/2130a0faf0cb6aa44c5962c2f2d313fa7e459b2b/src/cargo/core/shell.rs#L451
+        use std::io::Write;
+
+        use anstream::AutoStream;
+        use anstyle::{AnsiColor, Effects, Reset, Style};
+
+        const HEADER: Style = AnsiColor::Green.on_default().effects(Effects::BOLD);
+
+        let style = HEADER.render();
+        let reset = Reset.render();
+
+        let mut stream = AutoStream::always(std::io::stdout());
+        write!(&mut stream, "{style}{status:>12}{reset}")?;
+        if let Some(message) = message {
+            writeln!(&mut stream, " {message}")?;
+        }
+
+        Ok(())
     }
 
     fn collect_local_trait_impls(&mut self) {
@@ -402,9 +523,10 @@ impl<'tcx> Generator<'tcx> {
     pub fn local_def_id<T: Into<DefId>>(&self, def_id: T) -> Option<LocalDefId> {
         let def_id = def_id.into();
         let local_def_id = def_id.as_local()?;
-        match self.mode {
-            GenMode::Crate(_) => Some(local_def_id),
-            GenMode::Fhdl if self.is_synth(def_id) => Some(local_def_id),
+
+        match self.crates.is_local_ferrum_hdl() {
+            false => Some(local_def_id),
+            true if self.is_synth(def_id) => Some(local_def_id),
             _ => None,
         }
     }

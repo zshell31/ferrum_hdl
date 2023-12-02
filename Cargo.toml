@@ -18,6 +18,9 @@ repository = "https://github.com/zshell31/ferrum_hdl"
 keywords = ["fpga", "hdl", "verilog", "hardware"]
 authors = ["Evgeny Nosov <evgen3188@gmail.com>"]
 
+[package.metadata.ferrum_hdl]
+synth = true
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 # [package.metadata.rust-analyzer]
 # rustc_private = true

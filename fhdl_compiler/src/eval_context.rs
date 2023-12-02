@@ -7,11 +7,9 @@ use fhdl_netlist::{
 use rustc_middle::ty::{EarlyBinder, GenericArgsRef, TyCtxt};
 use rustc_type_ir::fold::TypeFoldable;
 
-use crate::generator::GenMode;
-
 #[derive(Clone)]
 pub struct EvalContext<'tcx> {
-    pub mode: GenMode,
+    pub is_primary: bool,
     pub generic_args: GenericArgsRef<'tcx>,
     pub module_id: ModuleId,
     pub closure_inputs: ClosureInputs,
@@ -19,12 +17,12 @@ pub struct EvalContext<'tcx> {
 
 impl<'tcx> EvalContext<'tcx> {
     pub fn new(
-        mode: GenMode,
+        is_primary: bool,
         generic_args: GenericArgsRef<'tcx>,
         module_id: ModuleId,
     ) -> Self {
         Self {
-            mode,
+            is_primary,
             generic_args,
             module_id,
             closure_inputs: ClosureInputs::new(),
@@ -45,7 +43,7 @@ impl<'tcx> EvalContext<'tcx> {
         tcx: TyCtxt<'tcx>,
         binder: EarlyBinder<T>,
     ) -> T {
-        if self.mode.is_crate() {
+        if self.is_primary {
             binder.instantiate(tcx, self.generic_args)
         } else {
             binder.instantiate_identity()
@@ -54,7 +52,7 @@ impl<'tcx> EvalContext<'tcx> {
 
     pub fn with_generic_args(&self, generic_args: GenericArgsRef<'tcx>) -> Self {
         Self {
-            mode: self.mode,
+            is_primary: self.is_primary,
             generic_args,
             module_id: self.module_id,
             closure_inputs: self.closure_inputs.clone(),

@@ -41,6 +41,7 @@ static MOST_INNER_ERR_SCOPE: AtomicBool = AtomicBool::new(false);
 
 #[allow(dead_code)]
 struct Scope<'tcx> {
+    print: bool,
     module: Symbol,
     kind: &'tcx ExprKind<'tcx>,
     generic_args: GenericArgsRef<'tcx>,
@@ -50,20 +51,24 @@ struct Scope<'tcx> {
 #[allow(unused_variables)]
 impl<'tcx> Scope<'tcx> {
     fn enter(
+        print: bool,
         module: Symbol,
         kind: &'tcx ExprKind<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Self {
-        let ident = AtomicU8::fetch_add(&IDENT, 1, Ordering::Relaxed) as usize;
-        println!(
-            "{}--> {} ({} <{:?}>)",
-            " ".repeat(ident << 2),
-            Self::to_str(kind),
-            module,
-            generic_args
-        );
+        if print {
+            let ident = AtomicU8::fetch_add(&IDENT, 1, Ordering::Relaxed) as usize;
+            println!(
+                "{}--> {} ({} <{:?}>)",
+                " ".repeat(ident << 2),
+                Self::to_str(kind),
+                module,
+                generic_args
+            );
+        }
 
         Self {
+            print,
             module,
             kind,
             generic_args,
@@ -71,14 +76,16 @@ impl<'tcx> Scope<'tcx> {
     }
 
     fn exit(self) {
-        let ident = AtomicU8::fetch_sub(&IDENT, 1, Ordering::Relaxed) as usize;
-        println!(
-            "{}<-- {} ({} <{:?}>)",
-            " ".repeat((ident - 1) << 2),
-            Self::to_str(self.kind),
-            self.module,
-            self.generic_args
-        );
+        if self.print {
+            let ident = AtomicU8::fetch_sub(&IDENT, 1, Ordering::Relaxed) as usize;
+            println!(
+                "{}<-- {} ({} <{:?}>)",
+                " ".repeat((ident - 1) << 2),
+                Self::to_str(self.kind),
+                self.module,
+                self.generic_args
+            );
+        }
     }
 
     fn inner_most_error(&self, f: impl FnOnce()) {
@@ -196,6 +203,7 @@ impl<'tcx> Generator<'tcx> {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let scope = Scope::enter(
+            self.settings.trace_eval_expr,
             self.net_list[ctx.module_id].name,
             &expr.kind,
             ctx.generic_args,

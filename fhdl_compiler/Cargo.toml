@@ -7,12 +7,14 @@ edition = "2021"
 rustc_private = true
 
 [dependencies]
-auto_enums = "0.8.2"
-bumpalo = "3.13.0"
+anstream = "0.6.4"
+anstyle = "1.0.4"
+cargo_toml = "0.17.0"
 either = "1.9.0"
-if_chain = "1.0.2"
-smallvec = "1.11.0"
-thiserror = "1.0"
 ferrum_hdl = { path = "../" }
 fhdl_blackbox = { path = "../fhdl_blackbox" }
 fhdl_netlist = { path = "../fhdl_netlist" }
+if_chain = "1.0.2"
+serde = { version = "1.0", features = ["derive"] }
+smallvec = "1.11.0"
+thiserror = "1.0"

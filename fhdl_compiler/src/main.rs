@@ -143,8 +143,6 @@ fn main() {
             args.extend(["--sysroot".into(), sys_root]);
         };
 
-        let primary_package = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
-        let run_on_all_crates = env::var("RUSTC_PLUGIN_ALL_TARGETS").is_ok();
         let normal_rustc = arg_value(&args, "--print", |_| true).is_some();
         let is_target_crate =
             match (env::var("SPECIFIC_CRATE"), env::var("SPECIFIC_TARGET")) {
@@ -155,8 +153,7 @@ fn main() {
                 }
                 _ => true,
             };
-        let run_fhdl =
-            !normal_rustc && (run_on_all_crates || primary_package) && is_target_crate;
+        let run_fhdl = !normal_rustc && is_target_crate;
 
         if run_fhdl {
             let mut callbacks = CompilerCallbacks {};

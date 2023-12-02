@@ -98,7 +98,7 @@ impl<'tcx> Generator<'tcx> {
 
         self.idents.for_module(module_id).push_scope();
 
-        let mut ctx = EvalContext::new(self.mode, generic_args, module_id);
+        let mut ctx = EvalContext::new(self.is_primary, generic_args, module_id);
 
         self.eval_inputs(inputs, &mut ctx, false)?;
         let item_id = self.eval_expr(body.value, &mut ctx)?;

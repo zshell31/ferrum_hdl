@@ -173,6 +173,12 @@ impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
     }
 }
 
+impl<D: ClockDomain, T: SignalValue> From<Wrapped<D, T>> for Signal<D, T> {
+    fn from(wrapped: Wrapped<D, T>) -> Self {
+        wrapped.0
+    }
+}
+
 impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     fn new(signal: Signal<D, T>) -> Self {
         Self(signal)
@@ -187,6 +193,11 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
 
     pub(crate) fn next(&mut self, ctx: &mut SimCtx) {
         self.0.next(ctx);
+    }
+
+    #[blackbox(SignalWatch)]
+    pub fn watch(self, name: &'static str) -> Self {
+        Self(self.0.watch(name))
     }
 }
 
@@ -213,17 +224,23 @@ impl Source<Bit> {
     }
 }
 
+impl Source<bool> {
+    pub fn revert(&self) {
+        self.0.update(|val| !val);
+    }
+}
+
 #[blackbox(SignalApply2)]
 pub fn apply2<D: ClockDomain, T: SignalValue, U: SignalValue, V: SignalValue, F>(
-    s1: Signal<D, T>,
-    s2: Signal<D, U>,
+    s1: impl Into<Signal<D, T>>,
+    s2: impl Into<Signal<D, U>>,
     f: F,
 ) -> Signal<D, V>
 where
     F: Fn(T, U) -> V + Clone + 'static,
 {
-    let mut s1 = s1;
-    let mut s2 = s2;
+    let mut s1 = s1.into();
+    let mut s2 = s2.into();
 
     Signal::new(move |ctx| {
         let s1 = s1.next(ctx);

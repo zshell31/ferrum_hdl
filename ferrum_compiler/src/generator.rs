@@ -176,8 +176,7 @@ pub struct Generator<'tcx> {
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,
-    registered_blackboxes: FxHashMap<Blackbox, DefId>,
-    registered_blackbox_tys: FxHashMap<BlackboxTy, DefId>,
+    uniq_blackbox_tys: FxHashMap<BlackboxTy, DefId>,
     pub net_list: NetList,
     pub idents: Idents,
 }
@@ -201,8 +200,7 @@ impl<'tcx> Generator<'tcx> {
             local_trait_impls: FxHashMap::default(),
             evaluated_modules: FxHashMap::default(),
             crates,
-            registered_blackboxes: FxHashMap::default(),
-            registered_blackbox_tys: FxHashMap::default(),
+            uniq_blackbox_tys: FxHashMap::default(),
             net_list: NetList::default(),
             idents: Idents::new(),
         }

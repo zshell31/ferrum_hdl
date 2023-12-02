@@ -125,16 +125,6 @@ impl<'tcx> Generator<'tcx> {
 
             if let Some(def_id) = key.def_id() {
                 blackbox = self.find_blackbox_(def_id);
-                if let Some(blackbox) = blackbox {
-                    if self
-                        .registered_blackboxes
-                        .insert(blackbox, def_id)
-                        .filter(|old_def_id| *old_def_id != def_id)
-                        .is_some()
-                    {
-                        panic!("Already registered blackbox '{blackbox}'");
-                    }
-                }
             }
 
             self.blackbox.insert(key.clone(), blackbox);
@@ -281,7 +271,7 @@ impl<'tcx> Generator<'tcx> {
         let blackbox_ty = BlackboxTy::try_from(blackbox_ty).ok()?;
 
         if self
-            .registered_blackbox_tys
+            .uniq_blackbox_tys
             .insert(blackbox_ty, def_id)
             .filter(|old_def_id| *old_def_id != def_id)
             .is_some()

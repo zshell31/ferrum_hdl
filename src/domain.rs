@@ -39,3 +39,9 @@ impl<D: ClockDomain> Clock<D> {
         Self::default()
     }
 }
+
+pub struct TestSystem4;
+
+impl ClockDomain for TestSystem4 {
+    const FREQ: usize = 4;
+}

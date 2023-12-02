@@ -1,11 +1,17 @@
+mod bitpack;
 mod blackbox;
-mod pipeline;
+mod impl_tuple_traits;
+mod signal_value;
+mod utils;
 
-use pipeline::Pipeline;
+use bitpack::BitPackDerive;
+use darling::FromDeriveInput;
+use impl_tuple_traits::ImplTupleTraits;
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::parse_macro_input;
+use signal_value::SignalValueDerive;
+use syn::{parse_macro_input, DeriveInput};
 
 use self::blackbox::{BlackboxAttr, BlackboxTyAttr};
 
@@ -34,13 +40,30 @@ pub fn blackbox_ty(attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro]
-pub fn p(input: TokenStream) -> TokenStream {
-    let pipeline = parse_macro_input!(input as Pipeline);
+pub fn impl_tuple_traits(input: TokenStream) -> TokenStream {
+    let impl_tuple = parse_macro_input!(input as ImplTupleTraits);
 
-    pipeline.into_token_stream().into()
+    impl_tuple.into_tokens().into()
 }
 
-// #[proc_macro_derive(SingleValue)]
-// pub fn derive_single_value(input: TokenStream) -> TokenStream {
-//     input
-// }
+#[proc_macro_derive(BitPack, attributes(bitpack))]
+pub fn derive_bitpack(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let parsed = match BitPackDerive::from_derive_input(&input) {
+        Ok(parsed) => parsed,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    parsed.into_tokens().into()
+}
+
+#[proc_macro_derive(SignalValue)]
+pub fn derive_signal_value(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let parsed = match SignalValueDerive::from_derive_input(&input) {
+        Ok(parsed) => parsed,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    parsed.into_tokens().into()
+}

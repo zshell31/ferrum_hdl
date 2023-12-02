@@ -38,7 +38,7 @@ where
         clk,
         rst,
         0_u8.into(),
-        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
+        |r: Unsigned<{ blinking_count::<D>() }>| r + 1_u8,
     )
     .map(|value| (value.clone().msb().into(), value))
 }
@@ -62,27 +62,16 @@ pub fn top_module(
 
 #[cfg(test)]
 mod tests {
+    use ferrum_hdl::domain::TestSystem4;
+
     use super::*;
 
-    pub struct TestSystem;
-
-    impl ClockDomain for TestSystem {
-        const FREQ: usize = 4;
-    }
-
-    const BL_COUNT: u8 = blinking_count::<TestSystem>();
-
-    fn top_module(
-        clk: Clock<TestSystem>,
-        rst: Reset<TestSystem>,
-    ) -> Signal<TestSystem, (Bit, Unsigned<BL_COUNT>)> {
-        blinking(clk, rst)
-    }
+    const BL_COUNT: u8 = blinking_count::<TestSystem4>();
 
     #[test]
     fn signals() {
         assert_eq!(
-            top_module(Default::default(), Reset::reset())
+            blinking::<TestSystem4>(Default::default(), Reset::reset())
                 .iter()
                 .take(8)
                 .map(|(led, count)| (bool::from(led), u128::from(count)))

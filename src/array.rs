@@ -9,7 +9,7 @@ use fhdl_macros::{blackbox, blackbox_ty};
 use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
     bitvec::BitVec,
-    cast::{Cast, CastInner},
+    cast::{Cast, CastFrom},
     const_helpers::{Assert, IsTrue},
     domain::ClockDomain,
     signal::{Bundle, Signal, SignalValue, Unbundle},
@@ -53,25 +53,20 @@ impl<const N: usize, T: BitSize> BitSize for Array<N, T> {
     const BITS: usize = N * T::BITS;
 }
 
-impl<const N: usize, T: BitSize> BitSize for [T; N] {
-    const BITS: usize = N * T::BITS;
-}
-
-impl<const N: usize, T: SignalValue> BitPack for [T; N]
+impl<const N: usize, T: SignalValue> BitPack for Array<N, T>
 where
-    BitVec<{ N * T::BITS }>:,
-    BitVec<{ T::BITS }>:,
     T: BitPack<Packed = BitVec<{ T::BITS }>>,
+    [(); <Array<N, T> as BitSize>::BITS]:,
 {
-    type Packed = BitVec<{ N * T::BITS }>;
+    type Packed = BitVec<{ <Array<N, T> as BitSize>::BITS }>;
 
     fn pack(self) -> Self::Packed {
         let width = T::BITS;
         let mut bitvec = Self::Packed::zero();
 
-        for item in self {
+        for item in self.0 {
             bitvec = bitvec << width;
-            bitvec = bitvec | item.pack().cast();
+            bitvec = bitvec | item.pack().cast::<Self::Packed>();
         }
 
         bitvec
@@ -84,33 +79,17 @@ where
 
         let vec = (0 .. N)
             .map(|_| {
-                let slice = (bitvec.clone() >> offset).cast() & mask.clone();
+                let slice = (bitvec.clone() >> offset).cast::<<T as BitPack>::Packed>()
+                    & mask.clone();
                 offset = offset.saturating_sub(width);
                 T::unpack(slice)
             })
             .collect::<Vec<_>>();
 
         match <[T; N]>::try_from(vec) {
-            Ok(res) => res,
+            Ok(res) => res.into(),
             Err(_) => unreachable!(),
         }
-    }
-}
-
-impl<const N: usize, T: SignalValue> BitPack for Array<N, T>
-where
-    BitVec<{ N * T::BITS }>:,
-    BitVec<{ T::BITS }>:,
-    T: BitPack<Packed = BitVec<{ T::BITS }>>,
-{
-    type Packed = BitVec<{ N * T::BITS }>;
-
-    fn pack(self) -> Self::Packed {
-        self.0.pack()
-    }
-
-    fn unpack(bitvec: Self::Packed) -> Self {
-        Self(<[T; N]>::unpack(bitvec))
     }
 }
 
@@ -135,39 +114,39 @@ fn transform_array<const N: usize, T, U>(a: [T; N], f: impl Fn(T) -> U) -> [U; N
     }
 }
 
-impl<const N: usize, T, U> CastInner<[U; N]> for [T; N]
+impl<const N: usize, T, U> CastFrom<[U; N]> for [T; N]
 where
-    T: CastInner<U>,
+    T: CastFrom<U>,
 {
-    fn cast_inner(self) -> [U; N] {
-        transform_array(self, CastInner::cast_inner)
+    fn cast_from(from: [U; N]) -> [T; N] {
+        transform_array(from, CastFrom::cast_from)
     }
 }
 
-impl<const N: usize, T, U> CastInner<[U; N]> for Array<N, T>
+impl<const N: usize, T, U> CastFrom<[U; N]> for Array<N, T>
 where
-    T: CastInner<U>,
+    T: CastFrom<U>,
 {
-    fn cast_inner(self) -> [U; N] {
-        transform_array(self.0, CastInner::cast_inner)
+    fn cast_from(from: [U; N]) -> Array<N, T> {
+        transform_array(from, CastFrom::cast_from).into()
     }
 }
 
-impl<const N: usize, T, U> CastInner<Array<N, T>> for [U; N]
+impl<const N: usize, T, U> CastFrom<Array<N, U>> for [T; N]
 where
-    U: CastInner<T>,
+    T: CastFrom<U>,
 {
-    fn cast_inner(self) -> Array<N, T> {
-        transform_array(self, CastInner::cast_inner).into()
+    fn cast_from(from: Array<N, U>) -> [T; N] {
+        transform_array(from.0, CastFrom::cast_from)
     }
 }
 
-impl<const N: usize, T, U> CastInner<Array<N, T>> for Array<N, U>
+impl<const N: usize, T, U> CastFrom<Array<N, U>> for Array<N, T>
 where
-    U: CastInner<T>,
+    T: CastFrom<U>,
 {
-    fn cast_inner(self) -> Array<N, T> {
-        transform_array(self.0, CastInner::cast_inner).into()
+    fn cast_from(from: Array<N, U>) -> Array<N, T> {
+        transform_array(from.0, CastFrom::cast_from).into()
     }
 }
 
@@ -288,14 +267,9 @@ mod tests {
         bit::{Bit, H, L},
         bitvec::BitVec,
         cast::Cast,
+        domain::TestSystem4,
         signal::SignalIterExt,
     };
-
-    pub struct TestSystem;
-
-    impl ClockDomain for TestSystem {
-        const FREQ: usize = 4;
-    }
 
     #[test]
     fn at() {
@@ -315,7 +289,7 @@ mod tests {
         let s = [[H, H, L], [L, H, L], [H, L, H], [L, L, H]]
             .into_iter()
             .map(Array::from)
-            .into_signal::<TestSystem>();
+            .into_signal::<TestSystem4>();
 
         let res = s.unbundle();
 
@@ -330,9 +304,9 @@ mod tests {
     #[test]
     fn bundle() {
         let s = Array::from([
-            [H, L, H, L].into_signal::<TestSystem>(),
-            [H, H, L, L].into_signal::<TestSystem>(),
-            [L, L, H, H].into_signal::<TestSystem>(),
+            [H, L, H, L].into_signal::<TestSystem4>(),
+            [H, H, L, L].into_signal::<TestSystem4>(),
+            [L, L, H, H].into_signal::<TestSystem4>(),
         ]);
 
         let res = s.bundle();
@@ -347,7 +321,7 @@ mod tests {
 
     #[test]
     fn pack() {
-        let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]].cast_inner();
+        let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]].cast();
 
         assert_eq!(<Array<3, Array<2, Bit>> as BitSize>::BITS, 6);
         assert_eq!(s.pack(), BitVec::<6>::from(0b001101_u8));

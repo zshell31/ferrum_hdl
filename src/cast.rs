@@ -5,23 +5,23 @@ pub trait IsPrimTy: Sized {
     const PRIM_TY: PrimTy;
 }
 
-pub trait CastInner<T: Sized>: Sized {
-    fn cast_inner(self) -> T;
+pub trait CastFrom<T: Sized>: Sized {
+    fn cast_from(from: T) -> Self;
 }
 
-impl<U: IsPrimTy, T: IsPrimTy + From<U>> CastInner<T> for U {
-    fn cast_inner(self) -> T {
-        T::from(self)
+impl<U: IsPrimTy, T: IsPrimTy + From<U>> CastFrom<U> for T {
+    fn cast_from(from: U) -> Self {
+        Self::from(from)
     }
 }
 
-pub trait Cast {
+pub trait Cast: Sized {
     #[blackbox(Cast)]
     fn cast<T>(self) -> T
     where
-        Self: CastInner<T>,
+        T: Sized + CastFrom<Self>,
     {
-        CastInner::<T>::cast_inner(self)
+        CastFrom::cast_from(self)
     }
 }
 

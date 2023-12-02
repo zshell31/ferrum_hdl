@@ -7,12 +7,11 @@ use std::{
 };
 
 use derive_where::derive_where;
+pub use fhdl_macros::SignalValue;
 use fhdl_macros::{blackbox, blackbox_ty};
-use seq_macro::seq;
 
 use crate::{
     bit::Bit,
-    cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
     simulation::{SimCtx, Simulate},
@@ -21,30 +20,6 @@ use crate::{
 pub trait SignalValue: Debug + Clone + 'static {}
 
 impl SignalValue for bool {}
-
-macro_rules! impl_signal_value_for_tuples {
-    (
-        $n: literal
-    ) => {
-        seq!(N in 0..$n {
-            impl< #( T~N: SignalValue, )* > SignalValue for ( #( T~N, )* ) {}
-
-        });
-     };
-}
-
-impl_signal_value_for_tuples!(1);
-impl_signal_value_for_tuples!(2);
-impl_signal_value_for_tuples!(3);
-impl_signal_value_for_tuples!(4);
-impl_signal_value_for_tuples!(5);
-impl_signal_value_for_tuples!(6);
-impl_signal_value_for_tuples!(7);
-impl_signal_value_for_tuples!(8);
-impl_signal_value_for_tuples!(9);
-impl_signal_value_for_tuples!(10);
-impl_signal_value_for_tuples!(11);
-impl_signal_value_for_tuples!(12);
 
 #[derive_where(Debug, Clone)]
 #[blackbox_ty(Signal)]
@@ -483,162 +458,29 @@ pub trait Bundle {
     fn bundle(self) -> Self::Bundled;
 }
 
-macro_rules! impl_bundle_for_tuples {
-    (
-        $n:literal
-    ) => {
-        seq!(N in 0..$n {
-            impl<D: ClockDomain, #( T~N: SignalValue, )*> Unbundle for Signal<D, ( #(T~N,)* )> {
-                type Unbundled = ( #( Signal<D, T~N>, )* );
-
-                fn unbundle(self) -> Self::Unbundled {
-                    (
-                        #(
-                            self.clone().map(|values| values.N),
-                        )*
-
-                    )
-                }
-            }
-
-            impl<D: ClockDomain, #( T~N: SignalValue, )*> Bundle for ( #( Signal<D, T~N>, )* ) {
-                type Bundled = Signal<D, ( #(T~N,)* )>;
-                fn bundle(mut self) -> Self::Bundled {
-                    Signal::new(move |ctx| (
-                        #(
-                            self.N.next(ctx),
-                        )*
-                    ))
-                }
-            }
-
-
-            impl<D: ClockDomain, #( T~N: SignalValue, )*> Simulate for ( #( Signal<D, T~N>, )* ) {
-                type Value = ( #( T~N, )* );
-
-                fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
-                    (
-                        #(
-                            self.N.next(ctx),
-                        )*
-                    )
-                }
-            }
-
-            impl<#( U~N, T~N: CastInner<U~N>, )*> CastInner<( #( U~N, )* )> for ( #( T~N, )* ) {
-                fn cast_inner(self) -> ( #( U~N, )* ) {
-                    (
-                        #(
-                            self.N.cast_inner(),
-                        )*
-                    )
-                }
-            }
-        });
-
-
-    };
-}
-
-impl_bundle_for_tuples!(1);
-impl_bundle_for_tuples!(2);
-impl_bundle_for_tuples!(3);
-impl_bundle_for_tuples!(4);
-impl_bundle_for_tuples!(5);
-impl_bundle_for_tuples!(6);
-impl_bundle_for_tuples!(7);
-impl_bundle_for_tuples!(8);
-impl_bundle_for_tuples!(9);
-impl_bundle_for_tuples!(10);
-impl_bundle_for_tuples!(11);
-impl_bundle_for_tuples!(12);
-
 #[cfg(test)]
 mod tests {
     use super::{SignalIterExt, *};
-    use crate::{cast::Cast, unsigned::Unsigned};
-
-    struct TestSystem;
-
-    impl ClockDomain for TestSystem {
-        const FREQ: usize = 4;
-    }
+    use crate::{domain::TestSystem4, unsigned::Unsigned};
 
     #[test]
     fn test_iter() {
         let s = [0_u8, 4, 3, 1, 2]
             .into_iter()
             .map(Unsigned::<8>::from)
-            .into_signal::<TestSystem>();
+            .into_signal::<TestSystem4>();
 
         assert_eq!(s.simulate().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
     }
 
     #[test]
     fn test_reg() {
-        let clk = Clock::<TestSystem>::default();
+        let clk = Clock::<TestSystem4>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1_u8);
+        let r = reg::<TestSystem4, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1_u8);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
         ]);
-    }
-
-    #[test]
-    fn unbundle() {
-        let s: Signal<TestSystem, (Unsigned<4>, Bit)> = [
-            (0_u8, false),
-            (1, true),
-            (2, true),
-            (3, false),
-            (4, true),
-            (5, false),
-        ]
-        .into_iter()
-        .map(Cast::cast)
-        .into_signal();
-
-        let res = s.unbundle();
-
-        assert_eq!(
-            res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
-            [
-                (0_u8, false),
-                (1, true),
-                (2, true),
-                (3, false),
-                (4, true),
-                (5, false),
-            ]
-        );
-    }
-
-    #[test]
-    fn bundle() {
-        let s: (Signal<TestSystem, Unsigned<4>>, Signal<TestSystem, Bit>) = (
-            [0_u8, 1, 2, 3, 4, 5]
-                .into_iter()
-                .map(Cast::cast)
-                .into_signal(),
-            [false, true, true, false, true, false]
-                .into_iter()
-                .map(Cast::cast)
-                .into_signal(),
-        );
-
-        let res = s.bundle();
-
-        assert_eq!(
-            res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
-            [
-                (0_u8, false),
-                (1, true),
-                (2, true),
-                (3, false),
-                (4, true),
-                (5, false),
-            ]
-        );
     }
 }

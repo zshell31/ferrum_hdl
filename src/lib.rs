@@ -6,8 +6,6 @@
 #![feature(register_tool)]
 #![register_tool(fhdl_tool)]
 
-pub use fhdl_macros::p;
-
 pub mod array;
 pub mod bit;
 pub mod bitpack;
@@ -19,4 +17,5 @@ pub mod domain;
 pub mod signal;
 pub mod signal_fn;
 pub mod simulation;
+mod tuples;
 pub mod unsigned;

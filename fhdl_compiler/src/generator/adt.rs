@@ -47,10 +47,7 @@ impl<'tcx> Generator<'tcx> {
 
         let tys = unsafe { with_arena().alloc_from_res_iter(fields)? };
 
-        Ok(SignalTy::new(
-            None,
-            SignalTyKind::Struct(StructTy::new(tys)),
-        ))
+        Ok(SignalTy::new(SignalTyKind::Struct(StructTy::new(tys))))
     }
 
     pub fn eval_adt_ty(
@@ -78,10 +75,7 @@ impl<'tcx> Generator<'tcx> {
                     ))?
                 };
 
-                Ok(SignalTy::new(
-                    None,
-                    SignalTyKind::Enum(EnumTy::new(variants)),
-                ))
+                Ok(SignalTy::new(SignalTyKind::Enum(EnumTy::new(variants))))
             }
             _ => {
                 println!("{:#?}", ty.kind());
@@ -119,7 +113,7 @@ impl<'tcx> Generator<'tcx> {
         };
 
         Ok(
-            Group::new_with_item_ids(SignalTy::new(None, SignalTyKind::Array(ty)), group)
+            Group::new_with_item_ids(SignalTy::new(SignalTyKind::Array(ty)), group)
                 .into(),
         )
     }
@@ -136,11 +130,8 @@ impl<'tcx> Generator<'tcx> {
         };
 
         Ok(
-            Group::new_with_item_ids(
-                SignalTy::new(None, SignalTyKind::Struct(ty)),
-                group,
-            )
-            .into(),
+            Group::new_with_item_ids(SignalTy::new(SignalTyKind::Struct(ty)), group)
+                .into(),
         )
     }
 }

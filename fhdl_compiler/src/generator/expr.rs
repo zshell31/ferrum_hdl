@@ -27,7 +27,7 @@ use rustc_middle::ty::{
 use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
 
-use super::{arg_matcher::ArgMatcher, EvalContext, Generator};
+use super::{EvalContext, Generator};
 use crate::{
     blackbox::{cast::Conversion, lit},
     error::{Error, SpanError, SpanErrorKind},
@@ -492,14 +492,14 @@ impl<'tcx> Generator<'tcx> {
                 _,
             ) => self.index(expr, *ind, ctx),
             ExprKind::Lit(lit) => {
-                let prim_ty = self.find_sig_ty(expr_ty, ctx, lit.span)?.node_ty();
-                let value = lit::eval_lit(prim_ty, lit)?;
+                let node_ty = self.find_sig_ty(expr_ty, ctx, lit.span)?.node_ty();
+                let value = lit::eval_lit(node_ty, lit)?;
 
                 Ok(self
                     .netlist
                     .add_and_get_out(
                         ctx.module_id,
-                        Const::new(prim_ty, value.into(), None),
+                        Const::new(node_ty, value.into(), None),
                     )
                     .into())
             }
@@ -610,8 +610,7 @@ impl<'tcx> Generator<'tcx> {
                     .typeck(expr.hir_id.owner)
                     .type_dependent_def_id(expr.hir_id)
                     .unwrap();
-                // TODO: how to define generic args for method call
-                let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
+                let generic_args = self.extract_generic_args(expr.hir_id, ctx);
 
                 match self.find_local_impl_id(fn_did, generic_args) {
                     Some((impl_id, generic_args)) => self.eval_impl_fn_call(
@@ -666,6 +665,9 @@ impl<'tcx> Generator<'tcx> {
                                 sig_ty,
                             ));
                         }
+                    } else {
+                        let blackbox = self.find_blackbox(*def_id, *span)?;
+                        return blackbox.eval_expr(self, expr, ctx);
                     }
 
                     Err(SpanError::new(SpanErrorKind::NotSynthExpr, *span).into())
@@ -729,14 +731,7 @@ impl<'tcx> Generator<'tcx> {
                         .opt_def_id();
                     if let Some(def_id) = def_id {
                         if let DefKind::AssocConst = self.tcx.def_kind(def_id) {
-                            // let rel_ty = ctx.instantiate(
-                            //     self.tcx,
-                            //     self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
-                            // );
-                            // let rel_ty = ctx.instantiate(self.tcx, rel_ty);
-                            // let args = self.tcx.mk_args(&[ty.into()]);
-                            let args =
-                                self.extract_generic_args(def_id, expr.hir_id, ctx)?;
+                            let args = self.extract_generic_args(expr.hir_id, ctx);
 
                             if let Some(const_val) = self.eval_const_val(
                                 def_id,
@@ -823,27 +818,25 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn extract_generic_args(
         &self,
-        did: DefId,
         hir_id: HirId,
         ctx: &EvalContext<'tcx>,
-    ) -> Result<GenericArgsRef<'tcx>, Error> {
-        let arg_matcher = ArgMatcher::new(self.tcx);
+    ) -> GenericArgsRef<'tcx> {
+        // let arg_matcher = ArgMatcher::new(self.tcx);
 
-        let node_args =
-            self.subst_with(self.tcx.typeck(hir_id.owner).node_args(hir_id), ctx);
+        self.subst_with(self.tcx.typeck(hir_id.owner).node_args(hir_id), ctx)
 
-        match utils::subst(self.tcx.type_of(did).instantiate_identity()) {
-            Some(generic_args) => arg_matcher
-                .extract_params(did, node_args, generic_args)
-                .ok_or_else(|| {
-                    SpanError::new(
-                        SpanErrorKind::CannotExtractGenericArgs,
-                        self.tcx.hir().span(hir_id),
-                    )
-                    .into()
-                }),
-            None => Ok(node_args),
-        }
+        // let evaluated = match utils::subst(self.tcx.type_of(did).instantiate_identity()) {
+        //     Some(generic_args) => arg_matcher
+        //         .extract_params(did, node_args, generic_args)
+        //         .ok_or_else(|| {
+        //             SpanError::new(
+        //                 SpanErrorKind::CannotExtractGenericArgs,
+        //                 self.tcx.hir().span(hir_id),
+        //             )
+        //             .into()
+        //         }),
+        //     None => Ok(node_args),
+        // };
     }
 
     pub fn find_local_impl_id(
@@ -901,7 +894,6 @@ impl<'tcx> Generator<'tcx> {
 
         let sig_ty = enum_ty.variant(variant_idx);
         let struct_ty = sig_ty
-            .inner
             .opt_struct_ty()
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedStructType, span))?;
 
@@ -948,7 +940,7 @@ impl<'tcx> Generator<'tcx> {
                 let item_id = if prim_ty != subexpr_ty {
                     Conversion::convert_as_prim_ty(
                         node,
-                        SignalTy::new(None, subexpr_ty.into()),
+                        SignalTy::new(subexpr_ty.into()),
                         self,
                         span,
                     )?

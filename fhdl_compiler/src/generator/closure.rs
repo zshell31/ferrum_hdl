@@ -77,8 +77,7 @@ impl<'tcx> Generator<'tcx> {
                         expr.span,
                     )? {
                         Some(closure) => Ok(closure),
-                        None => conversion
-                            .convert(&blackbox, self, expr, ctx, from, output_ty),
+                        None => conversion.convert(self, expr, ctx, from, output_ty),
                     };
                 };
             }

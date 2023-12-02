@@ -7,7 +7,7 @@ use fhdl_netlist::{
 };
 use rustc_hir::Expr;
 
-use super::{Blackbox, EvalExpr};
+use super::EvalExpr;
 use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
 pub fn bit_vec_trans<'tcx>(
@@ -80,7 +80,6 @@ pub struct BitVecShrink;
 impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -109,7 +108,6 @@ pub struct BitVecSlice;
 impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -142,7 +140,6 @@ pub struct BitVecUnpack;
 impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

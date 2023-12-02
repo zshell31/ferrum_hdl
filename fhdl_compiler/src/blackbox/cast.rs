@@ -14,7 +14,7 @@ use rustc_hir::{Expr, HirId};
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::Span;
 
-use super::{Blackbox, EvalExpr};
+use super::EvalExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -69,7 +69,6 @@ impl Conversion {
 
     pub fn convert<'tcx>(
         &self,
-        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -85,7 +84,9 @@ impl Conversion {
             (
                 SignalTyKind::Node(NodeTy::Unsigned(_)),
                 SignalTyKind::Struct(struct_ty),
-            ) if to_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
+            ) if generator.is_unsigned_short(&to_ty)
+                && from_ty.width() == to_ty.width() =>
+            {
                 assert_convert::<Unsigned<1>, u<1>>();
                 generator
                     .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
@@ -93,7 +94,9 @@ impl Conversion {
             (
                 SignalTyKind::Struct(_),
                 SignalTyKind::Node(to_ty @ NodeTy::Unsigned(_)),
-            ) if from_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
+            ) if generator.is_unsigned_short(&from_ty)
+                && from_ty.width() == to_ty.width() =>
+            {
                 assert_convert::<u<1>, Unsigned<1>>();
 
                 let from = from.group().item_ids()[0];
@@ -102,7 +105,7 @@ impl Conversion {
             (SignalTyKind::Array(from_ty), SignalTyKind::Array(to_ty))
                 if from_ty.count() == to_ty.count() =>
             {
-                self.cast_array(blackbox, generator, expr, from, to_ty, ctx)
+                self.cast_array(generator, expr, from, to_ty, ctx)
             }
             _ => Self::convert_as_prim_ty(from, to_ty, generator, expr.span),
         }
@@ -121,7 +124,6 @@ impl Conversion {
 
     fn cast_array<'tcx>(
         &self,
-        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
         from: ItemId,
@@ -129,8 +131,7 @@ impl Conversion {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let fn_item = utils::expected_call(expr)?.fn_item;
-        let fn_did = blackbox.fn_did;
-        let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
+        let generic_args = generator.extract_generic_args(fn_item, ctx);
         let generic_args =
             generator
                 .tcx
@@ -169,7 +170,7 @@ impl Conversion {
             None => {
                 let to_item_ty = *to_ty.item_ty();
                 generator.make_array_group(to_ty, from, |generator, from| {
-                    self.convert(blackbox, generator, expr, ctx, *from, to_item_ty)
+                    self.convert(generator, expr, ctx, *from, to_item_ty)
                 })
             }
         }
@@ -177,15 +178,13 @@ impl Conversion {
 
     fn try_local_cast<'tcx>(
         &self,
-        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         fn_item: HirId,
         from: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<Option<ItemId>, Error> {
-        let fn_did = blackbox.fn_did;
-        let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
+        let generic_args = generator.extract_generic_args(fn_item, ctx);
 
         self.try_local_cast_(generator, ctx, generic_args, from.into(), span)
     }
@@ -280,14 +279,13 @@ fn assert_convert<F, T: CastFrom<F>>() {}
 impl<'tcx> EvalExpr<'tcx> for Conversion {
     fn eval_expr(
         &self,
-        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as fn_item with from);
 
-        match self.try_local_cast(blackbox, generator, fn_item, from, ctx, expr.span)? {
+        match self.try_local_cast(generator, fn_item, from, ctx, expr.span)? {
             Some(item_id) => Ok(item_id),
             None => {
                 let to_ty = generator.find_sig_ty(
@@ -298,7 +296,7 @@ impl<'tcx> EvalExpr<'tcx> for Conversion {
 
                 let from = generator.eval_expr(from, ctx)?;
 
-                self.convert(blackbox, generator, expr, ctx, from, to_ty)
+                self.convert(generator, expr, ctx, from, to_ty)
             }
         }
     }

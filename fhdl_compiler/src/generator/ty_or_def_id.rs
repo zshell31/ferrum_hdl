@@ -10,7 +10,7 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
     Ty as HirTy,
 };
-use rustc_middle::ty::{Ty, TyCtxt};
+use rustc_middle::ty::{AliasKind, EarlyBinder, ParamEnv, Ty, TyCtxt};
 use rustc_span::Span;
 use rustc_type_ir::{
     TyKind::{self},
@@ -123,7 +123,7 @@ impl<'tcx> TyOrDefIdWithGen<'tcx> {
 }
 
 impl<'tcx> Generator<'tcx> {
-    pub fn find_sig_ty<T: IsTyOrDefId<'tcx>>(
+    pub fn find_sig_ty<T: IsTyOrDefId<'tcx> + Debug>(
         &mut self,
         key: T,
         ctx: &EvalContext<'tcx>,
@@ -132,23 +132,7 @@ impl<'tcx> Generator<'tcx> {
         self.find_sig_ty_info(key, ctx, span).map(|res| res.sig_ty)
     }
 
-    // fn is_local_key(&self, key: TyOrDefIdWithGen<'tcx>) -> bool {
-    //     if !self.crates.is_local_ferrum_hdl() {
-    //         key.is_local()
-    //             || key
-    //                 .def_id()
-    //                 .map(|def_id| self.is_synth_ty(def_id))
-    //                 .unwrap_or_default()
-    //     } else {
-    //         key.is_local()
-    //             && key
-    //                 .def_id()
-    //                 .map(|def_id| self.is_synth_ty(def_id))
-    //                 .unwrap_or_default()
-    //     }
-    // }
-
-    pub fn find_sig_ty_info<T: IsTyOrDefId<'tcx>>(
+    pub fn find_sig_ty_info<T: IsTyOrDefId<'tcx> + Debug>(
         &mut self,
         key: T,
         ctx: &EvalContext<'tcx>,
@@ -169,41 +153,55 @@ impl<'tcx> Generator<'tcx> {
                             unsafe { with_arena().alloc(key.opt_generic_ty(0).unwrap()) };
                         let cons = key.opt_generic_const(1).unwrap();
 
-                        sig_ty = Some(SignalTy::mk_array(None, cons.value(), *ty));
+                        sig_ty = Some(SignalTy::mk_array(cons.value(), *ty));
                     }
                     TyKind::Bool => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::Bool.into()));
+                        sig_ty = Some(SignalTy::new(NodeTy::Bool.into()));
                     }
                     TyKind::Uint(UintTy::U8) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::U8.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::U8.into()))
                     }
                     TyKind::Uint(UintTy::U16) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::U16.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::U16.into()))
                     }
                     TyKind::Uint(UintTy::U32) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::U32.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::U32.into()))
                     }
                     TyKind::Uint(UintTy::U64) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::U64.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::U64.into()))
                     }
                     TyKind::Uint(UintTy::U128) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::U128.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::U128.into()))
                     }
                     TyKind::Uint(UintTy::Usize) => {
-                        sig_ty = Some(SignalTy::new(None, NodeTy::Usize.into()))
+                        sig_ty = Some(SignalTy::new(NodeTy::Usize.into()))
                     }
                     TyKind::Tuple(ty) => {
-                        sig_ty = Some(SignalTy::new(
-                            None,
-                            SignalTyKind::Struct(
-                                self.make_tuple_ty(ty.iter(), |generator, ty| {
-                                    generator.find_sig_ty(ty, ctx, span)
-                                })?,
-                            ),
-                        ));
+                        sig_ty = Some(SignalTy::new(SignalTyKind::Struct(
+                            self.make_tuple_ty(ty.iter(), |generator, ty| {
+                                generator.find_sig_ty(ty, ctx, span)
+                            })?,
+                        )));
                     }
                     TyKind::Adt(adt, _) if !self.is_blackbox_ty(adt.did()) => {
                         sig_ty = Some(self.eval_adt_ty(ty, ctx, span)?);
+                    }
+                    TyKind::Alias(AliasKind::Projection, alias_ty) => {
+                        let alias_ty = self
+                            .tcx
+                            .try_instantiate_and_normalize_erasing_regions(
+                                ctx.instantiate(self.tcx, alias_ty.args),
+                                ParamEnv::reveal_all(),
+                                EarlyBinder::bind(*ty),
+                            )
+                            .map_err(|_| {
+                                SpanError::new(
+                                    SpanErrorKind::MissingNodeTy(ty.to_string()),
+                                    span,
+                                )
+                            })?;
+
+                        sig_ty = Some(self.find_sig_ty(alias_ty, ctx, span)?);
                     }
                     _ => {}
                 }
@@ -251,43 +249,52 @@ impl<'tcx> Generator<'tcx> {
                 }
             };
 
-            return Ok(match blackbox_ty {
+            let sig_ty = match blackbox_ty {
                 BlackboxTy::Signal => key.opt_generic_ty(1),
                 BlackboxTy::Wrapped => key.opt_generic_ty(1),
-                BlackboxTy::BitVec => key.opt_generic_const(0).map(|val| {
-                    SignalTy::new(Some(blackbox_ty), NodeTy::BitVec(val).into())
-                }),
-                BlackboxTy::Bit => {
-                    Some(SignalTy::new(Some(blackbox_ty), NodeTy::Bit.into()))
-                }
-                BlackboxTy::Clock => {
-                    Some(SignalTy::new(Some(blackbox_ty), NodeTy::Clock.into()))
-                }
+                BlackboxTy::BitVec => key
+                    .opt_generic_const(0)
+                    .map(|val| SignalTy::new(NodeTy::BitVec(val).into())),
+                BlackboxTy::Bit => Some(SignalTy::new(NodeTy::Bit.into())),
+                BlackboxTy::Clock => Some(SignalTy::new(NodeTy::Clock.into())),
                 BlackboxTy::Unsigned => {
                     let param = key.generic_const(0, span)?;
-                    Some(SignalTy::new(
-                        Some(blackbox_ty),
-                        NodeTy::Unsigned(param).into(),
-                    ))
+                    Some(SignalTy::new(NodeTy::Unsigned(param).into()))
                 }
                 BlackboxTy::UnsignedShort => {
                     let n = key.opt_generic_const(0).unwrap();
                     self.make_tuple_ty(iter::once(NodeTy::Unsigned(n)), |_, prim_ty| {
-                        Ok(SignalTy::new(None, prim_ty.into()))
+                        Ok(SignalTy::new(prim_ty.into()))
                     })
                     .ok()
-                    .map(|ty| SignalTy::new(Some(blackbox_ty), ty.into()))
+                    .map(|ty| SignalTy::new(ty.into()))
                 }
                 BlackboxTy::Array => {
                     let n = key.opt_generic_const(0).unwrap();
                     let ty = key.opt_generic_ty(1).unwrap();
 
-                    Some(SignalTy::mk_array(Some(blackbox_ty), n.value(), ty))
+                    Some(SignalTy::mk_array(n.value(), ty))
                 }
-            });
+            };
+
+            if let Some(sig_ty) = &sig_ty {
+                self.blackbox_ty.insert(*sig_ty, blackbox_ty);
+            }
+
+            return Ok(sig_ty);
         }
 
         Ok(None)
+    }
+
+    pub fn blackbox_ty(&self, sig_ty: &SignalTy) -> Option<BlackboxTy> {
+        self.blackbox_ty.get(sig_ty).copied()
+    }
+
+    pub fn is_unsigned_short(&self, sig_ty: &SignalTy) -> bool {
+        self.blackbox_ty(sig_ty)
+            .filter(|blackbox_ty| blackbox_ty.is_unsigned_short())
+            .is_some()
     }
 
     pub fn find_sig_ty_for_hir_ty(
@@ -309,7 +316,11 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<TyOrDefIdWithGen<'tcx>, Error> {
         let generics = match ty_or_def_id {
             TyOrDefId::Ty(ty) => Generics::from_ty(ty, self, ctx, span)?,
-            _ => None,
+            TyOrDefId::DefId(did) => {
+                // TODO: check if did referes to type
+                let ty = self.type_of(did, ctx);
+                Generics::from_ty(ty, self, ctx, span)?
+            }
         };
 
         Ok(TyOrDefIdWithGen {
@@ -340,7 +351,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
         match item_id {
             ItemId::Node(node_out_id) => {
-                SignalTy::new(None, self.netlist[node_out_id].ty.into())
+                SignalTy::new(self.netlist[node_out_id].ty.into())
             }
             ItemId::Group(group) => group.sig_ty,
         }

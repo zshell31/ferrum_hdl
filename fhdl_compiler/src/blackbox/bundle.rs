@@ -1,7 +1,7 @@
 use fhdl_netlist::group::ItemId;
 use rustc_hir::Expr;
 
-use super::{Blackbox, EvalExpr};
+use super::EvalExpr;
 use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
 pub struct Unbundle;
@@ -9,7 +9,6 @@ pub struct Unbundle;
 impl<'tcx> EvalExpr<'tcx> for Unbundle {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -25,7 +24,6 @@ pub struct Bundle;
 impl<'tcx> EvalExpr<'tcx> for Bundle {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

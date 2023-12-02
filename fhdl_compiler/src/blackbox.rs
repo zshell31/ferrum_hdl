@@ -18,7 +18,6 @@ use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 pub trait EvalExpr<'tcx> {
     fn eval_expr(
         &self,
-        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -44,7 +43,7 @@ macro_rules! eval_expr {
             ) -> Result<ItemId, Error> {
                 match self.kind {
                     $(
-                        BlackboxKind::$blackbox_kind => $eval.eval_expr(self, generator, expr, ctx),
+                        BlackboxKind::$blackbox_kind => $eval.eval_expr(generator, expr, ctx),
                     )+
                 }
             }

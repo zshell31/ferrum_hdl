@@ -17,7 +17,7 @@ use crate::{
 #[repr(transparent)]
 pub struct Bit(pub bool);
 
-pub fn bit_value(value: bool) -> u128 {
+pub const fn bit_value(value: bool) -> u128 {
     match value {
         false => 0,
         true => 1,

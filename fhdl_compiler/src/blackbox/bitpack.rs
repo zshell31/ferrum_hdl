@@ -5,7 +5,7 @@ use fhdl_netlist::{
 };
 use rustc_hir::Expr;
 
-use super::{bitvec, Blackbox, EvalExpr};
+use super::{bitvec, EvalExpr};
 use crate::{
     error::Error, eval_context::EvalContext, generator::Generator, scopes::SymIdent,
     utils,
@@ -16,7 +16,6 @@ pub struct BitPackPack;
 impl<'tcx> EvalExpr<'tcx> for BitPackPack {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -33,7 +32,6 @@ pub struct BitPackRepack;
 impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -55,7 +53,6 @@ pub struct BitPackMsb;
 impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -72,7 +69,7 @@ impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
                     ctx.module_id,
                     Splitter::new(bit_vec, [(ty, SymIdent::Msb)], None, true),
                 ),
-                SignalTy::new(None, ty.into()),
+                SignalTy::new(ty.into()),
             ))
         })
     }

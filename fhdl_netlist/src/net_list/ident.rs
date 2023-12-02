@@ -74,7 +74,7 @@ macro_rules! composite_type {
 
         impl Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "{}({}, {})", stringify!($name), self.$get_base().idx(), self.$get_idx())
+                write!(f, "{}({:?}, {})", stringify!($name), self.$get_base(), self.$get_idx())
             }
         }
 

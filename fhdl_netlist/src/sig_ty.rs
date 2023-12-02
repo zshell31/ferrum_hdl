@@ -5,7 +5,6 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use fhdl_blackbox::BlackboxTy;
 use fhdl_const_func::clog2_len;
 use rustc_macros::{Decodable, Encodable};
 
@@ -678,7 +677,6 @@ impl<R: Resolver> Resolve<R> for SignalTyKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct SignalTy {
-    pub blackbox: Option<BlackboxTy>,
     pub kind: SignalTyKind,
 }
 
@@ -686,26 +684,19 @@ impl !Sync for SignalTy {}
 impl !Send for SignalTy {}
 
 impl SignalTy {
-    pub fn new(blackbox: Option<BlackboxTy>, kind: SignalTyKind) -> Self {
-        Self { blackbox, kind }
+    pub fn new(kind: SignalTyKind) -> Self {
+        Self { kind }
     }
-    pub fn mk_array(blackbox: Option<BlackboxTy>, n: u128, sig_ty: SignalTy) -> Self {
-        Self::new(
-            blackbox,
-            SignalTyKind::Array(ArrayTy::new(n, unsafe { with_arena().alloc(sig_ty) })),
-        )
+    pub fn mk_array(n: u128, sig_ty: SignalTy) -> Self {
+        Self::new(SignalTyKind::Array(ArrayTy::new(n, unsafe {
+            with_arena().alloc(sig_ty)
+        })))
     }
 
-    pub fn mk_struct(
-        blackbox: Option<BlackboxTy>,
-        iter: impl IntoIterator<Item = Named<SignalTy>>,
-    ) -> Self {
-        Self::new(
-            blackbox,
-            SignalTyKind::Struct(StructTy::new(unsafe {
-                with_arena().alloc_from_iter(iter)
-            })),
-        )
+    pub fn mk_struct(iter: impl IntoIterator<Item = Named<SignalTy>>) -> Self {
+        Self::new(SignalTyKind::Struct(StructTy::new(unsafe {
+            with_arena().alloc_from_iter(iter)
+        })))
     }
 
     pub fn opt_node_ty(&self) -> Option<NodeTy> {
@@ -775,12 +766,6 @@ impl SignalTy {
         }
     }
 
-    pub fn is_unsigned_short(&self) -> bool {
-        self.blackbox
-            .map(|blackbox| blackbox.is_unsigned_short())
-            .unwrap_or_default()
-    }
-
     pub fn is_generic(&self) -> bool {
         match self.kind {
             SignalTyKind::Node(ty) => ty.is_generic(),
@@ -793,6 +778,6 @@ impl SignalTy {
 
 impl<R: Resolver> Resolve<R> for SignalTy {
     fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self::new(self.blackbox, self.kind.resolve(resolver)?))
+        Ok(Self::new(self.kind.resolve(resolver)?))
     }
 }

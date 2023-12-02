@@ -54,7 +54,7 @@ impl Module {
         }
     }
 
-    pub(super) fn next_node_id(&self) -> NodeId {
+    pub(super) fn next_node_id(&mut self) -> NodeId {
         NodeId::make(self.module_id, self.list.next_idx())
     }
 

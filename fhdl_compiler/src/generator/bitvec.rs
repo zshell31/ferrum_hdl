@@ -89,14 +89,12 @@ impl<'tcx> Generator<'tcx> {
                 let outputs = if ty.count() == 1 {
                     smallvec![node_out_id]
                 } else {
-                    let item_width = ty.item_width();
-
                     let mut n = 0;
                     let splitter = Splitter::new(
                         node_out_id,
                         ty.tys().map(|_| {
                             n += 1;
-                            (NodeTy::BitVec(item_width), None)
+                            (ty.item_ty().to_bitvec(), None)
                         }),
                         None,
                         true,
@@ -130,7 +128,7 @@ impl<'tcx> Generator<'tcx> {
                         node_out_id,
                         ty.tys().iter().map(|ty| {
                             n += 1;
-                            (NodeTy::BitVec(ty.inner.width()), None)
+                            (ty.inner.to_bitvec(), None)
                         }),
                         None,
                         true,

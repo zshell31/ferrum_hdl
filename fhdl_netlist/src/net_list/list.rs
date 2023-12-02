@@ -63,8 +63,10 @@ impl<I: Idx> List<I> {
     }
 
     #[inline(always)]
-    pub(crate) fn next_idx(&self) -> I {
-        I::new(self.last_idx)
+    pub(crate) fn next_idx(&mut self) -> I {
+        let idx = I::new(self.last_idx);
+        self.last_idx += 1;
+        idx
     }
 
     pub(crate) fn add<S: ListStorage<I>>(&mut self, storage: &mut S, idx: I) {
@@ -76,8 +78,6 @@ impl<I: Idx> List<I> {
             self.head = Some(idx);
             self.tail = Some(idx);
         }
-
-        self.last_idx += 1;
     }
 
     pub(crate) fn insert_head<S: ListStorage<I>>(&mut self, storage: &mut S, idx: I) {
@@ -89,8 +89,6 @@ impl<I: Idx> List<I> {
             self.head = Some(idx);
             self.tail = Some(idx);
         }
-
-        self.last_idx += 1;
     }
 
     pub(crate) fn insert<S: ListStorage<I>>(
@@ -106,7 +104,6 @@ impl<I: Idx> List<I> {
                     Some(next_idx) => {
                         storage.link(prev_idx, idx);
                         storage.link(idx, next_idx);
-                        self.last_idx += 1;
                     }
                     None => {
                         assert_eq!(self.tail.unwrap(), prev_idx);

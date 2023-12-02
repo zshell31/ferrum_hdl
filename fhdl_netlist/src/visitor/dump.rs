@@ -25,7 +25,6 @@ impl<'n> Visitor for Dump<'n> {
             if self.skip && module.is_skip {
                 continue;
             }
-            module.dump(module_id);
             self.visit_module(module_id);
         }
 
@@ -33,6 +32,9 @@ impl<'n> Visitor for Dump<'n> {
     }
 
     fn visit_module(&mut self, module_id: ModuleId) {
+        let module = &self.net_list[module_id];
+        module.dump(module_id);
+
         let tab: &'static str = "        ";
         let mut cursor = self.net_list.mod_cursor(module_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {

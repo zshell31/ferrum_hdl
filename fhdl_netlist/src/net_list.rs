@@ -239,12 +239,12 @@ impl NetList {
         &mut self,
         mod_id: ModuleId,
         prev_node_id: Option<NodeId>,
+        node_id: NodeId,
         node: N,
-    ) -> NodeId {
+    ) {
         node.validate(mod_id, self);
 
         let module = &mut self.modules[mod_id];
-        let node_id = module.next_node_id();
         let node = Node::new(node_id, node.into());
 
         self.nodes.insert(node_id, node);
@@ -255,8 +255,6 @@ impl NetList {
         );
 
         self.add_links(node_id);
-
-        node_id
     }
 
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
@@ -471,6 +469,8 @@ impl NetList {
             }
         }
 
+        // At first, create the map from source node ids to target node ids
+        // because some nodes like DFF may refer to nodes that are placed forward in the linked list.
         let mut cursor = self.mod_cursor(source);
         while let Some(node_id) = self.next(&mut cursor) {
             if self.nodes[node_id].is_input() {
@@ -480,25 +480,28 @@ impl NetList {
                 continue;
             }
 
-            let new_node = self.nodes[node_id].kind().clone();
-            let new_node_id = self.insert(target, prev_id, new_node);
-            prev_id = Some(new_node_id);
+            let new_node_id = self.modules[target].next_node_id();
             map.insert(node_id, Item::NodeId(new_node_id));
         }
 
-        let mut cursor = self.cursor(target, res);
+        // Add a new node to the target for the each node from the source.
+        // Also rewrite inputs with new node ids.
+        let mut cursor = self.mod_cursor(source);
         while let Some(node_id) = self.next(&mut cursor) {
-            if node_id == mod_inst_node_id {
-                break;
-            }
-            let node = &mut self.nodes[node_id];
-            for mut input in node.inputs_mut() {
-                **input = get_node_out_id(&map, NodeOutId::make(source, **input)).into();
-            }
+            if let Item::NodeId(new_node_id) = map.get(&node_id).unwrap() {
+                let mut new_node = self.nodes[node_id].kind().clone();
 
-            self.add_links(node_id);
+                for (_, input) in InOut::<NodeOutIdx>::items_mut(new_node.inputs_mut()) {
+                    *input =
+                        get_node_out_id(&map, NodeOutId::make(source, *input)).into();
+                }
+
+                self.insert(target, prev_id, *new_node_id, new_node);
+                prev_id = Some(*new_node_id);
+            }
         }
 
+        // Reconnect nodes referring to ModInst to nodes that are outputs for the source module.
         let len = self.nodes[mod_inst_node_id].outputs_len();
         for ind in 0 .. len {
             let input = self.modules[source].output_by_ind(ind);

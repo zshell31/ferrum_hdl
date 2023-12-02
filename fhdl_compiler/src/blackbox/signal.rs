@@ -6,7 +6,7 @@ use fhdl_netlist::{
 use rustc_hir::Expr;
 use rustc_span::Span;
 
-use super::{Blackbox, EvalExpr};
+use super::EvalExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -36,7 +36,6 @@ impl SignalReg {
 impl<'tcx> EvalExpr<'tcx> for SignalReg {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -103,7 +102,6 @@ pub struct SignalLift;
 impl<'tcx> EvalExpr<'tcx> for SignalLift {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -119,7 +117,6 @@ pub struct SignalMap;
 impl<'tcx> EvalExpr<'tcx> for SignalMap {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -139,7 +136,6 @@ pub struct SignalAndThen;
 impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -159,7 +155,6 @@ pub struct SignalApply2;
 impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -180,7 +175,6 @@ pub struct SignalValue;
 impl<'tcx> EvalExpr<'tcx> for SignalValue {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -196,7 +190,6 @@ pub struct SignalWatch;
 impl<'tcx> EvalExpr<'tcx> for SignalWatch {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -214,7 +207,6 @@ pub struct SignalOp {
 impl<'tcx> EvalExpr<'tcx> for SignalOp {
     fn eval_expr(
         &self,
-        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

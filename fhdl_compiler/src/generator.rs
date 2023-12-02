@@ -1,5 +1,5 @@
 pub mod adt;
-pub mod arg_matcher;
+// pub mod arg_matcher;
 pub mod attr;
 pub mod bitvec;
 pub mod closure;
@@ -15,7 +15,7 @@ use std::{
 };
 
 use cargo_toml::Manifest;
-use fhdl_blackbox::BlackboxKind;
+use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
@@ -268,6 +268,7 @@ pub struct Generator<'tcx> {
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
+    blackbox_ty: FxHashMap<SignalTy, BlackboxTy>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     metadata: Metadata<'tcx>,
@@ -292,6 +293,7 @@ impl<'tcx> Generator<'tcx> {
             crates,
             blackbox: Default::default(),
             sig_ty: Default::default(),
+            blackbox_ty: Default::default(),
             local_trait_impls: Default::default(),
             evaluated_modules: Default::default(),
             metadata: Default::default(),
@@ -498,9 +500,10 @@ impl<'tcx> Generator<'tcx> {
             .ok_or_else(|| {
                 SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
             })?;
-        let ty = self.type_of(fn_did, ctx);
-        let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
-        self.eval_generic_args(ty, &ctx.with_generic_args(generic_args), expr.span)
+        let generic_args = self.extract_generic_args(expr.hir_id, ctx);
+        let ctx = ctx.with_generic_args(generic_args);
+        let ty = self.type_of(fn_did, &ctx);
+        self.eval_generic_args(ty, &ctx, expr.span)
     }
 
     pub fn eval_const_val(

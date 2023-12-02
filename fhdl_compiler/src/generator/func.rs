@@ -159,34 +159,36 @@ impl<'tcx> Generator<'tcx> {
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
-                let mut find_sig_ty = |def_id| {
-                    self.find_sig_ty(def_id, ctx, input.span).or_else(|_| {
-                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)
-                    })
-                };
+
                 let (is_self_param, sig_ty) = match path.res {
-                    Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
-                    Res::SelfTyAlias { alias_to, .. } => (true, find_sig_ty(alias_to)?),
+                    Res::Def(..) => (
+                        false,
+                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)?,
+                    ),
+                    Res::SelfTyAlias { .. } => (
+                        true,
+                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)?,
+                    ),
                     Res::PrimTy(HirPrimTy::Bool) => {
-                        (false, SignalTy::new(None, NodeTy::Bool.into()))
+                        (false, SignalTy::new(NodeTy::Bool.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U8)) => {
-                        (false, SignalTy::new(None, NodeTy::U8.into()))
+                        (false, SignalTy::new(NodeTy::U8.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U16)) => {
-                        (false, SignalTy::new(None, NodeTy::U16.into()))
+                        (false, SignalTy::new(NodeTy::U16.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U32)) => {
-                        (false, SignalTy::new(None, NodeTy::U32.into()))
+                        (false, SignalTy::new(NodeTy::U32.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U64)) => {
-                        (false, SignalTy::new(None, NodeTy::U64.into()))
+                        (false, SignalTy::new(NodeTy::U64.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U128)) => {
-                        (false, SignalTy::new(None, NodeTy::U128.into()))
+                        (false, SignalTy::new(NodeTy::U128.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::Usize)) => {
-                        (false, SignalTy::new(None, NodeTy::Usize.into()))
+                        (false, SignalTy::new(NodeTy::Usize.into()))
                     }
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };

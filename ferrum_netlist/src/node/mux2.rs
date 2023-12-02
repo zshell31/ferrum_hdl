@@ -1,13 +1,13 @@
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_list::NodeOutId, params::Inputs, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
-pub struct Mux2Node {
-    pub inputs: (NodeOutId, (NodeOutId, NodeOutId)),
+#[derive(Debug, Clone, Copy)]
+pub struct Mux2 {
+    pub inputs: Mux2Inputs,
     pub output: NodeOutput,
 }
 
-impl Mux2Node {
+impl Mux2 {
     pub fn new(
         ty: PrimTy,
         sel: NodeOutId,
@@ -16,24 +16,32 @@ impl Mux2Node {
         sym: Symbol,
     ) -> Self {
         Self {
-            inputs: (sel, (input1, input2)),
+            inputs: Mux2Inputs {
+                sel,
+                input1,
+                input2,
+            },
             output: NodeOutput::wire(ty, sym),
         }
     }
 }
 
-impl From<Mux2Node> for NodeKind {
-    fn from(node: Mux2Node) -> Self {
+impl From<Mux2> for NodeKind {
+    fn from(node: Mux2) -> Self {
         Self::Mux2(node)
     }
 }
 
-impl IsNode for Mux2Node {
-    type Inputs = (NodeOutId, (NodeOutId, NodeOutId));
+impl IsNode for Mux2 {
+    type Inputs = Mux2Inputs;
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
         &self.inputs
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -45,9 +53,20 @@ impl IsNode for Mux2Node {
     }
 }
 
-impl Inputs for (NodeOutId, (NodeOutId, NodeOutId)) {
+#[derive(Debug, Clone, Copy)]
+pub struct Mux2Inputs {
+    pub sel: NodeOutId,
+    pub input1: NodeOutId,
+    pub input2: NodeOutId,
+}
+
+impl Inputs for Mux2Inputs {
     fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        [self.0, self.1 .0, self.1 .1].into_iter()
+        [self.sel, self.input1, self.input2].into_iter()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
+        [&mut self.sel, &mut self.input1, &mut self.input2].into_iter()
     }
 
     fn len(&self) -> usize {

@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NetList, NodeId},
-    node::{InputNode, Pass},
+    node::{Input, IsNode, Pass},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
 };
@@ -281,8 +281,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         match sig_ty {
             SignalTy::Prim(prim_ty) => {
-                let input =
-                    InputNode::new(prim_ty, self.idents.for_module(module_id).tmp());
+                let input = Input::new(prim_ty, self.idents.for_module(module_id).tmp());
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
                 } else {
@@ -306,7 +305,7 @@ impl<'tcx> Generator<'tcx> {
                 .unwrap(),
             SignalTy::Enum(ty) => {
                 let input =
-                    InputNode::new(ty.prim_ty(), self.idents.for_module(module_id).tmp());
+                    Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp());
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)
                 } else {
@@ -326,8 +325,8 @@ impl<'tcx> Generator<'tcx> {
     fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {
         let module_id = node_id.module_id();
         let node = &net_list[node_id];
-        let node_id = if node.is_input() {
-            let out = node.outputs().only_one();
+        let node_id = if node.kind.is_input() {
+            let out = node.kind.outputs().only_one();
             let pass = Pass::new(
                 out.out.ty,
                 out.node_out_id(node_id),
@@ -337,8 +336,8 @@ impl<'tcx> Generator<'tcx> {
             net_list.add_node(node_id.module_id(), pass)
         } else {
             let node = &mut net_list[node_id];
-            if !node.is_pass() {
-                for out in node.outputs_mut().items_mut() {
+            if !node.kind.is_pass() {
+                for out in node.kind.outputs_mut().items_mut() {
                     let sym = idents.for_module(module_id).out();
                     out.out.sym = sym;
                 }

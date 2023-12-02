@@ -7,8 +7,8 @@ use ferrum_netlist::{
     group::ItemId,
     net_list::{NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, Case, Const, InputNode, ModInst, MultiPass, Mux2Node,
-        NotNode, Pass, Splitter,
+        BinOpNode, BitNot, Case, Const, Input, IsNode, ModInst, MultiPass, Mux2, Not,
+        Pass, Splitter,
     },
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
@@ -217,7 +217,7 @@ impl<'tcx> Generator<'tcx> {
             SignalTy::Prim(ty) => {
                 let dummy_input = self.net_list.add_dummy_node(
                     module_id,
-                    InputNode::new(ty, self.idents.for_module(module_id).tmp()),
+                    Input::new(ty, self.idents.for_module(module_id).tmp()),
                 );
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
@@ -247,7 +247,7 @@ impl<'tcx> Generator<'tcx> {
             SignalTy::Enum(ty) => {
                 let dummy_input = self.net_list.add_dummy_node(
                     module_id,
-                    InputNode::new(ty.prim_ty(), self.idents.for_module(module_id).tmp()),
+                    Input::new(ty.prim_ty(), self.idents.for_module(module_id).tmp()),
                 );
                 dummy_inputs.push(dummy_input);
                 dummy_input.into()
@@ -342,6 +342,7 @@ impl<'tcx> Generator<'tcx> {
                     let node_id = item_id.node_id();
 
                     Ok(self.net_list[node_id]
+                        .kind
                         .outputs()
                         .only_one()
                         .node_out_id(node_id))
@@ -383,7 +384,7 @@ impl<'tcx> Generator<'tcx> {
                             let item_id = match item_id {
                                 ItemId::Node(node_id) => {
                                     let out =
-                                        &self.net_list[node_id].outputs().only_one();
+                                        &self.net_list[node_id].kind.outputs().only_one();
                                     self.net_list
                                         .add_node(
                                             ctx.module_id,
@@ -622,7 +623,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let mux = self.net_list.add_node(
                     ctx.module_id,
-                    Mux2Node::new(
+                    Mux2::new(
                         sig_ty.maybe_to_bitvec(),
                         cond,
                         if_block,
@@ -630,7 +631,11 @@ impl<'tcx> Generator<'tcx> {
                         self.idents.for_module(ctx.module_id).tmp(),
                     ),
                 );
-                let mux = self.net_list[mux].outputs().only_one().node_out_id(mux);
+                let mux = self.net_list[mux]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(mux);
 
                 Ok(self.maybe_from_bitvec(ctx.module_id, mux, sig_ty))
             }
@@ -753,7 +758,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let small_mask_ones = small_mask.trailing_ones() as u128;
                 if small_mask != 0 && small_mask_ones > 0 {
-                    let sel_out = self.net_list[sel].outputs().only_one();
+                    let sel_out = self.net_list[sel].kind.outputs().only_one();
                     let sel_width = sel_out.out.width();
 
                     sel = self.net_list.add_node(
@@ -778,13 +783,21 @@ impl<'tcx> Generator<'tcx> {
                     ctx.module_id,
                     Case::new(
                         expr_ty.maybe_to_bitvec(),
-                        self.net_list[sel].outputs().only_one().node_out_id(sel),
+                        self.net_list[sel]
+                            .kind
+                            .outputs()
+                            .only_one()
+                            .node_out_id(sel),
                         inputs,
                         default,
                         self.idents.for_module(ctx.module_id).tmp(),
                     ),
                 );
-                let case = self.net_list[case].outputs().only_one().node_out_id(case);
+                let case = self.net_list[case]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(case);
                 Ok(self.maybe_from_bitvec(ctx.module_id, case, expr_ty))
             }
             ExprKind::MethodCall(_, rec, args, span) => {
@@ -1014,10 +1027,10 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok((if prim_ty.is_bool() {
                     self.net_list
-                        .add_node(ctx.module_id, NotNode::new(prim_ty, comb, sym))
+                        .add_node(ctx.module_id, Not::new(prim_ty, comb, sym))
                 } else {
                     self.net_list
-                        .add_node(ctx.module_id, BitNotNode::new(prim_ty, comb, sym))
+                        .add_node(ctx.module_id, BitNot::new(prim_ty, comb, sym))
                 })
                 .into())
             }
@@ -1215,6 +1228,7 @@ impl<'tcx> Generator<'tcx> {
                     .flat_map(|input| {
                         input.into_iter().flat_map(|node_id| {
                             self.net_list[node_id]
+                                .kind
                                 .outputs()
                                 .items()
                                 .map(move |out| out.node_out_id(node_id))
@@ -1252,6 +1266,7 @@ impl<'tcx> Generator<'tcx> {
                     .into_iter()
                     .flat_map(|node_id| {
                         self.net_list[node_id]
+                            .kind
                             .outputs()
                             .items()
                             .map(move |out| out.node_out_id(node_id))

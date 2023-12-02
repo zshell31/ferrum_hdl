@@ -1,7 +1,7 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Const {
     pub value: u128,
     pub output: NodeOutput,
@@ -23,11 +23,15 @@ impl From<Const> for NodeKind {
 }
 
 impl IsNode for Const {
-    type Inputs = ();
+    type Inputs = [NodeOutId];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
-        &()
+        &[]
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -39,15 +43,21 @@ impl IsNode for Const {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MultiConst {
-    pub values: &'static [u128],
-    pub outputs: &'static mut [NodeOutput],
+    pub values: Vec<u128>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl MultiConst {
-    pub fn new(values: &'static [u128], outputs: &'static mut [NodeOutput]) -> Self {
-        Self { values, outputs }
+    pub fn new(
+        values: impl IntoIterator<Item = u128>,
+        outputs: impl IntoIterator<Item = NodeOutput>,
+    ) -> Self {
+        Self {
+            values: Vec::collect_from(values),
+            outputs: Vec::collect_from(outputs),
+        }
     }
 }
 
@@ -58,18 +68,21 @@ impl From<MultiConst> for NodeKind {
 }
 
 impl IsNode for MultiConst {
-    type Inputs = ();
+    type Inputs = [NodeOutId];
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
-        &()
+        &[]
+    }
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        self.outputs
+        self.outputs.as_slice()
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs
+        self.outputs.as_mut_slice()
     }
 }

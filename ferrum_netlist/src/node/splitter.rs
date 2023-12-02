@@ -1,12 +1,12 @@
 use std::{fmt::Debug, ops::Index};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::with_arena, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Splitter {
     pub input: NodeOutId,
-    pub outputs: &'static mut [NodeOutput],
+    pub outputs: Vec<NodeOutput>,
     pub start: Option<u128>,
     pub rev: bool,
 }
@@ -20,13 +20,11 @@ impl Splitter {
     ) -> Self {
         Self {
             input,
-            outputs: unsafe {
-                with_arena().alloc_from_iter(
-                    outputs
-                        .into_iter()
-                        .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
-                )
-            },
+            outputs: Vec::collect_from(
+                outputs
+                    .into_iter()
+                    .map(|(ty, sym)| NodeOutput::wire(ty, sym)),
+            ),
             start,
             rev,
         }
@@ -54,11 +52,15 @@ impl IsNode for Splitter {
         &self.input
     }
 
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.input
+    }
+
     fn outputs(&self) -> &Self::Outputs {
-        self.outputs
+        self.outputs.as_slice()
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs
+        self.outputs.as_mut_slice()
     }
 }

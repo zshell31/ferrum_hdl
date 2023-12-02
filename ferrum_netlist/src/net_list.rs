@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 
 use crate::{
     group::ItemId,
-    node::{InputNode, IsNode, MultiPass, Node, NodeKind, NodeOutput, Pass},
+    node::{Input, IsNode, MultiPass, Node, NodeKind, NodeOutput, Pass},
     params::{Inputs, Outputs},
     symbol::Symbol,
     visitor::{InjectNodes, Reachability},
@@ -157,11 +157,11 @@ impl Module {
     pub fn inputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         self.inputs
             .iter()
-            .filter(|input| self.node(**input).is_input())
+            .filter(|input| self.node(**input).kind.is_input())
             .filter_map(|&input| {
                 let node = self.node(input);
-                if node.is_input() {
-                    Some(node.outputs().only_one().node_out_id(input))
+                if node.kind.is_input() {
+                    Some(node.kind.outputs().only_one().node_out_id(input))
                 } else {
                     None
                 }
@@ -314,7 +314,7 @@ impl NetList {
 
     fn add_links(&mut self, node_id: NodeId) {
         let node = self.modules[node_id.module_id().0].node(node_id);
-        for input in node.inputs().items() {
+        for input in node.kind.inputs().items() {
             let links = self.rev_links.entry(input).or_default();
             links.push(Link::direct(node_id));
 
@@ -361,14 +361,14 @@ impl NetList {
                 let node = &self[link.node_id];
 
                 match link.kind {
-                    LinkKind::Direct if !node.is_pass() => Some((node, node_out_id)),
+                    LinkKind::Direct if !node.kind.is_pass() => Some((node, node_out_id)),
                     LinkKind::Indirect(node_out_id) => Some((node, node_out_id)),
                     _ => None,
                 }
             })
     }
 
-    pub fn add_dummy_node(&mut self, module_id: ModuleId, node: InputNode) -> NodeId {
+    pub fn add_dummy_node(&mut self, module_id: ModuleId, node: Input) -> NodeId {
         let node = NodeKind::DummyInput(node);
         self.add_node(module_id, node)
     }
@@ -377,8 +377,9 @@ impl NetList {
         let module = &mut self[node_id.module_id()];
         module.replace(node_id, node);
         let node = &self[node_id];
-        if node.is_pass() {
+        if node.kind.is_pass() {
             let links = node
+                .kind
                 .outputs()
                 .items()
                 .map(|out| out.node_out_id(node_id))
@@ -452,7 +453,7 @@ impl NetList {
             item_id,
             dummy_inputs
                 .into_iter()
-                .filter(|node_id| self[*node_id].is_dummy_input())
+                .filter(|node_id| self[*node_id].kind.is_dummy_input())
                 .collect(),
         );
     }

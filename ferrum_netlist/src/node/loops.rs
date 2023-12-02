@@ -1,7 +1,7 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LoopStart {
     pub genvar: Symbol,
     pub count: u128,
@@ -29,11 +29,15 @@ impl From<LoopStart> for NodeKind {
 }
 
 impl IsNode for LoopStart {
-    type Inputs = ();
+    type Inputs = [NodeOutId];
     type Outputs = Option<NodeOutput>;
 
     fn inputs(&self) -> &Self::Inputs {
-        &()
+        &[]
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -45,7 +49,7 @@ impl IsNode for LoopStart {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LoopEnd {}
 
 impl From<LoopEnd> for NodeKind {
@@ -55,18 +59,22 @@ impl From<LoopEnd> for NodeKind {
 }
 
 impl IsNode for LoopEnd {
-    type Inputs = ();
-    type Outputs = ();
+    type Inputs = [NodeOutId];
+    type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
-        &()
+        &[]
+    }
+
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {
-        &()
+        &[]
     }
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        unreachable!()
+        &mut []
     }
 }

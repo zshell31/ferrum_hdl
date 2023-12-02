@@ -1,5 +1,8 @@
 use ferrum_netlist::{
-    group::ItemId, node::Expr as ExprNode, params::Outputs, sig_ty::PrimTy,
+    group::ItemId,
+    node::{Expr as ExprNode, IsNode},
+    params::Outputs,
+    sig_ty::PrimTy,
 };
 use rustc_hir::Expr;
 
@@ -105,6 +108,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
                     buffer.write_template(format_args!("assign {output} = {input}[{loop_var}*{width} +: {width}];"));
                 }));
                 let input = generator.net_list[input]
+                    .kind
                     .outputs()
                     .only_one()
                     .node_out_id(input);

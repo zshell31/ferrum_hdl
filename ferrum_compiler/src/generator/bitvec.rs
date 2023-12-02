@@ -2,7 +2,7 @@ use either::Either;
 use ferrum_netlist::{
     group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
-    node::{Const, Merger, Pass, Splitter},
+    node::{Const, IsNode, Merger, Pass, Splitter},
     params::Outputs,
     sig_ty::{EnumTy, PrimTy, SignalTy},
 };
@@ -13,19 +13,24 @@ use crate::generator::Generator;
 impl<'tcx> Generator<'tcx> {
     pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
         match item_id {
-            ItemId::Node(node_id) => {
-                self.net_list[node_id].outputs().only_one().out.ty.into()
-            }
+            ItemId::Node(node_id) => self.net_list[node_id]
+                .kind
+                .outputs()
+                .only_one()
+                .out
+                .ty
+                .into(),
             ItemId::Group(group) => group.sig_ty,
         }
     }
 
     pub fn combine_outputs(&mut self, node_id: NodeId) -> ItemId {
         let module_id = node_id.module_id();
-        let outputs_len = self.net_list[node_id].outputs().len();
+        let outputs_len = self.net_list[node_id].kind.outputs().len();
 
         if outputs_len > 1 {
             let nodes = self.net_list[node_id]
+                .kind
                 .outputs()
                 .items()
                 .map(|out| {
@@ -57,7 +62,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
         match item_id {
             ItemId::Node(node_id) => {
-                let node_outs = self.net_list[node_id].outputs();
+                let node_outs = self.net_list[node_id].kind.outputs();
                 if node_outs.len() > 1 {
                     let item_id = self.combine_outputs(node_id);
                     self.to_bitvec(module_id, item_id)
@@ -74,6 +79,7 @@ impl<'tcx> Generator<'tcx> {
                     let node_id = self.net_list.add_node(module_id, pass);
 
                     self.net_list[node_id]
+                        .kind
                         .outputs()
                         .only_one()
                         .node_out_id(node_id)
@@ -95,6 +101,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let node_id = self.net_list.add_node(module_id, merger);
                 self.net_list[node_id]
+                    .kind
                     .outputs()
                     .only_one()
                     .node_out_id(node_id)
@@ -105,7 +112,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn maybe_to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
         match item_id {
             ItemId::Node(node_id) => {
-                let out = self.net_list[node_id].outputs();
+                let out = self.net_list[node_id].kind.outputs();
                 if out.len() == 1 {
                     out.only_one().node_out_id(node_id)
                 } else {
@@ -151,6 +158,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let node_id = self.net_list.add_node(module_id, splitter);
                 let outputs = self.net_list[node_id]
+                    .kind
                     .outputs()
                     .items()
                     .map(|out| out.node_out_id(node_id))
@@ -182,6 +190,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let node_id = self.net_list.add_node(module_id, splitter);
                 let outputs = self.net_list[node_id]
+                    .kind
                     .outputs()
                     .items()
                     .map(|out| out.node_out_id(node_id))
@@ -236,7 +245,7 @@ impl<'tcx> Generator<'tcx> {
             }
         }
 
-        let scrutinee_out = self.net_list[scrutinee].outputs().only_one();
+        let scrutinee_out = self.net_list[scrutinee].kind.outputs().only_one();
         // let sym = self
         //     .idents
         //     .for_module(module_id)
@@ -254,6 +263,7 @@ impl<'tcx> Generator<'tcx> {
             ),
         );
         let data_part = self.net_list[data_part]
+            .kind
             .outputs()
             .only_one()
             .node_out_id(data_part);
@@ -278,6 +288,7 @@ impl<'tcx> Generator<'tcx> {
             ),
         );
         let discr_val = self.net_list[discr_val]
+            .kind
             .outputs()
             .only_one()
             .node_out_id(discr_val);

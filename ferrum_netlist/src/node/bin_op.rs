@@ -87,6 +87,10 @@ impl IsNode for BinOpNode {
         &self.inputs
     }
 
+    fn inputs_mut(&mut self) -> &mut Self::Inputs {
+        &mut self.inputs
+    }
+
     fn outputs(&self) -> &Self::Outputs {
         &self.output
     }

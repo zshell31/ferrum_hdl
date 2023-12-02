@@ -5,10 +5,10 @@ use std::{
 
 use ferrum_netlist::{
     group::ItemId,
-    net_list::{ModuleId, NodeId, NodeOutId},
+    net_list::{NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, Case, Const, InputNode, ModInst, Mux2Node, NotNode, Pass,
-        Splitter,
+        BinOpNode, BitNotNode, Case, Const, InputNode, ModInst, MultiPass, Mux2Node,
+        NotNode, Pass, Splitter,
     },
     params::Outputs,
     sig_ty::{PrimTy, SignalTy},
@@ -24,12 +24,12 @@ use rustc_hir::{
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{FnSig, GenericArgs, GenericArgsRef, Ty};
-use rustc_span::{source_map::Spanned, Span};
+use rustc_span::{source_map::Spanned, Span, Symbol as RustSymbol};
 use smallvec::SmallVec;
 
 use super::{
-    arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator, MonoItem,
-    TraitImpls, TraitKind,
+    arg_matcher::ArgMatcher, func::ModuleOrItemId, generic::Generic, EvalContext,
+    Generator, MonoItem, TraitImpls, TraitKind,
 };
 use crate::{
     blackbox::{bitvec, cast::StdConversion, lit, EvaluateExpr},
@@ -458,6 +458,7 @@ impl<'tcx> Generator<'tcx> {
                                     generic_args,
                                     args.iter().map(Into::into),
                                     ctx,
+                                    expr.span,
                                 )
                             } else {
                                 let blackbox =
@@ -556,6 +557,7 @@ impl<'tcx> Generator<'tcx> {
                                         None,
                                         args.iter().map(Into::into),
                                         ctx,
+                                        expr.span,
                                     ),
                                 None => {
                                     let blackbox = self.find_blackbox(
@@ -590,11 +592,7 @@ impl<'tcx> Generator<'tcx> {
 
                 self.net_list.add_dummy_inputs(
                     closure,
-                    item_ids
-                        .into_iter()
-                        .flat_map(|item_id| item_id.into_iter())
-                        .filter(|node_id| self.net_list[*node_id].is_dummy_input())
-                        .collect::<Vec<_>>(),
+                    item_ids.into_iter().flat_map(|item_id| item_id.into_iter()),
                 );
 
                 Ok(closure)
@@ -804,6 +802,7 @@ impl<'tcx> Generator<'tcx> {
                         Some(rec.into()),
                         args.iter().map(Into::into),
                         ctx,
+                        expr.span,
                     ),
                     None => {
                         let blackbox = self.find_blackbox(fn_did, generic_args, span)?;
@@ -834,6 +833,7 @@ impl<'tcx> Generator<'tcx> {
                                         Some(rec.into()),
                                         args.iter().map(Into::into),
                                         ctx,
+                                        expr.span,
                                     );
                                 }
                             }
@@ -1079,12 +1079,14 @@ impl<'tcx> Generator<'tcx> {
                         Some(input.into()),
                         [],
                         ctx,
+                        expr.span,
                     )?,
                     None => self.evaluate_fn_call(
                         fn_id.expect_local(),
                         generic_args,
                         [input.into()],
                         ctx,
+                        expr.span,
                     )?,
                 };
 
@@ -1122,6 +1124,7 @@ impl<'tcx> Generator<'tcx> {
                                         Some(input.into()),
                                         [],
                                         ctx,
+                                        expr.span,
                                     )?)
                                 }
                                 None => None,
@@ -1177,57 +1180,100 @@ impl<'tcx> Generator<'tcx> {
         res
     }
 
-    pub fn instantiate_module(
+    fn eval_fn_args(
         &mut self,
-        module_id: ModuleId,
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        let mut inputs = SmallVec::new();
+    ) -> Result<SmallVec<[ItemId; 8]>, Error> {
+        let mut evaluated = SmallVec::new();
 
         if let Some(self_arg) = self_arg {
             let self_arg = self_arg.evaluate(self, ctx)?;
-            self.add_module_input(self_arg, &mut inputs);
+            evaluated.push(self_arg);
         }
 
         for arg in args {
             let arg = arg.evaluate(self, ctx)?;
-            self.add_module_input(arg, &mut inputs);
+            evaluated.push(arg);
         }
 
-        let outputs = self.net_list[module_id]
-            .outputs()
-            .map(|node_out_id| {
-                (
-                    self.net_list[node_out_id].ty,
-                    self.idents.for_module(ctx.module_id).tmp(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
-
-        let inst_sym = self
-            .idents
-            .for_module(ctx.module_id)
-            .inst(self.net_list[module_id].name);
-
-        Ok(self
-            .net_list
-            .add_node(
-                ctx.module_id,
-                ModInst::new(inst_sym, module_id, inputs, outputs),
-            )
-            .into())
+        Ok(evaluated)
     }
 
-    fn add_module_input(&self, item_id: ItemId, inputs: &mut SmallVec<[NodeOutId; 8]>) {
-        for node_id in item_id.into_iter() {
-            for out in self.net_list[node_id].outputs().items() {
-                inputs.push(out.node_out_id(node_id));
+    fn instantiate_module(
+        &mut self,
+        id: ModuleOrItemId,
+        inputs: SmallVec<[ItemId; 8]>,
+        ctx: &EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let node_id = match id {
+            ModuleOrItemId::Module(module_id) => {
+                let inputs = inputs
+                    .into_iter()
+                    .flat_map(|input| {
+                        input.into_iter().flat_map(|node_id| {
+                            self.net_list[node_id]
+                                .outputs()
+                                .items()
+                                .map(move |out| out.node_out_id(node_id))
+                        })
+                    })
+                    .collect::<SmallVec<[NodeOutId; 8]>>();
+
+                let outputs = self.net_list[module_id]
+                    .outputs()
+                    .map(|node_out_id| {
+                        (
+                            self.net_list[node_out_id].ty,
+                            self.idents.for_module(ctx.module_id).tmp(),
+                        )
+                    })
+                    .collect::<Vec<_>>();
+
+                assert_eq!(outputs.len(), self.net_list[module_id].outputs_len());
+
+                let inst_sym = self
+                    .idents
+                    .for_module(ctx.module_id)
+                    .inst(self.net_list[module_id].name);
+
+                self.net_list.add_node(
+                    ctx.module_id,
+                    ModInst::new(inst_sym, module_id, inputs, outputs),
+                )
             }
-        }
+            ModuleOrItemId::Item(item_id) => {
+                self.link_dummy_inputs(&inputs, item_id)
+                    .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedCall, span))?;
+
+                let pass_inputs = item_id
+                    .into_iter()
+                    .flat_map(|node_id| {
+                        self.net_list[node_id]
+                            .outputs()
+                            .items()
+                            .map(move |out| out.node_out_id(node_id))
+                    })
+                    .collect::<SmallVec<[NodeOutId; 8]>>();
+
+                let pass_outputs = pass_inputs
+                    .iter()
+                    .map(|node_out_id| {
+                        (
+                            self.net_list[*node_out_id].ty,
+                            self.idents.for_module(ctx.module_id).tmp(),
+                        )
+                    })
+                    .collect::<SmallVec<[(PrimTy, Symbol); 8]>>();
+
+                self.net_list
+                    .add_node(ctx.module_id, MultiPass::new(pass_inputs, pass_outputs))
+            }
+        };
+
+        Ok(node_id.into())
     }
 
     pub fn find_local_impl_id(
@@ -1377,24 +1423,45 @@ impl<'tcx> Generator<'tcx> {
         generic_args: GenericArgsRef<'tcx>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
+        span: Span,
     ) -> Result<ItemId, Error> {
-        let mono_item = MonoItem::new(fn_id, generic_args);
+        let item = self.tcx.hir().expect_item(fn_id);
+        let inlined = self.is_inlined(fn_id);
 
-        #[allow(clippy::map_entry)]
-        if !self.evaluated_modules.contains_key(&mono_item) {
-            // println!(
-            //     "evaluate fn call: fn_id = {:?}, generic_args = {:?}",
-            //     fn_id, generic_args
-            // );
-            let item = self.tcx.hir().expect_item(fn_id);
-            let module_id = self.evaluate_fn_item(item, generic_args, false)?.unwrap();
+        let args = self.eval_fn_args(None, args, ctx)?;
 
-            self.evaluated_modules.insert(mono_item, module_id);
-        }
+        let id = if inlined {
+            self.evaluate_fn_item(
+                item,
+                &EvalContext::new(generic_args, ctx.module_id),
+                inlined,
+            )?
+            .unwrap()
+        } else {
+            let mono_item = MonoItem::new(fn_id, generic_args);
 
-        let module_id = self.evaluated_modules.get(&mono_item).unwrap();
+            #[allow(clippy::map_entry)]
+            if !self.evaluated_modules.contains_key(&mono_item) {
+                // println!(
+                //     "evaluate fn call: fn_id = {:?}, generic_args = {:?}",
+                //     fn_id, generic_args
+                // );
+                let module_id = self
+                    .evaluate_fn_item(
+                        item,
+                        &EvalContext::new(generic_args, ctx.module_id),
+                        inlined,
+                    )?
+                    .unwrap()
+                    .module_id();
 
-        self.instantiate_module(*module_id, None, args, ctx)
+                self.evaluated_modules.insert(mono_item, module_id);
+            }
+
+            (*self.evaluated_modules.get(&mono_item).unwrap()).into()
+        };
+
+        self.instantiate_module(id, args, ctx, span)
     }
 
     pub fn evaluate_impl_fn_call(
@@ -1404,24 +1471,52 @@ impl<'tcx> Generator<'tcx> {
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &EvalContext<'tcx>,
+        span: Span,
     ) -> Result<ItemId, Error> {
-        let mono_item = MonoItem::new(impl_id, generic_args);
+        let impl_item = self.tcx.hir().expect_impl_item(impl_id);
+        let inlined = self.is_inlined(impl_id);
 
-        #[allow(clippy::map_entry)]
-        if !self.evaluated_modules.contains_key(&mono_item) {
-            // println!(
-            //     "evaluate impl fn call: impl_id = {:?}, generic_args = {:?}",
-            //     impl_id, generic_args
-            // );
-            let impl_item = self.tcx.hir().expect_impl_item(impl_id);
-            let module_id = self.evaluate_impl_item(impl_item, generic_args)?.unwrap();
+        let args = self.eval_fn_args(self_arg, args, ctx)?;
 
-            self.evaluated_modules.insert(mono_item, module_id);
-        }
+        let id = if inlined {
+            self.evaluate_impl_item(
+                impl_item,
+                &EvalContext::new(generic_args, ctx.module_id),
+                true,
+            )?
+            .unwrap()
+        } else {
+            let mono_item = MonoItem::new(impl_id, generic_args);
 
-        let module_id = self.evaluated_modules.get(&mono_item).unwrap();
+            #[allow(clippy::map_entry)]
+            if !self.evaluated_modules.contains_key(&mono_item) {
+                // println!(
+                //     "evaluate impl fn call: impl_id = {:?}, generic_args = {:?}",
+                //     impl_id, generic_args
+                // );
+                let module_id = self
+                    .evaluate_impl_item(
+                        impl_item,
+                        &EvalContext::new(generic_args, ctx.module_id),
+                        false,
+                    )?
+                    .unwrap()
+                    .module_id();
 
-        self.instantiate_module(*module_id, self_arg, args, ctx)
+                self.evaluated_modules.insert(mono_item, module_id);
+            }
+
+            (*self.evaluated_modules.get(&mono_item).unwrap()).into()
+        };
+
+        self.instantiate_module(id, args, ctx, span)
+    }
+
+    fn is_inlined(&self, did: LocalDefId) -> bool {
+        self.tcx
+            .get_attrs(did.to_def_id(), RustSymbol::intern("inline"))
+            .next()
+            .is_some()
     }
 
     fn evaluate_enum_variant_ctor(

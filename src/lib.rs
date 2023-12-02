@@ -5,6 +5,8 @@
 #![feature(register_tool)]
 #![register_tool(ferrum_tool)]
 
+pub use ferrum_macros::p;
+
 pub mod array;
 pub mod bit;
 pub mod bit_pack;

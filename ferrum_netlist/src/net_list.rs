@@ -154,8 +154,18 @@ impl Module {
         (0 .. self.nodes.len()).map(move |ind| NodeId(module_id, ind))
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.inputs.iter().copied()
+    pub fn inputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+        self.inputs
+            .iter()
+            .filter(|input| self.node(**input).is_input())
+            .filter_map(|&input| {
+                let node = self.node(input);
+                if node.is_input() {
+                    Some(node.outputs().only_one().node_out_id(input))
+                } else {
+                    None
+                }
+            })
     }
 
     pub fn inputs_len(&self) -> usize {
@@ -184,10 +194,6 @@ impl Module {
     #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.nodes.len()
-    }
-
-    pub fn truncate(&mut self, new_len: usize) {
-        self.nodes.truncate(new_len)
     }
 }
 
@@ -224,7 +230,7 @@ pub type Links = SmallVec<[Link; 8]>;
 #[derive(Debug, Default)]
 pub struct NetList {
     modules: Vec<Module>,
-    dummy_inputs: FnvHashMap<ItemId, Vec<NodeId>>,
+    dummy_inputs: FnvHashMap<ItemId, SmallVec<[NodeId; 8]>>,
     rev_links: FnvHashMap<NodeOutId, Links>,
 }
 
@@ -370,6 +376,21 @@ impl NetList {
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
         let module = &mut self[node_id.module_id()];
         module.replace(node_id, node);
+        let node = &self[node_id];
+        if node.is_pass() {
+            let links = node
+                .outputs()
+                .items()
+                .map(|out| out.node_out_id(node_id))
+                .flat_map(|node_out_id| self.rev_links.get(&node_out_id))
+                .flat_map(|links| links.iter())
+                .map(|link| link.node_id)
+                .collect::<SmallVec<[NodeId; 8]>>();
+
+            for link in links {
+                self.add_links(link);
+            }
+        }
     }
 
     pub fn add_output(&mut self, node_id: NodeId, out: OutId) {
@@ -427,8 +448,13 @@ impl NetList {
         item_id: ItemId,
         dummy_inputs: impl IntoIterator<Item = NodeId>,
     ) {
-        self.dummy_inputs
-            .insert(item_id, dummy_inputs.into_iter().collect());
+        self.dummy_inputs.insert(
+            item_id,
+            dummy_inputs
+                .into_iter()
+                .filter(|node_id| self[*node_id].is_dummy_input())
+                .collect(),
+        );
     }
 
     pub fn dummy_inputs_len(&self, item_id: ItemId) -> Option<usize> {
@@ -450,9 +476,5 @@ impl NetList {
 
     pub fn module_len(&self, module_id: ModuleId) -> usize {
         self[module_id].len()
-    }
-
-    pub fn module_truncate(&mut self, module_id: ModuleId, new_len: usize) {
-        self[module_id].truncate(new_len)
     }
 }

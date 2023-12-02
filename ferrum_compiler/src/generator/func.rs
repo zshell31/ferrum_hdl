@@ -12,8 +12,9 @@ use rustc_hir::{
     def::Res, BodyId, FnDecl, FnSig, ImplItem, ImplItemKind, Item, ItemKind, MutTy,
     Param, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
-use rustc_middle::ty::{GenericArgsRef, TyKind};
+use rustc_middle::ty::{GenericArgsRef, List, TyKind};
 use rustc_span::symbol::Ident;
+use smallvec::SmallVec;
 
 use super::{EvalContext, Generator};
 use crate::{
@@ -21,16 +22,56 @@ use crate::{
     idents::Idents,
 };
 
+#[derive(Debug, Clone, Copy)]
+pub enum ModuleOrItemId {
+    Module(ModuleId),
+    Item(ItemId),
+}
+
+impl From<ModuleId> for ModuleOrItemId {
+    fn from(module_id: ModuleId) -> Self {
+        Self::Module(module_id)
+    }
+}
+
+impl From<ItemId> for ModuleOrItemId {
+    fn from(item_id: ItemId) -> Self {
+        Self::Item(item_id)
+    }
+}
+
+impl ModuleOrItemId {
+    pub fn module_id(self) -> ModuleId {
+        match self {
+            Self::Module(module_id) => module_id,
+            _ => panic!("expected module_id"),
+        }
+    }
+}
+
 impl<'tcx> Generator<'tcx> {
+    pub fn evaluate_top_module(&mut self, item: &Item<'tcx>) -> Result<ModuleId, Error> {
+        if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
+            return self.evaluate_fn_for_module(
+                item.ident.as_str(),
+                decl,
+                body_id,
+                List::empty(),
+            );
+        }
+
+        Err(Error::MissingTopModule)
+    }
+
     pub fn evaluate_fn_item(
         &mut self,
         item: &Item<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
-        _is_top_module: bool,
-    ) -> Result<Option<ModuleId>, Error> {
+        ctx: &EvalContext<'tcx>,
+        inlined: bool,
+    ) -> Result<Option<ModuleOrItemId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
             return self
-                .evaluate_fn(item.ident.as_str(), decl, body_id, generic_args)
+                .evaluate_fn(item.ident.as_str(), decl, body_id, ctx, inlined)
                 .map(Some);
         }
 
@@ -40,8 +81,9 @@ impl<'tcx> Generator<'tcx> {
     pub fn evaluate_impl_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<Option<ModuleId>, Error> {
+        ctx: &EvalContext<'tcx>,
+        inlined: bool,
+    ) -> Result<Option<ModuleOrItemId>, Error> {
         let self_ty = self
             .tcx
             .hir()
@@ -64,7 +106,7 @@ impl<'tcx> Generator<'tcx> {
         };
         if let ImplItemKind::Fn(FnSig { decl, .. }, body_id) = impl_item.kind {
             return self
-                .evaluate_fn(ident.as_ref(), decl, body_id, generic_args)
+                .evaluate_fn(ident.as_ref(), decl, body_id, ctx, inlined)
                 .map(Some);
         }
 
@@ -76,15 +118,48 @@ impl<'tcx> Generator<'tcx> {
         name: &str,
         fn_decl: &FnDecl<'tcx>,
         body_id: BodyId,
+        ctx: &EvalContext<'tcx>,
+        inlined: bool,
+    ) -> Result<ModuleOrItemId, Error> {
+        if inlined {
+            // TODO: how to inject already synthesized module
+            let body = self.tcx.hir().body(body_id);
+            let inputs = fn_decl.inputs.iter().zip(body.params.iter());
+
+            let mut item_ids = SmallVec::<[ItemId; 8]>::new();
+            self.evaluate_inputs(inputs, ctx, true, &mut |item_id| {
+                item_ids.push(item_id)
+            })?;
+
+            let inlined = self.evaluate_expr(body.value, ctx)?;
+
+            self.net_list.add_dummy_inputs(
+                inlined,
+                item_ids.into_iter().flat_map(|item_id| item_id.into_iter()),
+            );
+
+            Ok(inlined.into())
+        } else {
+            self.evaluate_fn_for_module(name, fn_decl, body_id, ctx.generic_args)
+                .map(Into::into)
+        }
+    }
+
+    fn evaluate_fn_for_module(
+        &mut self,
+        name: &str,
+        fn_decl: &FnDecl<'tcx>,
+        body_id: BodyId,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Result<ModuleId, Error> {
+        let body = self.tcx.hir().body(body_id);
+        let inputs = fn_decl.inputs.iter().zip(body.params.iter());
+
         let module_sym = self.idents.module(name);
         let module_id = self.net_list.add_module(module_sym);
 
         self.idents.for_module(module_id).push_scope();
 
-        let body = self.tcx.hir().body(body_id);
-        let inputs = fn_decl.inputs.iter().zip(body.params.iter());
         let ctx = EvalContext::new(generic_args, module_id);
 
         self.evaluate_inputs(inputs, &ctx, false, &mut |_| {})?;

@@ -9,11 +9,10 @@ use crate::{
     net_kind::NetKind,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
-        BinOpNode, BitNotNode, BitVecMask, Case, Const, DFFInputs, Expr, IsNode,
-        LoopStart, Merger, ModInst, MultiConst, MultiPass, Mux2Node, NodeKind,
-        NodeOutput, NotNode, Pass, Splitter, DFF,
+        BinOpNode, BitNotNode, BitVecMask, Case, Const, DFFInputs, Expr, LoopStart,
+        Merger, ModInst, MultiConst, MultiPass, Mux2Node, NodeKind, NodeOutput, NotNode,
+        Pass, Splitter, DFF,
     },
-    params::Outputs,
     symbol::Symbol,
     visitor::{ParamKind, Visitor},
 };
@@ -282,20 +281,8 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, inputs, |buffer, input| {
-                let node = &self.net_list[input];
-                buffer.intersperse(
-                    SEP,
-                    node.kind.outputs().items(),
-                    |buffer, node_out_id| {
-                        buffer.write_tab();
-                        write_param(
-                            net_list,
-                            buffer,
-                            node_out_id.node_out_id(input),
-                            ParamKind::Input,
-                        );
-                    },
-                );
+                buffer.write_tab();
+                write_param(net_list, buffer, input, ParamKind::Input);
             });
         }
         self.buffer.pop_tab();
@@ -364,8 +351,7 @@ impl<'n> Visitor for Verilog<'n> {
                 }
                 for (input, mod_input) in inputs.iter().zip(module.inputs()) {
                     let input_sym = self.inject_input(*input);
-                    let mod_input_sym =
-                        self.net_list[mod_input].kind.outputs().only_one().out.sym;
+                    let mod_input_sym = self.net_list[mod_input].sym;
 
                     self.buffer.write_tab();
                     self.buffer

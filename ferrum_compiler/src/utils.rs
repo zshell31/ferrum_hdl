@@ -1,9 +1,12 @@
 use std::iter;
 
 use ferrum_netlist::node::BinOp;
-use rustc_const_eval::interpret::{ConstValue, Scalar};
+use rustc_const_eval::interpret::Scalar;
 use rustc_hir::{def_id::DefId, BinOpKind, Expr, ExprKind, Pat};
-use rustc_middle::ty::{GenericArgsRef, ScalarInt, Ty, TyKind, ValTree};
+use rustc_middle::{
+    mir::ConstValue,
+    ty::{GenericArgsRef, ScalarInt, Ty, TyKind, ValTree},
+};
 use rustc_span::symbol::Ident;
 use smallvec::SmallVec;
 

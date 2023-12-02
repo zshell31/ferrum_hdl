@@ -30,7 +30,6 @@ use rustc_middle::{
     mir::UnevaluatedConst,
     ty::{AssocKind, EarlyBinder, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
-use rustc_session::EarlyErrorHandler;
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 use rustc_type_ir::fold::TypeFoldable;
 
@@ -46,7 +45,6 @@ pub struct CompilerCallbacks {}
 impl Callbacks for CompilerCallbacks {
     fn after_analysis<'tcx>(
         &mut self,
-        _handler: &EarlyErrorHandler,
         _compiler: &Compiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {

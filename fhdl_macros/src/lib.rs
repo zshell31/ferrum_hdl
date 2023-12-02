@@ -39,3 +39,8 @@ pub fn p(input: TokenStream) -> TokenStream {
 
     pipeline.into_token_stream().into()
 }
+
+// #[proc_macro_derive(SingleValue)]
+// pub fn derive_single_value(input: TokenStream) -> TokenStream {
+//     input
+// }

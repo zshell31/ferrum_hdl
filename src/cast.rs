@@ -17,9 +17,9 @@ pub trait CastInner<T: Sized>: Sized {
     fn cast_inner(self) -> T;
 }
 
-impl<T: IsPrimTy> CastInner<T> for T {
+impl<U: IsPrimTy, T: IsPrimTy + From<U>> CastInner<T> for U {
     fn cast_inner(self) -> T {
-        self
+        T::from(self)
     }
 }
 

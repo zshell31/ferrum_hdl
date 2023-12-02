@@ -59,5 +59,12 @@ pub enum BlackboxTy {
     Bit,
     Clock,
     Unsigned,
+    UnsignedMatch,
     Array,
+}
+
+impl BlackboxTy {
+    pub fn is_match(&self) -> bool {
+        matches!(self, BlackboxTy::UnsignedMatch)
+    }
 }

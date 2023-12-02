@@ -429,7 +429,12 @@ impl<'tcx> Generator<'tcx> {
                                     Res::Def(DefKind::Ctor(CtorOf::Struct, _), struct_did),
                                 ..
                             },
-                        ) if struct_did.is_local() => {
+                        ) if struct_did.is_local()
+                            || self
+                                .find_blackbox_ty(*struct_did)
+                                .filter(|ty| ty.is_match())
+                                .is_some() =>
+                        {
                             self.make_struct_group_from_exprs(expr, args, ctx)
                         }
                         QPath::TypeRelative(
@@ -586,21 +591,15 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::Match(sel, arms, _) => {
                 let expr_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
 
-                let sel_sig_ty = self.find_sig_ty(
-                    self.node_type(sel.hir_id, ctx),
-                    ctx.generic_args,
-                    sel.span,
-                )?;
-                let enum_ty = sel_sig_ty.opt_enum_ty().ok_or_else(|| {
-                    SpanError::new(SpanErrorKind::ExpectedEnumType, expr.span)
-                })?;
-
-                let mut sel = self.evaluate_expr(sel, ctx)?.node_id();
+                let sel_span = sel.span;
+                let sel = self.evaluate_expr(sel, ctx)?;
+                let sel_sig_ty = self.item_ty(sel);
 
                 let mut variants_map = FxHashMap::default();
                 let mut default = None;
                 let mut small_mask = u128::MAX;
                 let mut inputs = SmallVec::<[_; 8]>::new();
+
                 for arm in arms {
                     if arm.guard.is_some() {
                         return Err(SpanError::new(
@@ -617,22 +616,38 @@ impl<'tcx> Generator<'tcx> {
                         continue;
                     }
 
-                    let (variant_def, variant_idx) =
-                        self.pattern_to_variant_def(arm.pat, ctx.generic_args)?;
-                    let def_id = variant_def.def_id;
+                    match sel_sig_ty {
+                        SignalTy::Enum(enum_ty) => {
+                            let sel = sel.node_id();
+                            let (variant_def, variant_idx) =
+                                self.pattern_to_variant_def(arm.pat, ctx.generic_args)?;
+                            let def_id = variant_def.def_id;
 
-                    if let Entry::Vacant(e) = variants_map.entry(def_id) {
-                        let variant = self.enum_variant_from_bitvec(
-                            ctx.module_id,
-                            sel,
-                            enum_ty,
-                            variant_idx,
-                        );
-                        e.insert(variant);
+                            if let Entry::Vacant(e) = variants_map.entry(def_id) {
+                                let variant = self.enum_variant_from_bitvec(
+                                    ctx.module_id,
+                                    sel,
+                                    enum_ty,
+                                    variant_idx,
+                                );
+                                e.insert(variant);
+                            }
+
+                            let variant = *variants_map.get(&def_id).unwrap();
+                            self.pattern_match(arm.pat, variant, ctx.module_id)?;
+                        }
+                        SignalTy::Array(_) | SignalTy::Struct(_) => {
+                            self.pattern_match(arm.pat, sel, ctx.module_id)?;
+                        }
+                        _ => {
+                            println!("{:?}", sel_sig_ty);
+                            return Err(SpanError::new(
+                                SpanErrorKind::NonMatchableExpr,
+                                sel_span,
+                            )
+                            .into());
+                        }
                     }
-
-                    let variant = *variants_map.get(&def_id).unwrap();
-                    self.pattern_match(arm.pat, variant, ctx.module_id)?;
 
                     let variant_item_id = self.evaluate_expr(arm.body, ctx)?;
                     let discr =
@@ -647,15 +662,17 @@ impl<'tcx> Generator<'tcx> {
                     inputs.push((discr, node_out_id));
                 }
 
+                let mut sel = self.to_bitvec(ctx.module_id, sel);
+
                 let small_mask_ones = small_mask.trailing_ones() as u128;
                 if small_mask != 0 && small_mask_ones > 0 {
-                    let sel_out = self.net_list[sel].kind.outputs().only_one();
-                    let sel_width = sel_out.out.width();
+                    let sel_out = self.net_list[sel];
+                    let sel_width = sel_out.width();
 
-                    sel = self.net_list.add_node(
+                    let new_sel = self.net_list.add_node(
                         ctx.module_id,
                         Splitter::new(
-                            sel_out.node_out_id(sel),
+                            sel,
                             [(
                                 PrimTy::BitVec(sel_width - small_mask_ones),
                                 self.idents.for_module(ctx.module_id).tmp(),
@@ -664,6 +681,11 @@ impl<'tcx> Generator<'tcx> {
                             true,
                         ),
                     );
+                    sel = self.net_list[new_sel]
+                        .kind
+                        .outputs()
+                        .only_one()
+                        .node_out_id(new_sel);
 
                     for (discr, _) in &mut inputs {
                         discr.shiftr(small_mask_ones);
@@ -674,11 +696,7 @@ impl<'tcx> Generator<'tcx> {
                     ctx.module_id,
                     Case::new(
                         expr_ty.maybe_to_bitvec(),
-                        self.net_list[sel]
-                            .kind
-                            .outputs()
-                            .only_one()
-                            .node_out_id(sel),
+                        sel,
                         inputs,
                         default,
                         self.idents.for_module(ctx.module_id).tmp(),

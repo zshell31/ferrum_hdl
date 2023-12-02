@@ -1,4 +1,4 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, iter};
 
 use ferrum_blackbox::{Blackbox, BlackboxTy};
 use ferrum_netlist::{
@@ -61,6 +61,13 @@ impl<'tcx> TyOrDefId<'tcx> {
         }
     }
 
+    pub fn ty(&self) -> Option<Ty<'tcx>> {
+        match self {
+            Self::Ty(ty) => Some(*ty),
+            Self::DefId(_) => None,
+        }
+    }
+
     pub fn is_local(&self) -> bool {
         matches!(self.def_id(), Some(did) if did.is_local())
     }
@@ -85,6 +92,10 @@ pub struct TyOrDefIdWithGen<'tcx> {
 impl<'tcx> TyOrDefIdWithGen<'tcx> {
     pub fn def_id(&self) -> Option<DefId> {
         self.ty_or_def_id.def_id()
+    }
+
+    pub fn ty(&self) -> Option<Ty<'tcx>> {
+        self.ty_or_def_id.ty()
     }
 
     pub fn as_string(&self, tcx: TyCtxt<'tcx>) -> String {
@@ -182,7 +193,7 @@ impl<'tcx> Generator<'tcx> {
         if !self.sig_ty.contains_key(&key) {
             let mut sig_ty = None;
 
-            if let TyOrDefId::Ty(ty) = &key.ty_or_def_id {
+            if let Some(ty) = &key.ty() {
                 if key.is_local() {
                     sig_ty = Some(self.evaluate_adt_ty(ty, generics, span)?);
                 } else {
@@ -241,13 +252,12 @@ impl<'tcx> Generator<'tcx> {
     }
 
     fn find_sig_ty_(
-        &self,
+        &mut self,
         key: &TyOrDefIdWithGen<'tcx>,
         def_id: DefId,
     ) -> Option<SignalTy> {
         if self.crates.is_ferrum(def_id) {
-            let blackbox_ty = self.find_ferrum_tool_attr("blackbox_ty", def_id)?;
-            let blackbox_ty = BlackboxTy::try_from(blackbox_ty).ok()?;
+            let blackbox_ty = self.find_blackbox_ty(def_id)?;
 
             return match blackbox_ty {
                 BlackboxTy::Signal => key.generic_ty(1),
@@ -259,6 +269,14 @@ impl<'tcx> Generator<'tcx> {
                 BlackboxTy::Clock => Some(PrimTy::Clock.into()),
                 BlackboxTy::Unsigned => {
                     key.generic_const(0).map(|val| PrimTy::Unsigned(val).into())
+                }
+                BlackboxTy::UnsignedMatch => {
+                    let n = key.generic_const(0).unwrap();
+                    self.make_tuple_ty(iter::once(PrimTy::Unsigned(n)), |_, prim_ty| {
+                        Ok(prim_ty.into())
+                    })
+                    .ok()
+                    .map(Into::into)
                 }
                 BlackboxTy::Array => {
                     let n = key.generic_const(0)?;
@@ -275,15 +293,6 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_blackbox_ty(&mut self, def_id: DefId) -> Option<BlackboxTy> {
         let blackbox_ty = self.find_ferrum_tool_attr("blackbox_ty", def_id)?;
         let blackbox_ty = BlackboxTy::try_from(blackbox_ty).ok()?;
-
-        if self
-            .uniq_blackbox_tys
-            .insert(blackbox_ty, def_id)
-            .filter(|old_def_id| *old_def_id != def_id)
-            .is_some()
-        {
-            panic!("Already registered blackbox ty '{blackbox_ty}'");
-        }
 
         Some(blackbox_ty)
     }

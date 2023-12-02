@@ -35,6 +35,10 @@ impl PrimTy {
         matches!(self, PrimTy::Bool)
     }
 
+    pub fn is_unsigned(&self, n: u128) -> bool {
+        matches!(self, PrimTy::Unsigned(_n) if *_n == n)
+    }
+
     pub fn width(&self) -> u128 {
         match self {
             Self::Bool => 1,
@@ -260,6 +264,24 @@ impl From<PrimTy> for SignalTy {
     }
 }
 
+impl From<ArrayTy> for SignalTy {
+    fn from(array_ty: ArrayTy) -> Self {
+        Self::Array(array_ty)
+    }
+}
+
+impl From<StructTy> for SignalTy {
+    fn from(struct_ty: StructTy) -> Self {
+        Self::Struct(struct_ty)
+    }
+}
+
+impl From<EnumTy> for SignalTy {
+    fn from(enum_ty: EnumTy) -> Self {
+        Self::Enum(enum_ty)
+    }
+}
+
 impl SignalTy {
     pub fn mk_array(n: u128, sig_ty: SignalTy) -> Self {
         Self::Array(ArrayTy::new(n, unsafe { with_arena().alloc(sig_ty) }))
@@ -269,11 +291,21 @@ impl SignalTy {
         Self::Struct(StructTy::new(unsafe { with_arena().alloc_from_iter(iter) }))
     }
 
-    pub fn prim_ty(&self) -> PrimTy {
+    pub fn opt_prim_ty(&self) -> Option<PrimTy> {
         match self {
-            Self::Prim(prim_ty) => *prim_ty,
-            _ => panic!("expected Prim type"),
+            Self::Prim(prim_ty) => Some(*prim_ty),
+            _ => None,
         }
+    }
+
+    pub fn prim_ty(&self) -> PrimTy {
+        self.opt_prim_ty().expect("expected Prim type")
+    }
+
+    pub fn is_unsigned(&self, n: u128) -> bool {
+        self.opt_prim_ty()
+            .map(|prim| prim.is_unsigned(n))
+            .unwrap_or_default()
     }
 
     pub fn opt_array_ty(&self) -> Option<ArrayTy> {

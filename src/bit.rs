@@ -1,6 +1,5 @@
 use std::{
     fmt::{self, Binary, Debug, Display},
-    mem,
     ops::{BitAnd, BitOr, Not},
 };
 
@@ -10,7 +9,7 @@ use ferrum_netlist::sig_ty::PrimTy;
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::BitVec,
-    cast::{CastInner, IsPrimTy},
+    cast::IsPrimTy,
     signal::SignalValue,
 };
 
@@ -19,15 +18,9 @@ use crate::{
 #[repr(transparent)]
 pub struct Bit(bool);
 
-impl CastInner<bool> for Bit {
-    fn cast_inner(self) -> bool {
-        unsafe { mem::transmute::<Bit, bool>(self) }
-    }
-}
-
-impl CastInner<Bit> for bool {
-    fn cast_inner(self) -> Bit {
-        unsafe { mem::transmute::<bool, Bit>(self) }
+impl Bit {
+    pub(crate) const fn from_u128(value: u128) -> Self {
+        Self(value > 0)
     }
 }
 
@@ -81,12 +74,6 @@ impl BitPack for bool {
 
     fn unpack(bitvec: Self::Packed) -> Self {
         bitvec.inner() == 1
-    }
-}
-
-impl Bit {
-    pub(crate) const fn from_u128(value: u128) -> Self {
-        Self(value > 0)
     }
 }
 

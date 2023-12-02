@@ -246,10 +246,6 @@ impl<'tcx> Generator<'tcx> {
         }
 
         let scrutinee_out = self.net_list[scrutinee].kind.outputs().only_one();
-        // let sym = self
-        //     .idents
-        //     .for_module(module_id)
-        //     .ident(scrutinee_out.out.sym.as_str());
         let sym = self.idents.for_module(module_id).tmp();
         let scrutinee = scrutinee_out.node_out_id(scrutinee);
 

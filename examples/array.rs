@@ -22,7 +22,6 @@ pub fn top_module(
             start - end.clone(),
             end,
         ]
-        .into()
     })
 }
 

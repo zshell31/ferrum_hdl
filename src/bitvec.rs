@@ -135,11 +135,11 @@ macro_rules! impl_from {
     ($( $prim:ty => $prim_bits:literal ),+) => {
         $(
             impl<const N: usize> From<$prim> for BitVec<N> {
-                    #[inline(always)]
-                    fn from(val: $prim) -> Self {
-                        Self::new_from_u128(val as u128)
-                    }
+                #[inline(always)]
+                fn from(val: $prim) -> Self {
+                    Self::new_from_u128(val as u128)
                 }
+            }
 
             impl<const N: usize> From<BitVec<N>> for $prim
             where

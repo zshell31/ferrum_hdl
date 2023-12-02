@@ -46,10 +46,10 @@ pub fn impl_tuple_traits(input: TokenStream) -> TokenStream {
     impl_tuple.into_tokens().into()
 }
 
-#[proc_macro_derive(BitPack, attributes(bitpack))]
-pub fn derive_bitpack(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(SignalValue, attributes(signal_value))]
+pub fn derive_signal_value(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let parsed = match BitPackDerive::from_derive_input(&input) {
+    let parsed = match SignalValueDerive::from_derive_input(&input) {
         Ok(parsed) => parsed,
         Err(e) => return e.write_errors().into(),
     };
@@ -57,10 +57,10 @@ pub fn derive_bitpack(input: TokenStream) -> TokenStream {
     parsed.into_tokens().into()
 }
 
-#[proc_macro_derive(SignalValue)]
-pub fn derive_signal_value(input: TokenStream) -> TokenStream {
+#[proc_macro_derive(BitPack, attributes(bitpack))]
+pub fn derive_bitpack(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
-    let parsed = match SignalValueDerive::from_derive_input(&input) {
+    let parsed = match BitPackDerive::from_derive_input(&input) {
         Ok(parsed) => parsed,
         Err(e) => return e.write_errors().into(),
     };

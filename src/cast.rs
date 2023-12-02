@@ -9,7 +9,7 @@ pub trait CastFrom<T: Sized>: Sized {
     fn cast_from(from: T) -> Self;
 }
 
-impl<U: IsPrimTy, T: IsPrimTy + From<U>> CastFrom<U> for T {
+impl<U: IsPrimTy, T: From<U>> CastFrom<U> for T {
     fn cast_from(from: U) -> Self {
         Self::from(from)
     }

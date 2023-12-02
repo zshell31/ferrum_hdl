@@ -1,9 +1,14 @@
 use std::iter;
 
+use darling::FromAttributes;
 use either::Either;
 use proc_macro2::TokenStream;
 use quote::{quote, ToTokens};
-use syn::{Generics, ImplGenerics, TypeGenerics, WherePredicate};
+use syn::{
+    punctuated::Punctuated, token::Comma, Attribute, Expr, ExprLit, Generics,
+    ImplGenerics, Lit, Meta, MetaNameValue, PredicateType, Type, TypeArray, TypeGenerics,
+    TypeParam, TypePath, TypeTuple, WherePredicate,
+};
 
 #[derive(Debug)]
 pub enum TEither<T> {
@@ -48,5 +53,66 @@ pub fn into_where_clause<'a>(
         })
     } else {
         None
+    }
+}
+
+#[derive(Debug)]
+pub struct Bounds(pub Vec<WherePredicate>);
+
+impl Bounds {
+    pub fn contains_ty_param(&self, tparam: &TypeParam) -> bool {
+        self.0.iter().any(|bound| match bound {
+            WherePredicate::Type(PredicateType {
+                bounded_ty: Type::Path(TypePath { path, .. }),
+                ..
+            }) => path.is_ident(&tparam.ident),
+            _ => false,
+        })
+    }
+
+    pub fn is_array_constr(pred: &WherePredicate) -> bool {
+        if let WherePredicate::Type(PredicateType {
+            bounded_ty: Type::Array(TypeArray { elem, .. }),
+            bounds,
+            ..
+        }) = pred
+        {
+            if let Type::Tuple(TypeTuple { elems, .. }) = &**elem {
+                return elems.is_empty() && bounds.is_empty();
+            }
+        }
+
+        false
+    }
+}
+
+impl FromAttributes for Bounds {
+    fn from_attributes(attrs: &[Attribute]) -> darling::Result<Self> {
+        let mut bounds = vec![];
+        for attr in attrs {
+            let nested =
+                attr.parse_args_with(Punctuated::<Meta, Comma>::parse_terminated)?;
+
+            for meta in nested {
+                match meta {
+                    Meta::NameValue(MetaNameValue {
+                        path,
+                        value:
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Str(value),
+                                ..
+                            }),
+                        ..
+                    }) if path.is_ident("bound") => {
+                        let predicates = value.parse_with(
+                            Punctuated::<WherePredicate, Comma>::parse_separated_nonempty,
+                        )?;
+                        bounds.extend(predicates);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(Bounds(bounds))
     }
 }

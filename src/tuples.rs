@@ -95,11 +95,8 @@ mod tests {
 
     #[test]
     fn pack() {
-        let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) = (
-            12_u8.into(),
-            false.into(),
-            [1_u8.into(), 3_u8.into()].into(),
-        );
+        let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
+            (12_u8.into(), false.into(), [1_u8.into(), 3_u8.into()]);
 
         assert_eq!(s.pack(), 0b110000111_u64.into());
     }
@@ -109,13 +106,6 @@ mod tests {
         let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
             BitPack::unpack(0b110000111_u64.into());
 
-        assert_eq!(
-            s,
-            (
-                12_u8.into(),
-                false.into(),
-                [1_u8.into(), 3_u8.into()].into()
-            )
-        );
+        assert_eq!(s, (12_u8.into(), false.into(), [1_u8.into(), 3_u8.into()]));
     }
 }

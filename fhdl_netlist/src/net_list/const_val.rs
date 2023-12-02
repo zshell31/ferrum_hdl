@@ -4,6 +4,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
+// TODO: use long arithmetic
 #[derive(Debug, Clone, Copy)]
 pub struct ConstVal {
     pub val: u128,
@@ -54,6 +55,13 @@ impl ConstVal {
         };
 
         Self { val, width }
+    }
+
+    pub(super) fn shift(&mut self, new_val: Self) {
+        let Self { val, width } = new_val;
+        self.width += width;
+        self.val <<= width;
+        self.val |= val & ((1 << width) - 1);
     }
 }
 

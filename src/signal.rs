@@ -100,7 +100,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     #[blackbox(SignalAndThen)]
     pub fn and_then<U: SignalValue, F>(self, f: F) -> Signal<D, U>
     where
-        F: Fn(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
+        F: FnOnce(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
     {
         let mut wrapped = Wrapped::new(self);
         let mut signal = f(wrapped.clone());

@@ -37,15 +37,17 @@ impl<'n> Verilog<'n> {
     }
 
     fn write_locals(&mut self, node_id: NodeId) {
+        let can_skip = !self.net_list[node_id].is_mod_inst();
+
         for node_out_id in self.net_list[node_id].node_out_ids() {
-            self.write_local(node_out_id);
+            self.write_local(node_out_id, can_skip);
         }
     }
 
-    fn write_local(&mut self, node_out_id: NodeOutId) {
+    fn write_local(&mut self, node_out_id: NodeOutId, can_skip: bool) {
         let node_id = node_out_id.node_id();
         let out = &self.net_list[node_out_id];
-        if out.is_skip || out.inject {
+        if can_skip && (out.is_skip || out.inject) {
             return;
         }
         let is_input = self.net_list.is_input(node_id);
@@ -86,7 +88,7 @@ impl<'n> Verilog<'n> {
     fn write_local_for_injected(&mut self, node_out_id: NodeOutId) {
         let inject = self.net_list[node_out_id].inject;
 
-        self.write_local(node_out_id);
+        self.write_local(node_out_id, true);
         for input in self.net_list[node_out_id.node_id()].inputs() {
             if inject {
                 self.write_local_for_injected(*input);
@@ -386,39 +388,6 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_str(");\n\n");
             }
-            //             NodeKind::LoopStart(LoopStart { genvar, count, .. }) => {
-            //                 self.buffer.write_template(format_args!(
-            //                     r#"
-            // genvar {genvar};
-            // generate
-            // for ({genvar} = 0; {genvar} < {count}; {genvar} = {genvar} + 1) begin
-            // "#
-            //                 ));
-            //                 self.buffer.push_tab();
-            //             }
-            //             NodeKind::LoopEnd(_) => {
-            //                 self.buffer.pop_tab();
-            //                 self.buffer.write_template(format_args!(
-            //                     r#"
-            // end
-            // endgenerate
-            //                 "#,
-            //                 ));
-            //             }
-            // NodeKind::Expr(Expr {
-            //     input,
-            //     output,
-            //     skip_output_def,
-            //     expr,
-            // }) => {
-            //     if !*skip_output_def {
-            //         self.write_local(output, None);
-            //     }
-            //     let input = self.inject_input(*input);
-            //     let output = output.sym;
-
-            //     expr(&mut self.buffer, input, output);
-            // }
             NodeKind::Const(cons) => {
                 let output = cons.output().sym.unwrap();
                 let value = cons.value();
@@ -455,11 +424,11 @@ impl<'n> Visitor for Verilog<'n> {
                     buffer.write_tab();
                     if width == 1 {
                         buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start}]\n\n"
+                            "assign {output} = {input}[{start}];\n\n"
                         ));
                     } else {
                         buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start} +: {width}]\n\n"
+                            "assign {output} = {input}[{start} +: {width}];\n\n"
                         ));
                     }
                 }

@@ -203,6 +203,10 @@ impl<'tcx> Generator<'tcx> {
 
                         sig_ty = Some(self.find_sig_ty(alias_ty, ctx, span)?);
                     }
+                    TyKind::Param(_) => {
+                        let ty_id = self.add_generic_ty(*ty);
+                        sig_ty = Some(SignalTy::new(NodeTy::Ty(ty_id).into()));
+                    }
                     _ => {}
                 }
             }

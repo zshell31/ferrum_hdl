@@ -34,6 +34,7 @@ impl<'n> ListStorage<NodeIdx> for NodeStorage<'n> {
 pub struct Module {
     pub name: Symbol,
     pub is_skip: bool,
+    pub is_inlined: bool,
     pub only_inputs: bool,
     module_id: ModuleId,
     list: List<NodeIdx>,
@@ -51,6 +52,7 @@ impl Module {
             list: Default::default(),
             inputs: Default::default(),
             outputs: Default::default(),
+            is_inlined: false,
         }
     }
 
@@ -58,8 +60,8 @@ impl Module {
         NodeId::make(self.module_id, self.list.next_idx())
     }
 
-    pub(super) fn reserve_last_idx(&mut self, idx: usize) {
-        self.list.reserve_last_idx(idx);
+    pub(super) fn shift_last_idx(&mut self, idx: usize) {
+        self.list.shift_last_idx(idx);
     }
 
     pub(super) fn last_idx(&self) -> usize {
@@ -127,13 +129,6 @@ impl Module {
         self.inputs.contains(&node_idx)
     }
 
-    pub(super) fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
-        let module_id = self.module_id;
-        self.inputs
-            .iter()
-            .map(move |input| NodeId::make(module_id, *input))
-    }
-
     pub(super) fn add_output(&mut self, node_out_idx: NodeOutIdx) {
         self.outputs.insert(node_out_idx);
     }
@@ -142,7 +137,14 @@ impl Module {
         self.outputs.contains(&node_out_idx)
     }
 
-    pub(super) fn outputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+    pub fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
+        let module_id = self.module_id;
+        self.inputs
+            .iter()
+            .map(move |input| NodeId::make(module_id, *input))
+    }
+
+    pub fn outputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
         let module_id = self.module_id;
         self.outputs
             .iter()
@@ -187,12 +189,14 @@ impl Module {
 
     pub(crate) fn dump(&self, module_id: ModuleId) {
         println!(
-            "{} {} (is_skip {}, head {:?}, tail {:?})",
+            "{} {} (is_skip {}, is_inlined {}, head {:?}, tail {:?}, last_idx: {})",
             module_id.idx(),
             self.name,
             self.is_skip,
+            self.is_inlined,
             self.head(),
-            self.tail()
+            self.tail(),
+            self.last_idx()
         );
         println!(
             "inputs: {}",

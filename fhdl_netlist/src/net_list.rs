@@ -204,7 +204,9 @@ impl NetList {
     }
 
     pub fn add_node(&mut self, mod_id: ModuleId, node: Node) {
+        assert!(!self.nodes.contains_key(&node.node_id()));
         assert_eq!(node.node_id().module_id(), mod_id);
+
         node.validate(mod_id, self);
 
         let node_id = node.node_id();
@@ -254,6 +256,7 @@ impl NetList {
         prev_node_id: Option<NodeId>,
         node: Node,
     ) {
+        assert!(!self.nodes.contains_key(&node.node_id()));
         assert_eq!(node.node_id().module_id(), mod_id);
         node.validate(mod_id, self);
 
@@ -272,6 +275,7 @@ impl NetList {
 
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
         node.validate(node_id.module_id(), self);
+
         let mod_id = node_id.module_id();
         let mut node: Node = Node::new(node_id, node.into());
         assert_eq!(self[node_id].outputs_len(), node.outputs_len());
@@ -450,8 +454,8 @@ impl NetList {
         }
     }
 
-    pub fn reserve_last_idx(&mut self, module_id: ModuleId, idx: usize) {
-        self.modules[module_id].reserve_last_idx(idx)
+    pub fn shift_last_idx(&mut self, module_id: ModuleId, idx: usize) {
+        self.modules[module_id].shift_last_idx(idx)
     }
 
     pub fn last_idx(&self, module_id: ModuleId) -> usize {
@@ -476,9 +480,9 @@ impl NetList {
         let mut prev_id = self.nodes[mod_inst_node_id].prev();
         let res = prev_id;
 
-        let offset = self.last_idx(source);
-        let last_idx = self.last_idx(target) + offset;
-        self.reserve_last_idx(target, last_idx);
+        let offset = self.last_idx(target);
+        let last_idx = self.last_idx(source) + offset;
+        self.shift_last_idx(target, last_idx);
 
         let inputs: FxHashMap<NodeOutId, NodeOutId> = self.modules[source]
             .inputs()

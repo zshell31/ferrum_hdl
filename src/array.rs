@@ -90,7 +90,7 @@ pub trait ArrayExt<const N: usize, T> {
         for<'a> [T; M]: TryFrom<&'a [T]>;
 
     #[blackbox(ArrayIndex)]
-    fn index(&self, idx: Idx<N>) -> T
+    fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
         Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
@@ -125,7 +125,7 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         }
     }
 
-    fn index(&self, idx: Idx<N>) -> T
+    fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
         Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
@@ -273,14 +273,14 @@ mod tests {
         let s: Array<4, u8> = [4, 3, 2, 1];
         let idx: Idx<4> = Default::default();
 
-        assert_eq!(s.index(idx.clone()), 4);
+        assert_eq!(s.idx(idx.clone()), 4);
         let idx = idx.succ();
-        assert_eq!(s.index(idx.clone()), 3);
+        assert_eq!(s.idx(idx.clone()), 3);
         let idx = idx.succ();
-        assert_eq!(s.index(idx.clone()), 2);
+        assert_eq!(s.idx(idx.clone()), 2);
         let idx = idx.succ();
-        assert_eq!(s.index(idx.clone()), 1);
+        assert_eq!(s.idx(idx.clone()), 1);
         let idx = idx.succ();
-        assert_eq!(s.index(idx.clone()), 4);
+        assert_eq!(s.idx(idx.clone()), 4);
     }
 }

@@ -69,7 +69,7 @@ impl<I: Idx> List<I> {
         self.last_idx
     }
 
-    pub(crate) fn reserve_last_idx(&mut self, idx: usize) {
+    pub(crate) fn shift_last_idx(&mut self, idx: usize) {
         assert!(self.last_idx <= idx);
         self.last_idx = idx;
     }

@@ -11,7 +11,6 @@ use crate::{
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct ModInst {
     name: Option<Symbol>,
-    inlined: bool,
     module_id: ModuleId,
     inputs: Vec<NodeOutIdx>,
     outputs: Vec<NodeOutput>,
@@ -21,13 +20,11 @@ impl ModInst {
     pub fn new(
         name: Option<Symbol>,
         module_id: ModuleId,
-        inlined: bool,
         inputs: impl IntoIterator<Item = NodeOutId>,
         outputs: impl IntoIterator<Item = (NodeTy, Option<Symbol>)>,
     ) -> Self {
         Self {
             name,
-            inlined,
             module_id,
             inputs: inputs.into_iter().map(Into::into).collect(),
             outputs: outputs
@@ -43,10 +40,6 @@ impl ModInst {
 
     pub fn set_name(&mut self, name: Option<Symbol>) {
         self.name = name;
-    }
-
-    pub fn inlined(&self) -> bool {
-        self.inlined
     }
 
     pub fn module_id(&self) -> ModuleId {
@@ -91,8 +84,7 @@ impl<R: Resolver> Resolve<R> for ModInst {
     fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
         Ok(Self {
             name: self.name,
-            inlined: self.inlined,
-            module_id: resolver.resolve_module_id(self.module_id),
+            module_id: resolver.resolve_module_id(self.module_id)?,
             inputs: self.inputs.clone(),
             outputs: self.outputs.resolve(resolver)?,
         })

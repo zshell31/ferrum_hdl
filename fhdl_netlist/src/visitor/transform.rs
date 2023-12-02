@@ -75,7 +75,7 @@ impl<'n> Transform<'n> {
                         Some(MultiConst::new(values, outputs).into())
                     }
                     None => {
-                        *should_be_inlined = mod_inst.inlined()
+                        *should_be_inlined = self.net_list[module_id].is_inlined
                             || node.inputs_len() == 0
                             || self.net_list[module_id].only_inputs
                             || node

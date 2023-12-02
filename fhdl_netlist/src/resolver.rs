@@ -16,7 +16,8 @@ pub trait Resolver {
         param_id: ParamId,
     ) -> Result<u128, Self::Error>;
 
-    fn resolve_module_id(&mut self, module_id: ModuleId) -> ModuleId;
+    fn resolve_module_id(&mut self, module_id: ModuleId)
+        -> Result<ModuleId, Self::Error>;
 }
 
 pub trait Resolve<R: Resolver>: Sized {

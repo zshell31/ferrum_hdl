@@ -1,11 +1,10 @@
-use std::{borrow::Cow, collections::VecDeque};
+use std::borrow::Cow;
 
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     group::ItemId,
     net_list::ModuleId,
-    node::{Input, ModInst, Node, NodeKind},
-    resolver::Resolve,
+    node::{Input, ModInst},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
@@ -21,12 +20,7 @@ use rustc_span::{symbol::Ident, Span, Symbol as RustSymbol};
 use smallvec::SmallVec;
 
 use super::{
-    expr::ExprOrItemId,
-    metadata::{
-        resolver::{ImportModule, MetadataResolver},
-        Metadata,
-    },
-    Generator, ModuleKey, MonoItem,
+    expr::ExprOrItemId, metadata::resolver::MetadataResolver, Generator, MonoItem,
 };
 use crate::{
     blackbox::Blackbox,
@@ -106,6 +100,9 @@ impl<'tcx> Generator<'tcx> {
 
         let module_sym = Symbol::new(name);
         let module_id = self.netlist.add_module(module_sym, top_module);
+        if self.is_inlined(body_id.hir_id.owner.def_id) {
+            self.netlist[module_id].is_inlined = true;
+        }
 
         self.idents.for_module(module_id).push_scope();
 
@@ -338,9 +335,8 @@ impl<'tcx> Generator<'tcx> {
         // but ctx.generic_args to evaluate arguments of the function because arguments are is the
         // part of the caller and may require the generics of the caller
         let args = self.eval_fn_inputs(args, ctx)?;
-        let inlined = self.is_inlined(fn_did);
 
-        Ok(self.instantiate_module(module_id, args, inlined, output_ty, ctx))
+        Ok(self.instantiate_module(module_id, args, output_ty, ctx))
     }
 
     pub fn eval_impl_fn_call(
@@ -379,16 +375,14 @@ impl<'tcx> Generator<'tcx> {
         // but ctx.generic_args to evaluate arguments of the function because arguments are is the
         // part of the caller and may require the generics of the caller
         let inputs = self.eval_fn_inputs(self_arg.into_iter().chain(args), ctx)?;
-        let inlined = self.is_inlined(impl_id);
 
-        Ok(self.instantiate_module(module_id, inputs, inlined, output_ty, ctx))
+        Ok(self.instantiate_module(module_id, inputs, output_ty, ctx))
     }
 
     fn instantiate_module(
         &mut self,
         instant_mod_id: ModuleId,
         inputs: SmallVec<[ItemId; 4]>,
-        inlined: bool,
         sig_ty: SignalTy,
         ctx: &EvalContext<'tcx>,
     ) -> ItemId {
@@ -399,7 +393,7 @@ impl<'tcx> Generator<'tcx> {
             .mod_outputs(instant_mod_id)
             .map(|node_out_id| (self.netlist[node_out_id].ty, None));
 
-        let mod_inst = ModInst::new(None, instant_mod_id, inlined, inputs, outputs);
+        let mod_inst = ModInst::new(None, instant_mod_id, inputs, outputs);
         let node_id = self.netlist.add(ctx.module_id, mod_inst);
 
         self.combine_outputs(node_id, sig_ty)
@@ -445,13 +439,10 @@ impl<'tcx> Generator<'tcx> {
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
                 // resolve all types from the imported module using fn_generics
-                let module_id = self.clone_module_from_metadata(
-                    module_id,
-                    &metadata,
-                    fn_did,
-                    &ctx.with_generic_args(fn_generics),
-                    span,
-                )?;
+                let ctx = ctx.with_generic_args(fn_generics);
+                let mut resolver =
+                    MetadataResolver::new(self, &metadata, fn_did, &ctx, span);
+                let module_id = resolver.import_module_from_metadata(module_id)?;
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
@@ -470,88 +461,8 @@ impl<'tcx> Generator<'tcx> {
             utils::expected_call(expr)?.args.into_iter().map(Into::into),
             ctx,
         )?;
-        let is_inlined = self.is_inlined(fn_did);
 
-        Ok(self.instantiate_module(module_id, inputs, is_inlined, output_ty, ctx))
-    }
-
-    fn clone_module_from_metadata(
-        &mut self,
-        module_id: ModuleId,
-        metadata: &Metadata<'tcx>,
-        fn_did: DefId,
-        ctx: &EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ModuleId, Error> {
-        let netlist = metadata.netlist();
-        let mut modules_to_eval = {
-            let mut v = VecDeque::with_capacity(8);
-
-            let source = &netlist[module_id];
-            let target = self.netlist.add_module(source.name, false);
-
-            self.imported_modules.insert(
-                ModuleKey {
-                    krate: fn_did.krate,
-                    module_id,
-                },
-                target,
-            );
-
-            v.push_back(ImportModule {
-                source: module_id,
-                target,
-            });
-            v
-        };
-
-        let mut res = None;
-
-        while let Some(ImportModule { source, target }) = modules_to_eval.pop_front() {
-            let offset = netlist.last_idx(source);
-            self.netlist.reserve_last_idx(target, offset);
-
-            let mut cursor = netlist.mod_cursor(source);
-            while let Some(node_id) = netlist.next(&mut cursor) {
-                let mut resolver = MetadataResolver::new(
-                    self,
-                    metadata,
-                    fn_did,
-                    &mut modules_to_eval,
-                    ctx,
-                    span,
-                );
-
-                let kind = netlist[node_id].resolve_kind(&mut resolver)?;
-
-                let kind = match kind {
-                    NodeKind::TemplateNode(node) => {
-                        let id = node.temp_node_id();
-                        let gen_node = metadata.template_node(id).ok_or_else(|| {
-                            SpanError::new(SpanErrorKind::MissingTemplateNode(id), span)
-                        })?;
-                        let gen_node = gen_node.resolve(&mut resolver)?;
-
-                        gen_node.eval(target, self)
-                    }
-                    _ => kind,
-                };
-
-                let node_id = node_id.with_module_id(target);
-                let node = Node::new(node_id, kind);
-
-                self.netlist.add_node(target, node);
-            }
-
-            for node_out_id in netlist.mod_outputs(source) {
-                let new_node_out_id = node_out_id.with_module_id(target);
-                self.netlist.add_output(new_node_out_id);
-            }
-
-            let _ = res.get_or_insert(target);
-        }
-
-        Ok(res.unwrap())
+        Ok(self.instantiate_module(module_id, inputs, output_ty, ctx))
     }
 
     pub fn find_blackbox(

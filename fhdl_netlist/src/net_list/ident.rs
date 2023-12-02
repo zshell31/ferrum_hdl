@@ -211,7 +211,7 @@ impl Add<usize> for NodeOutId {
 
 impl<R: Resolver> Resolve<R> for NodeOutId {
     fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        let module_id = resolver.resolve_module_id(self.node_id().module_id());
+        let module_id = resolver.resolve_module_id(self.node_id().module_id())?;
         Ok(self.with_module_id(module_id))
     }
 }

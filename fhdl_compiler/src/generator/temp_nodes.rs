@@ -202,9 +202,10 @@ impl EvalTemplateNodeKind for CaseIndex {
             step: width,
         }
         .take(count as usize)
-        .map(|idx| {
+        .enumerate()
+        .map(|(num, idx)| {
             let mut mask = BitVecMask::default();
-            mask.set_val(idx, variant_width);
+            mask.set_val(num as u128, variant_width);
 
             let variant = generator.netlist.add_and_get_out(
                 module_id,

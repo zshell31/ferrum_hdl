@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId},
-    node::NodeKind,
+    node::{NodeKindWithId, NodeKindWithIdMut},
     symbol::Symbol,
     visitor::Visitor,
 };
@@ -78,12 +78,12 @@ impl<'n> SetNames<'n> {
         let mut new_name = None;
         let mut mod_outputs = SmallVec::<[_; 8]>::new();
 
-        if let NodeKind::ModInst(mod_inst) = &*self.net_list[node_id].kind {
+        if let NodeKindWithId::ModInst(mod_inst) = self.net_list[node_id].kind() {
             let sym = Symbol::new_from_args(format_args!(
                 "__{}",
-                self.net_list[mod_inst.module_id].name
+                self.net_list[mod_inst.module_id()].name
             ));
-            if mod_inst.name.is_none() {
+            if mod_inst.name().is_none() {
                 let count = self.idents.get(&(module_id, sym)).copied();
 
                 let (new_sym, count) = Self::ident(sym, count);
@@ -93,22 +93,25 @@ impl<'n> SetNames<'n> {
 
             for (output, mod_output) in self.net_list[node_id]
                 .outputs()
-                .zip(self.net_list.mod_outputs(mod_inst.module_id))
+                .zip(self.net_list.mod_outputs(mod_inst.module_id()))
             {
                 if output.sym.is_none() {
                     mod_outputs.push((
-                        output.node_out_id().out_id(),
+                        output.node_out_id().idx(),
                         self.net_list[mod_output].sym,
                     ));
                 }
             }
         }
 
-        if let NodeKind::ModInst(mod_inst) = &mut *self.net_list[node_id].kind {
-            mod_inst.name = mod_inst.name.or(new_name);
+        if let NodeKindWithIdMut::ModInst(mut mod_inst) =
+            self.net_list[node_id].kind_mut()
+        {
+            let name = mod_inst.name().or(new_name);
+            mod_inst.set_name(name);
 
             for (ind, sym) in mod_outputs {
-                mod_inst.outputs[ind].sym = sym;
+                mod_inst.outputs_mut()[ind].sym = sym;
             }
         }
 

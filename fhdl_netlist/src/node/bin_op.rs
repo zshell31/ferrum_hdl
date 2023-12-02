@@ -3,7 +3,11 @@ use std::fmt::{self, Display};
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    sig_ty::NodeTy,
+    symbol::Symbol,
+};
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub enum BinOp {
@@ -54,9 +58,9 @@ impl Display for BinOp {
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct BinOpNode {
-    pub bin_op: BinOp,
-    pub inputs: (NodeOutId, NodeOutId),
-    pub output: NodeOutput,
+    bin_op: BinOp,
+    inputs: (NodeOutIdx, NodeOutIdx),
+    output: NodeOutput,
 }
 
 impl BinOpNode {
@@ -69,9 +73,27 @@ impl BinOpNode {
     ) -> Self {
         Self {
             bin_op,
-            inputs: (input1, input2),
+            inputs: (input1.into(), input2.into()),
             output: NodeOutput::wire(ty, sym),
         }
+    }
+
+    pub fn bin_op(&self) -> BinOp {
+        self.bin_op
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
+    }
+}
+
+impl WithId<ModuleId, &'_ BinOpNode> {
+    pub fn left(&self) -> NodeOutId {
+        NodeOutId::make(self.id(), self.inputs.0)
+    }
+
+    pub fn right(&self) -> NodeOutId {
+        NodeOutId::make(self.id(), self.inputs.1)
     }
 }
 
@@ -82,7 +104,7 @@ impl From<BinOpNode> for NodeKind {
 }
 
 impl IsNode for BinOpNode {
-    type Inputs = (NodeOutId, NodeOutId);
+    type Inputs = (NodeOutIdx, NodeOutIdx);
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

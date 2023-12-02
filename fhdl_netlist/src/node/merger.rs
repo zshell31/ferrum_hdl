@@ -4,16 +4,16 @@ use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::NodeOutId,
+    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Merger {
-    pub inputs: Vec<NodeOutId>,
-    pub output: NodeOutput,
-    pub rev: bool,
+    inputs: Vec<NodeOutIdx>,
+    output: NodeOutput,
+    rev: bool,
 }
 
 impl Merger {
@@ -24,10 +24,35 @@ impl Merger {
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
-            inputs: inputs.into_iter().collect(),
+            inputs: inputs.into_iter().map(Into::into).collect(),
             output: NodeOutput::wire(NodeTy::BitVec(width), sym.into()),
             rev,
         }
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
+    }
+
+    pub fn rev(&self) -> bool {
+        self.rev
+    }
+
+    pub fn inputs_len(&self) -> usize {
+        self.inputs.len()
+    }
+
+    pub fn inputs_is_empty(&self) -> bool {
+        self.inputs.is_empty()
+    }
+}
+
+impl WithId<ModuleId, &'_ Merger> {
+    pub fn inputs(&self) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
+        let module_id = self.id();
+        self.inputs
+            .iter()
+            .map(move |input| NodeOutId::make(module_id, *input))
     }
 }
 
@@ -38,7 +63,7 @@ impl From<Merger> for NodeKind {
 }
 
 impl IsNode for Merger {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

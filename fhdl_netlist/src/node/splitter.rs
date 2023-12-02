@@ -4,17 +4,17 @@ use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{NetList, NodeOutId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Splitter {
-    pub input: NodeOutId,
-    pub outputs: Vec<NodeOutput>,
-    pub start: Option<Width>,
-    pub rev: bool,
+    input: NodeOutIdx,
+    outputs: Vec<NodeOutput>,
+    start: Option<Width>,
+    rev: bool,
 }
 
 impl Splitter {
@@ -25,7 +25,7 @@ impl Splitter {
         rev: bool,
     ) -> Self {
         Self {
-            input,
+            input: input.into(),
             outputs: outputs
                 .into_iter()
                 .map(|(ty, sym)| NodeOutput::wire(ty, sym.into()))
@@ -35,8 +35,23 @@ impl Splitter {
         }
     }
 
+    pub fn outputs(&self) -> &[NodeOutput] {
+        &self.outputs
+    }
+
+    pub fn rev(&self) -> bool {
+        self.rev
+    }
+}
+
+impl WithId<ModuleId, &'_ Splitter> {
+    pub fn input(&self) -> NodeOutId {
+        NodeOutId::make(self.id(), self.input)
+    }
+
     pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(&self, net_list: &T) -> Width {
-        let input = net_list[self.input];
+        let module_id = self.id();
+        let input = net_list[NodeOutId::make(module_id, self.input)];
         let input_width = input.ty.width();
         self.start.map(Into::into).unwrap_or(if !self.rev {
             0.into()
@@ -46,11 +61,12 @@ impl Splitter {
     }
 
     pub fn pass_all_bits(&self, net_list: &NetList) -> bool {
+        let module_id = self.id();
         if self.outputs.len() != 1 {
             return false;
         }
 
-        let in_width = net_list[self.input].width();
+        let in_width = net_list[NodeOutId::make(module_id, self.input)].width();
         let out_width = self.outputs[0].ty.width();
 
         in_width == out_width
@@ -64,7 +80,7 @@ impl From<Splitter> for NodeKind {
 }
 
 impl IsNode for Splitter {
-    type Inputs = NodeOutId;
+    type Inputs = NodeOutIdx;
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
@@ -83,8 +99,8 @@ impl IsNode for Splitter {
         self.outputs.as_mut_slice()
     }
 
-    fn validate(&self, net_list: &NetList) {
-        let input_width = net_list[self.input].width();
+    fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+        let input_width = net_list[NodeOutId::make(module_id, self.input)].width();
         let output_width = self
             .outputs
             .iter()

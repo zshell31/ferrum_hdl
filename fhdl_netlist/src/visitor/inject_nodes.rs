@@ -2,7 +2,7 @@ use smallvec::SmallVec;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{Node, NodeKind},
+    node::{Node, NodeKindWithId},
     visitor::Visitor,
 };
 
@@ -20,9 +20,11 @@ impl<'n> InjectNodes<'n> {
     }
 
     fn linked_by_dff(&self, link: &Node, link_out_id: NodeOutId) -> bool {
-        match &*link.kind {
+        use NodeKindWithId as NodeKind;
+
+        match link.kind() {
             NodeKind::DFF(node) => {
-                let inputs = node.dff_inputs();
+                let inputs = node.inputs();
                 inputs.rst_val == link_out_id
                     || inputs.data == link_out_id
                     || (inputs.en.is_some() && inputs.en.unwrap() == link_out_id)
@@ -55,7 +57,7 @@ impl<'n> InjectNodes<'n> {
         let node = &mut self.net_list[node_id];
 
         for node_out_id in inject_outs {
-            node.output_by_ind_mut(node_out_id.out_id()).inject = true;
+            node.output_by_ind_mut(node_out_id.idx()).inject = true;
         }
 
         if node.outputs().all(|output| output.inject) {

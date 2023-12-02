@@ -1,12 +1,17 @@
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{encoding::Wrap, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    encoding::Wrap,
+    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    sig_ty::NodeTy,
+    symbol::Symbol,
+};
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Mux2 {
-    inputs: Wrap<[NodeOutId; 3]>,
-    pub output: NodeOutput,
+    inputs: Wrap<[NodeOutIdx; 3]>,
+    output: NodeOutput,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -25,16 +30,23 @@ impl Mux2 {
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
-            inputs: [sel, input1, input2].into(),
+            inputs: [sel.into(), input1.into(), input2.into()].into(),
             output: NodeOutput::wire(ty, sym.into()),
         }
     }
 
-    pub fn mux2_inputs(&self) -> Mux2Inputs {
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
+    }
+}
+
+impl WithId<ModuleId, &'_ Mux2> {
+    pub fn inputs(&self) -> Mux2Inputs {
+        let module_id = self.id();
         Mux2Inputs {
-            sel: self.inputs[0],
-            input1: self.inputs[1],
-            input2: self.inputs[2],
+            sel: NodeOutId::make(module_id, self.inputs[0]),
+            input1: NodeOutId::make(module_id, self.inputs[1]),
+            input2: NodeOutId::make(module_id, self.inputs[2]),
         }
     }
 }
@@ -46,7 +58,7 @@ impl From<Mux2> for NodeKind {
 }
 
 impl IsNode for Mux2 {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

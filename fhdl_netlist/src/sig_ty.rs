@@ -193,7 +193,7 @@ impl From<u128> for Width {
 
 impl Width {}
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum NodeTy {
     Bool,
     Bit,
@@ -211,7 +211,7 @@ pub enum NodeTy {
     Ty(u32),
 }
 
-impl Debug for NodeTy {
+impl Display for NodeTy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: Cow<'_, str> = match self {
             Self::Bool => "bool".into(),
@@ -223,11 +223,11 @@ impl Debug for NodeTy {
             Self::U128 => "u128".into(),
             Self::Usize => "usize".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
-            Self::BitVec(n) => format!("bitvec[{n:#?}]").into(),
-            Self::Enum(ty) => format!("enum[{:#?}]", ty.width()).into(),
+            Self::BitVec(n) => format!("bitvec[{n}]").into(),
+            Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
-            Self::Ty(idx) => format!("type({idx:#?})").into(),
+            Self::Ty(idx) => format!("type({idx})").into(),
         };
 
         f.write_str(s.as_ref())
@@ -283,7 +283,7 @@ impl NodeTy {
             (Unsigned(n), U8 | U16 | U32 | U64 | U128 | Usize)
             | (U8 | U16 | U32 | U64 | U128 | Usize, Unsigned(n)) => Some(Unsigned(n)),
             _ => {
-                println!("ty_for_bin_expr: lhs = {:?} rhs = {:?}", lhs, rhs);
+                println!("ty_for_bin_expr: lhs = {lhs} rhs = {rhs}");
                 None
             }
         }
@@ -300,7 +300,7 @@ impl NodeTy {
             | Self::U128
             | Self::Usize
             | Self::Clock
-            | Self::ClockDomain => true,
+            | Self::ClockDomain => false,
             Self::Unsigned(n) => n.is_generic(),
             Self::BitVec(n) => n.is_generic(),
             Self::Enum(enum_ty) => enum_ty.is_generic(),

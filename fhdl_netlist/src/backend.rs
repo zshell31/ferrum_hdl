@@ -8,11 +8,7 @@ use crate::{
     buffer::Buffer,
     bvm::BitVecMask,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{
-        BinOpNode, BitNot, Case, CaseInputs, Const, DFFInputs, Merger, ModInst,
-        MultiConst, Mux2, Mux2Inputs, NetKind, NodeKind, NodeOutput, Not, Splitter,
-        ZeroExtend, DFF,
-    },
+    node::{CaseInputs, DFFInputs, Mux2Inputs, NetKind, NodeKindWithId, NodeOutput},
     symbol::Symbol,
     visitor::{ParamKind, Visitor},
 };
@@ -131,6 +127,8 @@ impl<'n> Verilog<'n> {
         expr: &mut Buffer,
         nested_expr: bool,
     ) {
+        use NodeKindWithId as NodeKind;
+
         let node_out = &self.net_list[node_out_id];
         let node_id = node_out_id.node_id();
         let node = &self.net_list[node_id];
@@ -150,43 +148,33 @@ impl<'n> Verilog<'n> {
             return;
         }
 
-        match &*node.kind {
-            NodeKind::BitNot(BitNot { input, .. }) => {
+        match node.kind() {
+            NodeKind::BitNot(bit_not) => {
                 expr.write_str("~");
-                self.inject_node(module_id, *input, expr, true);
+                self.inject_node(module_id, bit_not.input(), expr, true);
             }
-            NodeKind::Not(Not { input, .. }) => {
+            NodeKind::Not(not) => {
                 expr.write_str("!");
-                self.inject_node(module_id, *input, expr, true);
+                self.inject_node(module_id, not.input(), expr, true);
             }
-            NodeKind::BinOp(BinOpNode {
-                bin_op,
-                inputs: (left, right),
-                ..
-            }) => {
+            NodeKind::BinOp(bin_op) => {
                 if nested_expr {
                     expr.write_str("( ");
                 }
 
-                self.inject_node(module_id, *left, expr, true);
-                expr.write_fmt(format_args!(" {bin_op} "));
-                self.inject_node(module_id, *right, expr, true);
+                self.inject_node(module_id, bin_op.left(), expr, true);
+                expr.write_fmt(format_args!(" {} ", bin_op.bin_op()));
+                self.inject_node(module_id, bin_op.right(), expr, true);
 
                 if nested_expr {
                     expr.write_str(" )");
                 }
             }
-            NodeKind::Splitter(
-                splitter @ Splitter {
-                    input,
-                    outputs,
-                    rev,
-                    ..
-                },
-            ) => {
-                let out_id = node_out_id.out_id();
+            NodeKind::Splitter(splitter) => {
+                let out_id = node_out_id.idx();
                 let mut start = splitter.start(self.net_list).value();
-                if !rev {
+                let outputs = splitter.outputs();
+                if !splitter.rev() {
                     for output in outputs.iter().take(out_id) {
                         start += output.width().value();
                     }
@@ -196,10 +184,10 @@ impl<'n> Verilog<'n> {
                     }
                 }
 
-                self.inject_node(module_id, *input, expr, false);
+                self.inject_node(module_id, splitter.input(), expr, false);
                 let width = outputs[out_id].width().value();
 
-                if *rev {
+                if splitter.rev() {
                     start -= width;
                 }
 
@@ -209,15 +197,15 @@ impl<'n> Verilog<'n> {
                     expr.write_fmt(format_args!("[{start} +: {width}]"));
                 }
             }
-            NodeKind::Merger(Merger { inputs, rev, .. }) => {
+            NodeKind::Merger(merger) => {
                 expr.write_str("{ ");
-                let inputs = if !rev {
-                    Either::Left(inputs.iter())
+                let inputs = if !merger.rev() {
+                    Either::Left(merger.inputs())
                 } else {
-                    Either::Right(inputs.iter().rev())
+                    Either::Right(merger.inputs().rev())
                 };
                 expr.intersperse(", ", inputs, |expr, input| {
-                    self.inject_node(module_id, *input, expr, false);
+                    self.inject_node(module_id, input, expr, false);
                 });
                 expr.write_str(" }");
             }
@@ -339,24 +327,22 @@ impl<'n> Visitor for Verilog<'n> {
     }
 
     fn visit_node(&mut self, node_id: NodeId) {
+        use NodeKindWithId as NodeKind;
+
         self.write_locals(node_id);
 
         let node = &self.net_list[node_id];
-        match &*node.kind {
+        match node.kind() {
             NodeKind::GenNode(_) => {
                 panic!("Cannot generate verilog for GenNode");
             }
             NodeKind::Input(_) => {}
-            NodeKind::ModInst(ModInst {
-                name,
-                module_id,
-                inputs,
-                outputs,
-                ..
-            }) => {
-                let module = &self.net_list[*module_id];
-                assert_eq!(inputs.len(), module.inputs_len());
-                assert_eq!(outputs.len(), module.outputs_len());
+            NodeKind::ModInst(mod_inst) => {
+                let module_id = mod_inst.module_id();
+                let name = mod_inst.name();
+                let module = &self.net_list[module_id];
+                assert_eq!(mod_inst.inputs_len(), module.inputs_len());
+                assert_eq!(mod_inst.outputs_len(), module.outputs_len());
 
                 self.buffer.write_tab();
 
@@ -367,14 +353,14 @@ impl<'n> Visitor for Verilog<'n> {
                 ));
 
                 self.buffer.push_tab();
-                if !inputs.is_empty() {
+                if !mod_inst.inputs_is_empty() {
                     self.buffer.write_tab();
                     self.buffer.write_str("// Inputs\n");
                 }
                 for (input, mod_input) in
-                    inputs.iter().zip(self.net_list.mod_inputs(*module_id))
+                    mod_inst.inputs().zip(self.net_list.mod_inputs(module_id))
                 {
-                    let input_sym = self.inject_input(*input, false);
+                    let input_sym = self.inject_input(input, false);
                     let mod_input_sym = self.net_list[mod_input].sym.unwrap();
 
                     self.buffer.write_tab();
@@ -386,7 +372,10 @@ impl<'n> Visitor for Verilog<'n> {
 
                 self.buffer.intersperse(
                     SEP,
-                    outputs.iter().zip(self.net_list.mod_outputs(*module_id)),
+                    mod_inst
+                        .outputs()
+                        .iter()
+                        .zip(self.net_list.mod_outputs(module_id)),
                     |buffer, (output, mod_output)| {
                         let output_sym = output.sym.unwrap();
                         let mod_output_sym = self.net_list[mod_output].sym.unwrap();
@@ -435,14 +424,17 @@ impl<'n> Visitor for Verilog<'n> {
 
             //     expr(&mut self.buffer, input, output);
             // }
-            NodeKind::Const(Const { value, output }) => {
-                let output = output.sym.unwrap();
+            NodeKind::Const(cons) => {
+                let output = cons.output().sym.unwrap();
+                let value = cons.value();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = {value};"));
             }
-            NodeKind::MultiConst(MultiConst { values, outputs }) => {
-                for (value, output) in values.iter().zip(outputs.iter()) {
+            NodeKind::MultiConst(multi_cons) => {
+                for (value, output) in
+                    multi_cons.values().iter().zip(multi_cons.outputs())
+                {
                     if output.is_skip {
                         continue;
                     }
@@ -453,19 +445,15 @@ impl<'n> Visitor for Verilog<'n> {
                         .write_template(format_args!("assign {output} = {value};"));
                 }
             }
-            NodeKind::Splitter(
-                splitter @ Splitter {
-                    input,
-                    outputs,
-                    rev,
-                    ..
-                },
-            ) => {
-                let input_width = self.net_list[*input].ty.width().value();
-                let mut start = splitter.start(self.net_list).value();
-                let input = self.inject_input(*input, false);
+            NodeKind::Splitter(splitter) => {
+                let input = splitter.input();
+                let rev = splitter.rev();
 
-                for output in outputs.iter() {
+                let input_width = self.net_list[input].ty.width().value();
+                let mut start = splitter.start(self.net_list).value();
+                let input = self.inject_input(input, false);
+
+                for output in splitter.outputs() {
                     let width = output.ty.width().value();
 
                     if !(output.is_skip || output.inject) {
@@ -473,14 +461,14 @@ impl<'n> Visitor for Verilog<'n> {
 
                         self.buffer.write_tab();
                         if width == 1 {
-                            let start = if !*rev { start } else { start - 1 };
+                            let start = if !rev { start } else { start - 1 };
 
                             self.buffer.write_fmt(format_args!(
                                 "assign {output} = {input}[{start}];\n\n"
                             ));
                         } else {
                             #[allow(clippy::collapsible_else_if)]
-                            let (start, width) = if !*rev {
+                            let (start, width) = if !rev {
                                 if start <= input_width.saturating_sub(width) {
                                     (start, width)
                                 } else {
@@ -503,32 +491,29 @@ impl<'n> Visitor for Verilog<'n> {
                         }
                     }
 
-                    if !*rev {
+                    if !rev {
                         start = cmp::min(start + width, input_width);
                     } else {
                         start = start.saturating_sub(width);
                     }
                 }
             }
-            NodeKind::Merger(Merger {
-                inputs,
-                output,
-                rev,
-            }) => {
-                if !inputs.is_empty() {
-                    let output = output.sym.unwrap();
+            NodeKind::Merger(merger) => {
+                if !merger.inputs_is_empty() {
+                    let output = merger.output().sym.unwrap();
+                    let rev = merger.rev();
 
                     self.buffer.write_tab();
                     self.buffer
                         .write_fmt(format_args!("assign {output} = {{\n"));
 
-                    let inputs = if !*rev {
-                        Either::Left(inputs.iter())
+                    let inputs = if !rev {
+                        Either::Left(merger.inputs())
                     } else {
-                        Either::Right(inputs.iter().rev())
+                        Either::Right(merger.inputs().rev())
                     };
                     let inputs = inputs
-                        .map(|input| self.inject_input(*input, false))
+                        .map(|input| self.inject_input(input, false))
                         .collect::<SmallVec<[_; 8]>>();
 
                     self.buffer.push_tab();
@@ -543,23 +528,23 @@ impl<'n> Visitor for Verilog<'n> {
                     self.buffer.write_str("};\n\n");
                 }
             }
-            NodeKind::ZeroExtend(ZeroExtend { input, output }) => {
-                let input = self.inject_input(*input, false);
-                let output = output.sym.unwrap();
+            NodeKind::ZeroExtend(zero_extend) => {
+                let input = self.inject_input(zero_extend.input(), false);
+                let output = zero_extend.output().sym.unwrap();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = {{ 0, {input} }};"));
             }
-            NodeKind::Case(node @ Case { output, .. }) => {
-                if !node.is_empty() {
+            NodeKind::Case(case) => {
+                if !case.is_empty() {
                     let CaseInputs {
                         sel,
                         default,
                         variant_inputs,
                         variants,
-                    } = node.case_inputs();
+                    } = case.inputs();
 
-                    let output = output.sym.unwrap();
+                    let output = case.output().sym.unwrap();
 
                     let sel_sym = self.inject_input(sel, false);
                     let sel_width = self.net_list[sel].ty.width().value();
@@ -633,45 +618,42 @@ impl<'n> Visitor for Verilog<'n> {
                     self.buffer.write_str("end\n\n");
                 }
             }
-            NodeKind::BitNot(BitNot { input, output }) => {
-                let input = self.inject_input(*input, true);
-                let output = output.sym.unwrap();
+            NodeKind::BitNot(bit_not) => {
+                let input = self.inject_input(bit_not.input(), true);
+                let output = bit_not.output().sym.unwrap();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
-            NodeKind::Not(Not { input, output }) => {
-                let input = self.inject_input(*input, true);
-                let output = output.sym.unwrap();
+            NodeKind::Not(not) => {
+                let input = self.inject_input(not.input(), true);
+                let output = not.output().sym.unwrap();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = !{input};",));
             }
-            NodeKind::BinOp(BinOpNode {
-                bin_op,
-                inputs: (left, right),
-                output,
-            }) => {
-                let left = self.inject_input(*left, true);
-                let right = self.inject_input(*right, true);
-                let output = output.sym.unwrap();
+            NodeKind::BinOp(bin_op) => {
+                let left = self.inject_input(bin_op.left(), true);
+                let right = self.inject_input(bin_op.right(), true);
+                let output = bin_op.output().sym.unwrap();
+                let bin_op = bin_op.bin_op();
 
                 self.buffer.write_tab();
                 self.buffer.write_fmt(format_args!(
                     "assign {output} = {left} {bin_op} {right};\n\n"
                 ));
             }
-            NodeKind::Mux2(node @ Mux2 { output, .. }) => {
+            NodeKind::Mux2(mux2) => {
                 let Mux2Inputs {
                     sel,
                     input1,
                     input2,
-                } = node.mux2_inputs();
+                } = mux2.inputs();
 
                 let sel = self.inject_input(sel, false);
                 let input1 = self.inject_input(input1, false);
                 let input2 = self.inject_input(input2, false);
-                let output = output.sym.unwrap();
+                let output = mux2.output().sym.unwrap();
 
                 self.buffer.write_template(format_args!(
                     "
@@ -686,19 +668,19 @@ end
 "
                 ));
             }
-            NodeKind::DFF(node @ DFF { output, .. }) => {
+            NodeKind::DFF(dff) => {
                 let DFFInputs {
                     clk,
                     rst,
                     en,
                     rst_val,
                     data,
-                } = node.dff_inputs();
+                } = dff.inputs();
                 let clk = self.inject_input(clk, false);
                 let rst = self.inject_input(rst, false);
                 let data = self.inject_input(data, false);
                 let rst_val = self.inject_input(rst_val, false);
-                let output = output.sym.unwrap();
+                let output = dff.output().sym.unwrap();
 
                 match en {
                     Some(en) => {

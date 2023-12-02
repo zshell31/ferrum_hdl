@@ -52,7 +52,7 @@ impl<'n> Visitor for Dump<'n> {
                     println!(
                         "{}{} -> {}",
                         tab,
-                        out.out_id(),
+                        out.idx(),
                         self.net_list
                             .links(out)
                             .map(|node| node.node_id().idx().to_string())

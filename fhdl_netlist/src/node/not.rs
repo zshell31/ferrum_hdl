@@ -1,20 +1,34 @@
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    sig_ty::NodeTy,
+    symbol::Symbol,
+};
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Not {
-    pub input: NodeOutId,
-    pub output: NodeOutput,
+    input: NodeOutIdx,
+    output: NodeOutput,
 }
 
 impl Not {
     pub fn new(ty: NodeTy, input: NodeOutId, sym: Option<Symbol>) -> Self {
         Self {
-            input,
+            input: input.into(),
             output: NodeOutput::wire(ty, sym),
         }
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
+    }
+}
+
+impl WithId<ModuleId, &'_ Not> {
+    pub fn input(&self) -> NodeOutId {
+        NodeOutId::make(self.id(), self.input)
     }
 }
 
@@ -25,7 +39,7 @@ impl From<Not> for NodeKind {
 }
 
 impl IsNode for Not {
-    type Inputs = NodeOutId;
+    type Inputs = NodeOutIdx;
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

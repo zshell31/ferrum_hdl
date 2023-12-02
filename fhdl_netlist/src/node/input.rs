@@ -3,11 +3,11 @@ use std::fmt::Debug;
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{net_list::NodeOutIdx, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Input {
-    pub output: NodeOutput,
+    output: NodeOutput,
 }
 
 impl Input {
@@ -15,6 +15,10 @@ impl Input {
         Self {
             output: NodeOutput::wire(ty, sym),
         }
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
     }
 }
 
@@ -25,7 +29,7 @@ impl From<Input> for NodeKind {
 }
 
 impl IsNode for Input {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {

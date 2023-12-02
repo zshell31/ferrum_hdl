@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use super::{ident::IsId, NodeInId, NodeOutId};
 
 #[derive(Debug, Clone, Copy)]
-pub struct WithId<Id: IsId, T>(Id, T);
+pub struct WithId<Id: IsId, T>(pub Id, pub T);
 
 impl<Id: IsId, T> WithId<Id, T> {
     pub(crate) fn new(id: Id, inner: T) -> Self {

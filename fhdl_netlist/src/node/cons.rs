@@ -2,15 +2,15 @@ use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::NodeOutId,
+    net_list::NodeOutIdx,
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Const {
-    pub value: Width,
-    pub output: NodeOutput,
+    value: Width,
+    output: NodeOutput,
 }
 
 impl Const {
@@ -19,6 +19,14 @@ impl Const {
             value,
             output: NodeOutput::wire(ty, sym),
         }
+    }
+
+    pub fn value(&self) -> &Width {
+        &self.value
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
     }
 }
 
@@ -29,7 +37,7 @@ impl From<Const> for NodeKind {
 }
 
 impl IsNode for Const {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
@@ -51,8 +59,8 @@ impl IsNode for Const {
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct MultiConst {
-    pub values: Vec<u128>,
-    pub outputs: Vec<NodeOutput>,
+    values: Vec<u128>,
+    outputs: Vec<NodeOutput>,
 }
 
 impl MultiConst {
@@ -65,6 +73,14 @@ impl MultiConst {
             outputs: outputs.into_iter().collect(),
         }
     }
+
+    pub fn values(&self) -> &[u128] {
+        &self.values
+    }
+
+    pub fn outputs(&self) -> &[NodeOutput] {
+        &self.outputs
+    }
 }
 
 impl From<MultiConst> for NodeKind {
@@ -74,7 +90,7 @@ impl From<MultiConst> for NodeKind {
 }
 
 impl IsNode for MultiConst {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {

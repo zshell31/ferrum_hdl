@@ -1,12 +1,12 @@
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::net_list::NodeOutId;
+use crate::net_list::{NodeOutId, NodeOutIdx};
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct GenNode {
     gen_node_idx: u32,
-    inputs: Vec<NodeOutId>,
+    inputs: Vec<NodeOutIdx>,
     outputs: Vec<NodeOutput>,
 }
 
@@ -18,7 +18,7 @@ impl GenNode {
     ) -> Self {
         Self {
             gen_node_idx,
-            inputs: inputs.into_iter().collect(),
+            inputs: inputs.into_iter().map(Into::into).collect(),
             outputs: outputs.into_iter().collect(),
         }
     }
@@ -31,7 +31,7 @@ impl From<GenNode> for NodeKind {
 }
 
 impl IsNode for GenNode {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {

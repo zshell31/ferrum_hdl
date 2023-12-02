@@ -2,18 +2,18 @@ use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct ModInst {
-    pub name: Option<Symbol>,
-    pub inlined: bool,
-    pub module_id: ModuleId,
-    pub inputs: Vec<NodeOutId>,
-    pub outputs: Vec<NodeOutput>,
+    name: Option<Symbol>,
+    inlined: bool,
+    module_id: ModuleId,
+    inputs: Vec<NodeOutIdx>,
+    outputs: Vec<NodeOutput>,
 }
 
 impl ModInst {
@@ -28,12 +28,61 @@ impl ModInst {
             name,
             inlined,
             module_id,
-            inputs: inputs.into_iter().collect(),
+            inputs: inputs.into_iter().map(Into::into).collect(),
             outputs: outputs
                 .into_iter()
                 .map(|(ty, sym)| NodeOutput::wire(ty, sym))
                 .collect(),
         }
+    }
+
+    pub fn name(&self) -> Option<Symbol> {
+        self.name
+    }
+
+    pub fn set_name(&mut self, name: Option<Symbol>) {
+        self.name = name;
+    }
+
+    pub fn inlined(&self) -> bool {
+        self.inlined
+    }
+
+    pub fn module_id(&self) -> ModuleId {
+        self.module_id
+    }
+
+    pub fn outputs(&self) -> &[NodeOutput] {
+        &self.outputs
+    }
+
+    pub fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.outputs
+    }
+
+    pub fn inputs_len(&self) -> usize {
+        self.inputs.len()
+    }
+
+    pub fn inputs_is_empty(&self) -> bool {
+        self.inputs.is_empty()
+    }
+
+    pub fn outputs_len(&self) -> usize {
+        self.outputs.len()
+    }
+
+    pub fn outputs_is_empty(&self) -> bool {
+        self.outputs.is_empty()
+    }
+}
+
+impl WithId<ModuleId, &'_ ModInst> {
+    pub fn inputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+        let module_id = self.id();
+        self.inputs
+            .iter()
+            .map(move |input| NodeOutId::make(module_id, *input))
     }
 }
 
@@ -44,7 +93,7 @@ impl From<ModInst> for NodeKind {
 }
 
 impl IsNode for ModInst {
-    type Inputs = [NodeOutId];
+    type Inputs = [NodeOutIdx];
     type Outputs = [NodeOutput];
 
     fn inputs(&self) -> &Self::Inputs {
@@ -63,7 +112,7 @@ impl IsNode for ModInst {
         self.outputs.as_mut_slice()
     }
 
-    fn validate(&self, net_list: &NetList) {
+    fn validate(&self, _: ModuleId, net_list: &NetList) {
         assert_eq!(self.inputs.len(), net_list[self.module_id].inputs_len());
         assert_eq!(self.outputs.len(), net_list[self.module_id].outputs_len());
     }

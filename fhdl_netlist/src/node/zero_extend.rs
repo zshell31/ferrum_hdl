@@ -2,23 +2,33 @@ use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{NetList, NodeOutId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct ZeroExtend {
-    pub input: NodeOutId,
-    pub output: NodeOutput,
+    input: NodeOutIdx,
+    output: NodeOutput,
 }
 
 impl ZeroExtend {
     pub fn new(ty: NodeTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
         Self {
-            input,
+            input: input.into(),
             output: NodeOutput::wire(ty, sym.into()),
         }
+    }
+
+    pub fn output(&self) -> &NodeOutput {
+        &self.output
+    }
+}
+
+impl WithId<ModuleId, &'_ ZeroExtend> {
+    pub fn input(&self) -> NodeOutId {
+        NodeOutId::make(self.id(), self.input)
     }
 }
 
@@ -29,7 +39,7 @@ impl From<ZeroExtend> for NodeKind {
 }
 
 impl IsNode for ZeroExtend {
-    type Inputs = NodeOutId;
+    type Inputs = NodeOutIdx;
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
@@ -48,9 +58,11 @@ impl IsNode for ZeroExtend {
         &mut self.output
     }
 
-    fn validate(&self, net_list: &NetList) {
+    fn validate(&self, module_id: ModuleId, net_list: &NetList) {
         if let (Some(input_width), Some(output_width)) = (
-            net_list[self.input].width().opt_value(),
+            net_list[NodeOutId::make(module_id, self.input)]
+                .width()
+                .opt_value(),
             self.output.width().opt_value(),
         ) {
             if input_width > output_width {

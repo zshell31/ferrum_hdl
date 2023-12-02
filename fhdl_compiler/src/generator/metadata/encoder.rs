@@ -6,13 +6,12 @@ use fhdl_netlist::{
 };
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
-use rustc_hir::def_id::{CrateNum, DefId};
 use rustc_middle::{
     mir::interpret,
     ty::{Interner, Ty, TyCtxt, TyEncoder},
 };
 use rustc_serialize::{opaque::FileEncoder, Encodable, Encoder};
-use rustc_span::def_id::DefIndex;
+use rustc_span::def_id::{CrateNum, DefId, DefIndex};
 use rustc_type_ir::PredicateKind;
 
 use crate::generator::Generator;
@@ -135,20 +134,19 @@ impl<'g, 'tcx> TyEncoder for NetListEncoder<'g, 'tcx> {
 
 impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for CrateNum {
     fn encode(&self, e: &mut NetListEncoder<'g, 'tcx>) {
-        e.emit_u32(self.as_u32())
-    }
-}
-
-impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for DefIndex {
-    fn encode(&self, e: &mut NetListEncoder<'g, 'tcx>) {
-        e.emit_u32(self.as_u32())
+        e.generator.tcx.stable_crate_id(*self).encode(e)
     }
 }
 
 impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for DefId {
     fn encode(&self, e: &mut NetListEncoder<'g, 'tcx>) {
-        self.index.encode(e);
-        self.krate.encode(e);
+        e.generator.tcx.def_path_hash(*self).encode(e)
+    }
+}
+
+impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for DefIndex {
+    fn encode(&self, _s: &mut NetListEncoder<'g, 'tcx>) {
+        panic!("trying to encode `DefIndex` outside the context of a `DefId`")
     }
 }
 

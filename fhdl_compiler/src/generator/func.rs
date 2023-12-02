@@ -5,7 +5,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NetList, NodeId},
     node::{Input, IsNode, Pass},
     params::Outputs,
-    sig_ty::{PrimTy, SignalTy, SignalTyKind},
+    sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
 use rustc_ast::{Mutability, UintTy};
@@ -159,22 +159,22 @@ impl<'tcx> Generator<'tcx> {
                     Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
                     Res::SelfTyAlias { alias_to, .. } => (true, find_sig_ty(alias_to)?),
                     Res::PrimTy(HirPrimTy::Bool) => {
-                        (false, SignalTy::new(None, PrimTy::Bool.into()))
+                        (false, SignalTy::new(None, NodeTy::Bool.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U8)) => {
-                        (false, SignalTy::new(None, PrimTy::U8.into()))
+                        (false, SignalTy::new(None, NodeTy::U8.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U16)) => {
-                        (false, SignalTy::new(None, PrimTy::U16.into()))
+                        (false, SignalTy::new(None, NodeTy::U16.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U32)) => {
-                        (false, SignalTy::new(None, PrimTy::U32.into()))
+                        (false, SignalTy::new(None, NodeTy::U32.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U64)) => {
-                        (false, SignalTy::new(None, PrimTy::U64.into()))
+                        (false, SignalTy::new(None, NodeTy::U64.into()))
                     }
                     Res::PrimTy(HirPrimTy::Uint(UintTy::U128)) => {
-                        (false, SignalTy::new(None, PrimTy::U128.into()))
+                        (false, SignalTy::new(None, NodeTy::U128.into()))
                     }
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
@@ -223,7 +223,7 @@ impl<'tcx> Generator<'tcx> {
         is_dummy: bool,
     ) -> ItemId {
         match sig_ty.kind {
-            SignalTyKind::Prim(prim_ty) => {
+            SignalTyKind::Node(prim_ty) => {
                 let input = Input::new(prim_ty, None);
                 (if is_dummy {
                     self.net_list.add_dummy_node(module_id, input)

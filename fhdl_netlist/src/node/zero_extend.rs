@@ -1,5 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ZeroExtend {
@@ -8,7 +8,7 @@ pub struct ZeroExtend {
 }
 
 impl ZeroExtend {
-    pub fn new(ty: PrimTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
+    pub fn new(ty: NodeTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
         Self {
             input,
             output: NodeOutput::wire(ty, sym.into()),

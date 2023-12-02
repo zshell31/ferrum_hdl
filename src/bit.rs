@@ -4,7 +4,6 @@ use std::{
 };
 
 use fhdl_macros::{blackbox, blackbox_ty};
-use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
     bitpack::{BitPack, BitSize},
@@ -27,13 +26,9 @@ pub fn bit_value(value: bool) -> u128 {
 
 impl SignalValue for Bit {}
 
-impl IsPrimTy for Bit {
-    const PRIM_TY: PrimTy = PrimTy::Bit;
-}
+impl IsPrimTy for Bit {}
 
-impl IsPrimTy for bool {
-    const PRIM_TY: PrimTy = PrimTy::Bool;
-}
+impl IsPrimTy for bool {}
 
 impl BitSize for Bit {
     const BITS: usize = 1;

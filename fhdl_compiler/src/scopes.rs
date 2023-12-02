@@ -4,6 +4,8 @@ use rustc_span::symbol::Ident;
 
 #[derive(Debug, Clone, Copy)]
 pub enum SymIdent {
+    Mux,
+    Mux2,
     Dff,
     DffEn,
     Msb,
@@ -13,6 +15,8 @@ pub enum SymIdent {
 impl SymIdent {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Mux => "mux",
+            Self::Mux2 => "mux2",
             Self::Dff => "dff",
             Self::DffEn => "dff_en",
             Self::Msb => "msb",

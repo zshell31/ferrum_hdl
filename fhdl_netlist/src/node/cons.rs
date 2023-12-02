@@ -1,5 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Const {
@@ -8,7 +8,7 @@ pub struct Const {
 }
 
 impl Const {
-    pub fn new(ty: PrimTy, value: u128, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, value: u128, sym: Option<Symbol>) -> Self {
         Self {
             value,
             output: NodeOutput::wire(ty, sym),

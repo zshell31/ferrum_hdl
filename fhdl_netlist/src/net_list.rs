@@ -294,13 +294,15 @@ impl NetList {
         }
     }
 
-    pub(crate) fn replace_inputs(&mut self, node_id: NodeId) {
+    pub(crate) fn exclude_pass_nodes(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
-        let mut new_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
+        let mut prev_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
+        let mut syms = SmallVec::<[_; 8]>::new();
+
         for input in node.kind.inputs().items() {
             let input_node = &self.nodes[input.node_id()];
 
-            let new_input = match &input_node.kind {
+            let prev_input = match &input_node.kind {
                 NodeKind::Pass(Pass { input, .. }) => Some(*input),
                 NodeKind::MultiPass(MultiPass { inputs, .. }) => {
                     Some(inputs[input.out_id()])
@@ -308,21 +310,32 @@ impl NetList {
                 _ => None,
             };
 
-            new_inputs.push(new_input);
+            prev_inputs.push(prev_input);
+
+            if let Some(prev_input) = prev_input {
+                let sym = self[input].sym;
+                if self[prev_input].sym.is_none() && sym.is_some() {
+                    syms.push((prev_input, sym));
+                }
+            }
         }
 
         let node = &mut self.nodes[node_id];
-        for (input, new_input) in node.kind.inputs_mut().items_mut().zip(new_inputs) {
-            if let Some(new_input) = new_input {
+        for (input, prev_input) in node.kind.inputs_mut().items_mut().zip(prev_inputs) {
+            if let Some(prev_input) = prev_input {
                 if let Some(links) = self.rev_links.get_mut(input) {
                     links.remove(&node_id);
                 }
-                if let Some(links) = self.rev_links.get_mut(&new_input) {
+                if let Some(links) = self.rev_links.get_mut(&prev_input) {
                     links.remove(&input.node_id());
                     links.insert(node_id);
                 }
-                *input = new_input;
+                *input = prev_input;
             }
+        }
+
+        for (prev_input, sym) in syms {
+            self[prev_input].sym = sym;
         }
     }
 
@@ -346,6 +359,12 @@ impl NetList {
         let mod_id = node_id.module_id();
         let module = &mut self.modules[mod_id];
         module.add_output(NodeOutId::new(node_id, out));
+    }
+
+    pub fn replace_output(&mut self, old_id: NodeOutId, new_id: NodeOutId) {
+        let mod_id = old_id.node_id().module_id();
+        let module = &mut self.modules[mod_id];
+        module.replace_output(old_id, new_id);
     }
 
     pub fn add_all_outputs(&mut self, node_id: NodeId) {

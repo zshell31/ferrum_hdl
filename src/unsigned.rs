@@ -5,7 +5,6 @@ use std::{
 };
 
 use fhdl_macros::{blackbox, blackbox_ty};
-use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
     bitpack::{BitPack, BitSize},
@@ -40,9 +39,7 @@ where
 macro_rules! impl_is_prim_ty {
     ($( $prim:ty => $prim_ty:ident ),+) => {
         $(
-            impl IsPrimTy for $prim {
-                const PRIM_TY: PrimTy = PrimTy::$prim_ty;
-            }
+            impl IsPrimTy for $prim {}
         )+
     };
 }
@@ -55,12 +52,7 @@ impl_is_prim_ty!(
     u128 => U128
 );
 
-impl<const N: usize> IsPrimTy for u<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    const PRIM_TY: PrimTy = PrimTy::Unsigned(N as u128);
-}
+impl<const N: usize> IsPrimTy for u<N> where Assert<{ N <= 128 }>: IsTrue {}
 
 impl<const N: usize> Unsigned<N> {
     #[blackbox(UnsignedIndex)]
@@ -74,9 +66,7 @@ impl<const N: usize> Unsigned<N> {
 
 impl<const N: usize> SignalValue for Unsigned<N> {}
 
-impl<const N: usize> IsPrimTy for Unsigned<N> {
-    const PRIM_TY: PrimTy = PrimTy::Unsigned(N as u128);
-}
+impl<const N: usize> IsPrimTy for Unsigned<N> {}
 
 impl<const N: usize> BitSize for Unsigned<N> {
     const BITS: usize = N;

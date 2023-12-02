@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Merger {
@@ -19,7 +19,7 @@ impl Merger {
     ) -> Self {
         Self {
             inputs: Vec::collect_from(inputs),
-            output: NodeOutput::wire(PrimTy::BitVec(width), sym.into()),
+            output: NodeOutput::wire(NodeTy::BitVec(width), sym.into()),
             rev,
         }
     }

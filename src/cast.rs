@@ -1,9 +1,6 @@
 use fhdl_macros::blackbox;
-use fhdl_netlist::sig_ty::PrimTy;
 
-pub trait IsPrimTy: Sized {
-    const PRIM_TY: PrimTy;
-}
+pub trait IsPrimTy: Sized {}
 
 pub trait CastFrom<T: Sized>: Sized {
     fn cast_from(from: T) -> Self;

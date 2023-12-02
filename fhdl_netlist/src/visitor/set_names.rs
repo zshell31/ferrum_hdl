@@ -1,5 +1,6 @@
 use fnv::FnvHashMap;
 use once_cell::sync::Lazy;
+use smallvec::SmallVec;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId},
@@ -75,18 +76,9 @@ impl<'n> SetNames<'n> {
 
     fn set_node_out_names(&mut self, node_id: NodeId) {
         let module_id = node_id.module_id();
-        let node = &mut self.net_list[node_id];
-
-        for out in node.kind.outputs_mut().items_mut() {
-            let sym = out.out.sym.unwrap_or(Symbol::new("__tmp"));
-            let count = self.idents.get(&(module_id, sym)).copied();
-
-            let (new_sym, count) = Self::ident(sym, count);
-            self.idents.insert((module_id, sym), count);
-            out.out.sym = Some(Self::make_sym(new_sym, count));
-        }
 
         let mut new_name = None;
+        let mut mod_outputs = SmallVec::<[_; 8]>::new();
 
         if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
             let sym = Symbol::new_from_args(format_args!(
@@ -100,10 +92,34 @@ impl<'n> SetNames<'n> {
                 self.idents.insert((module_id, sym), count);
                 new_name = Some(Self::make_sym(new_sym, count))
             }
+
+            for (output, mod_output) in mod_inst
+                .outputs()
+                .items()
+                .zip(self.net_list.mod_outputs(mod_inst.module_id))
+            {
+                if output.out.sym.is_none() {
+                    mod_outputs.push((output.ind, self.net_list[mod_output].sym));
+                }
+            }
         }
 
         if let NodeKind::ModInst(mod_inst) = &mut self.net_list[node_id].kind {
             mod_inst.name = mod_inst.name.or(new_name);
+
+            for (ind, sym) in mod_outputs {
+                mod_inst.outputs[ind].sym = sym;
+            }
+        }
+
+        let node = &mut self.net_list[node_id];
+        for out in node.kind.outputs_mut().items_mut() {
+            let sym = out.out.sym.unwrap_or(Symbol::new("__tmp"));
+            let count = self.idents.get(&(module_id, sym)).copied();
+
+            let (new_sym, count) = Self::ident(sym, count);
+            self.idents.insert((module_id, sym), count);
+            out.out.sym = Some(Self::make_sym(new_sym, count));
         }
     }
 }

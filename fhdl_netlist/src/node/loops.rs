@@ -1,5 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct LoopStart {
@@ -12,7 +12,7 @@ impl LoopStart {
     pub fn new(
         genvar: Symbol,
         count: u128,
-        out: Option<(PrimTy, Option<Symbol>)>,
+        out: Option<(NodeTy, Option<Symbol>)>,
     ) -> Self {
         Self {
             genvar,
@@ -21,7 +21,7 @@ impl LoopStart {
         }
     }
 
-    pub fn set_out(&mut self, out: Option<(PrimTy, Option<Symbol>)>) {
+    pub fn set_out(&mut self, out: Option<(NodeTy, Option<Symbol>)>) {
         self.output = out.map(|(ty, sym)| NodeOutput::wire(ty, sym))
     }
 }

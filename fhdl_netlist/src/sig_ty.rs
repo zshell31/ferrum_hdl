@@ -1,3 +1,8 @@
+use std::{
+    borrow::Cow,
+    fmt::{self, Debug},
+};
+
 use fhdl_blackbox::BlackboxTy;
 use fhdl_const_func::clog2_len;
 
@@ -18,8 +23,8 @@ impl<T> Named<T> {
         self.name.as_str() == s
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PrimTy {
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NodeTy {
     Bool,
     Bit,
     U8,
@@ -34,13 +39,34 @@ pub enum PrimTy {
     ClockDomain,
 }
 
-impl PrimTy {
+impl Debug for NodeTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: Cow<'_, str> = match self {
+            Self::Bool => "bool".into(),
+            Self::Bit => "Bit".into(),
+            Self::U8 => "u8".into(),
+            Self::U16 => "u16".into(),
+            Self::U32 => "u32".into(),
+            Self::U64 => "u64".into(),
+            Self::U128 => "u128".into(),
+            Self::Unsigned(n) => format!("unsigned[{n}]").into(),
+            Self::BitVec(n) => format!("bitvec[{n}]").into(),
+            Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
+            Self::Clock => "clock".into(),
+            Self::ClockDomain => "clock_domain".into(),
+        };
+
+        f.write_str(s.as_ref())
+    }
+}
+
+impl NodeTy {
     pub fn is_bool(&self) -> bool {
-        matches!(self, PrimTy::Bool)
+        matches!(self, NodeTy::Bool)
     }
 
     pub fn is_unsigned(&self, n: u128) -> bool {
-        matches!(self, PrimTy::Unsigned(_n) if *_n == n)
+        matches!(self, NodeTy::Unsigned(_n) if *_n == n)
     }
 
     pub fn width(&self) -> u128 {
@@ -60,8 +86,8 @@ impl PrimTy {
         }
     }
 
-    pub fn ty_for_bin_expr(lhs: PrimTy, rhs: PrimTy) -> Option<PrimTy> {
-        use PrimTy::*;
+    pub fn ty_for_bin_expr(lhs: NodeTy, rhs: NodeTy) -> Option<NodeTy> {
+        use NodeTy::*;
 
         if lhs == rhs {
             return Some(lhs);
@@ -239,8 +265,8 @@ impl EnumTy {
         (idx as u128) & ((1 << self.discr_width()) - 1)
     }
 
-    pub fn prim_ty(&self) -> PrimTy {
-        PrimTy::Enum(*self)
+    pub fn prim_ty(&self) -> NodeTy {
+        NodeTy::Enum(*self)
     }
 
     pub fn variants(&self) -> &[Named<SignalTy>] {
@@ -254,17 +280,17 @@ impl EnumTy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SignalTyKind {
-    Prim(PrimTy),
+    Node(NodeTy),
     Array(ArrayTy),
     Struct(StructTy),
     Enum(EnumTy),
 }
 
-impl From<PrimTy> for SignalTyKind {
-    fn from(prim_ty: PrimTy) -> Self {
+impl From<NodeTy> for SignalTyKind {
+    fn from(prim_ty: NodeTy) -> Self {
         match prim_ty {
-            PrimTy::Enum(enum_ty) => enum_ty.into(),
-            _ => Self::Prim(prim_ty),
+            NodeTy::Enum(enum_ty) => enum_ty.into(),
+            _ => Self::Node(prim_ty),
         }
     }
 }
@@ -319,14 +345,14 @@ impl SignalTy {
         )
     }
 
-    pub fn opt_prim_ty(&self) -> Option<PrimTy> {
+    pub fn opt_prim_ty(&self) -> Option<NodeTy> {
         match self.kind {
-            SignalTyKind::Prim(prim_ty) => Some(prim_ty),
+            SignalTyKind::Node(prim_ty) => Some(prim_ty),
             _ => None,
         }
     }
 
-    pub fn prim_ty(&self) -> PrimTy {
+    pub fn prim_ty(&self) -> NodeTy {
         self.opt_prim_ty().expect("expected Prim type")
     }
 
@@ -375,19 +401,19 @@ impl SignalTy {
 
     pub fn width(&self) -> u128 {
         match self.kind {
-            SignalTyKind::Prim(ty) => ty.width(),
+            SignalTyKind::Node(ty) => ty.width(),
             SignalTyKind::Array(ty) => ty.width(),
             SignalTyKind::Struct(ty) => ty.width(),
             SignalTyKind::Enum(ty) => ty.width(),
         }
     }
 
-    pub fn maybe_to_bitvec(&self) -> PrimTy {
+    pub fn maybe_to_bitvec(&self) -> NodeTy {
         match self.kind {
-            SignalTyKind::Prim(prim_ty) => prim_ty,
+            SignalTyKind::Node(prim_ty) => prim_ty,
             _ => {
                 let width = self.width();
-                PrimTy::BitVec(width)
+                NodeTy::BitVec(width)
             }
         }
     }

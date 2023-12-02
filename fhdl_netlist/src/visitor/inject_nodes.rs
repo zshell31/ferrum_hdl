@@ -23,7 +23,9 @@ impl<'n> InjectNodes<'n> {
     fn linked_by_dff(&self, link: &Node, link_out_id: NodeOutId) -> bool {
         match link.kind {
             NodeKind::DFF(DFF { ref inputs, .. }) => {
-                inputs.rst_val == link_out_id || inputs.data == link_out_id
+                inputs.rst_val == link_out_id
+                    || inputs.data == link_out_id
+                    || (inputs.en.is_some() && inputs.en.unwrap() == link_out_id)
             }
             _ => false,
         }

@@ -1,5 +1,5 @@
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::PrimTy, symbol::Symbol};
+use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pass {
@@ -8,7 +8,7 @@ pub struct Pass {
 }
 
 impl Pass {
-    pub fn new(ty: PrimTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
+    pub fn new(ty: NodeTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
         Self {
             input,
             output: NodeOutput::wire(ty, sym.into()),
@@ -52,7 +52,7 @@ pub struct MultiPass {
 impl MultiPass {
     pub fn new(
         inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = (PrimTy, Option<Symbol>)>,
+        outputs: impl IntoIterator<Item = (NodeTy, Option<Symbol>)>,
     ) -> Self {
         let node = Self {
             inputs: Vec::collect_from(inputs),

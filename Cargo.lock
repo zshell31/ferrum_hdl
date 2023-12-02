@@ -109,7 +109,6 @@ dependencies = [
  "dyn-clone",
  "fhdl_const_func",
  "fhdl_macros",
- "fhdl_netlist",
  "fnv",
  "num-bigint",
  "num-traits",

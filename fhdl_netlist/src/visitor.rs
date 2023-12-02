@@ -32,7 +32,6 @@ impl NetList {
         Reachability::new(self).run();
         SetNames::new(self).run();
         InjectNodes::new(self).run();
-        self.dump(true);
     }
 
     pub fn dump(&self, skip: bool) {

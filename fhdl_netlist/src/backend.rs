@@ -457,7 +457,7 @@ endgenerate
                 let input = self.inject_input(*input);
 
                 for output in outputs.iter() {
-                    if output.is_skip {
+                    if output.is_skip || output.inject {
                         continue;
                     }
 

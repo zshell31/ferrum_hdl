@@ -2,7 +2,7 @@ use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     arena::Vec,
     net_list::{ModuleId, NodeOutId},
-    sig_ty::PrimTy,
+    sig_ty::NodeTy,
     symbol::Symbol,
 };
 
@@ -21,7 +21,7 @@ impl ModInst {
         module_id: ModuleId,
         inlined: bool,
         inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = (PrimTy, Option<Symbol>)>,
+        outputs: impl IntoIterator<Item = (NodeTy, Option<Symbol>)>,
     ) -> Self {
         Self {
             name,

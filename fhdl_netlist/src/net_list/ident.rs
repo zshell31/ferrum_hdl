@@ -1,4 +1,7 @@
-use std::{fmt::Debug, hash::Hash};
+use std::{
+    fmt::{self, Debug, Display},
+    hash::Hash,
+};
 
 use rustc_macros::{Decodable, Encodable};
 
@@ -25,11 +28,21 @@ impl Idx for u32 {
 
 macro_rules! idx_type {
     ($name:ident) => {
-        #[derive(
-            Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable,
-        )]
+        #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
         #[repr(transparent)]
         pub struct $name(u32);
+
+        impl Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}({})", stringify!($name), self.idx())
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                Display::fmt(&self.0, f)
+            }
+        }
 
         impl From<u32> for $name {
             #[inline(always)]
@@ -56,8 +69,14 @@ macro_rules! idx_type {
 
 macro_rules! composite_type {
     ($name:ident($get_base:ident => $base:ty, $get_idx:ident $( => $idx:ty )? )) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
         pub struct $name($base, u32);
+
+        impl Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}({}, {})", stringify!($name), self.$get_base().idx(), self.$get_idx())
+            }
+        }
 
         impl IsId for $name {}
 
@@ -94,6 +113,9 @@ macro_rules! composite_type {
 
 idx_type!(ModuleId);
 idx_type!(NodeIdx);
+idx_type!(TempNodeId);
+idx_type!(TyId);
+idx_type!(ParamId);
 
 composite_type!(NodeId(module_id => ModuleId, idx => NodeIdx));
 composite_type!(NodeOutId(node_id => NodeId, idx => u32));
@@ -127,6 +149,11 @@ impl NodeOutId {
         let (node_idx, idx) = node_out_idx.split();
         let node_id = NodeId::combine(module_id, node_idx);
         Self::combine(node_id, idx)
+    }
+
+    pub fn with_module_id(self, module_id: ModuleId) -> Self {
+        let node_out_idx = self.into();
+        Self::make(module_id, node_out_idx)
     }
 }
 

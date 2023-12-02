@@ -16,7 +16,7 @@ pub struct BitPackPack;
 impl<'tcx> EvalExpr<'tcx> for BitPackPack {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -33,7 +33,7 @@ pub struct BitPackRepack;
 impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -55,7 +55,7 @@ pub struct BitPackMsb;
 impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -68,7 +68,7 @@ impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
             let ty = NodeTy::Bit;
 
             Ok((
-                generator.net_list.add(
+                generator.netlist.add(
                     ctx.module_id,
                     Splitter::new(bit_vec, [(ty, SymIdent::Msb)], None, true),
                 ),

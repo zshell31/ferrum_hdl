@@ -33,7 +33,7 @@ impl<'tcx> Generator<'tcx> {
             ItemId::Node(node_out_id) => {
                 let sym = Some(Symbol::new(ident));
 
-                self.net_list[node_out_id].sym = sym;
+                self.netlist[node_out_id].sym = sym;
             }
             ItemId::Group(group) => match group.sig_ty.kind {
                 SignalTyKind::Enum(_)
@@ -255,7 +255,7 @@ impl<'tcx> Generator<'tcx> {
 
                     Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
                 } else {
-                    let blackbox = self.find_blackbox(*def_id, ctx, pat.span)?;
+                    let blackbox = self.find_blackbox(*def_id, pat.span)?;
                     let value = match blackbox.kind {
                         BlackboxKind::BitL => BitVal(false).bit_value(),
                         BlackboxKind::BitH => BitVal(true).bit_value(),

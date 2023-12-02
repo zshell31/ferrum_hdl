@@ -5,6 +5,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -94,6 +95,16 @@ impl WithId<ModuleId, &'_ BinOpNode> {
 
     pub fn right(&self) -> NodeOutId {
         NodeOutId::make(self.id(), self.inputs.1)
+    }
+}
+
+impl<R: Resolver> Resolve<R> for BinOpNode {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            bin_op: self.bin_op,
+            inputs: self.inputs,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

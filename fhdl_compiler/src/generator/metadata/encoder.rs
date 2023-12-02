@@ -1,9 +1,5 @@
 use std::{fs::File, io, path::Path};
 
-use fhdl_netlist::{
-    net_list::{ModuleId, NodeId},
-    visitor::Visitor,
-};
 use rustc_const_eval::interpret::AllocId;
 use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
 use rustc_middle::{
@@ -39,7 +35,7 @@ impl<'g, 'tcx> NetListEncoder<'g, 'tcx> {
     }
 
     pub fn encode_netlist(&mut self) {
-        self.visit_modules();
+        self.generator.netlist.encode(self);
     }
 
     pub fn encode<T: Encodable<Self>>(&mut self, value: T) -> usize {
@@ -147,32 +143,5 @@ impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for DefId {
 impl<'g, 'tcx> Encodable<NetListEncoder<'g, 'tcx>> for DefIndex {
     fn encode(&self, _s: &mut NetListEncoder<'g, 'tcx>) {
         panic!("trying to encode `DefIndex` outside the context of a `DefId`")
-    }
-}
-
-impl<'g, 'tcx> Visitor for NetListEncoder<'g, 'tcx> {
-    fn visit_modules(&mut self) {
-        for module_id in self.generator.net_list.modules() {
-            if !self.generator.net_list[module_id].is_skip {
-                self.visit_module(module_id);
-            }
-        }
-    }
-
-    fn visit_module(&mut self, module_id: ModuleId) {
-        let module = &self.generator.net_list[module_id];
-        module.encode(self);
-
-        let mut cursor = self.generator.net_list.mod_cursor(module_id);
-        while let Some(node_id) = self.generator.net_list.next(&mut cursor) {
-            let node = &self.generator.net_list[node_id];
-            if !node.is_skip {
-                node.encode(self);
-            }
-        }
-    }
-
-    fn visit_node(&mut self, _: NodeId) {
-        unreachable!()
     }
 }

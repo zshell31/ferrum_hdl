@@ -5,6 +5,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
@@ -53,6 +54,16 @@ impl WithId<ModuleId, &'_ Merger> {
         self.inputs
             .iter()
             .map(move |input| NodeOutId::make(module_id, *input))
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Merger {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            inputs: self.inputs.clone(),
+            output: self.output.resolve(resolver)?,
+            rev: self.rev,
+        })
     }
 }
 

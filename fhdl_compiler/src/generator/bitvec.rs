@@ -11,7 +11,7 @@ use crate::generator::Generator;
 
 impl<'tcx> Generator<'tcx> {
     pub fn combine_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
-        let mut outputs = self.net_list[node_id]
+        let mut outputs = self.netlist[node_id]
             .node_out_ids()
             .collect::<SmallVec<[_; 8]>>()
             .into_iter();
@@ -63,7 +63,7 @@ impl<'tcx> Generator<'tcx> {
                         None,
                     );
 
-                    self.net_list.add_and_get_out(module_id, merger)
+                    self.netlist.add_and_get_out(module_id, merger)
                 }
             }
         }
@@ -76,7 +76,7 @@ impl<'tcx> Generator<'tcx> {
         node_out_id: NodeOutId,
         sig_ty: SignalTy,
     ) -> ItemId {
-        let node_width = self.net_list[node_out_id].ty.width();
+        let node_width = self.netlist[node_out_id].ty.width();
         if let (Some(node_width), Some(sig_ty_width)) =
             (node_width.opt_value(), sig_ty.width().opt_value())
         {
@@ -102,8 +102,8 @@ impl<'tcx> Generator<'tcx> {
                         true,
                     );
 
-                    let node_id = self.net_list.add(module_id, splitter);
-                    let outputs = self.net_list[node_id]
+                    let node_id = self.netlist.add(module_id, splitter);
+                    let outputs = self.netlist[node_id]
                         .node_out_ids()
                         .collect::<SmallVec<[_; 8]>>();
 
@@ -136,8 +136,8 @@ impl<'tcx> Generator<'tcx> {
                         true,
                     );
 
-                    let node_id = self.net_list.add(module_id, splitter);
-                    let outputs = self.net_list[node_id]
+                    let node_id = self.netlist.add(module_id, splitter);
+                    let outputs = self.netlist[node_id]
                         .outputs()
                         .map(|out| out.node_out_id())
                         .collect::<SmallVec<[_; 8]>>();
@@ -171,7 +171,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         let sig_ty = enum_ty.variant(variant_idx).inner;
 
-        let data_part = self.net_list.add(
+        let data_part = self.netlist.add(
             module_id,
             Splitter::new(
                 scrutinee,
@@ -180,7 +180,7 @@ impl<'tcx> Generator<'tcx> {
                 true,
             ),
         );
-        let data_part = self.net_list[data_part].only_one_out().node_out_id();
+        let data_part = self.netlist[data_part].only_one_out().node_out_id();
 
         self.from_bitvec(module_id, data_part, sig_ty)
     }
@@ -193,7 +193,7 @@ impl<'tcx> Generator<'tcx> {
         data_part: ItemId,
     ) -> ItemId {
         let discr_val = enum_ty.discr_val(variant_idx);
-        let discr_val = self.net_list.add(
+        let discr_val = self.netlist.add(
             module_id,
             Const::new(
                 NodeTy::BitVec(enum_ty.discr_width().into()),
@@ -201,7 +201,7 @@ impl<'tcx> Generator<'tcx> {
                 None,
             ),
         );
-        let discr_val = self.net_list[discr_val].only_one_out().node_out_id();
+        let discr_val = self.netlist[discr_val].only_one_out().node_out_id();
 
         let inputs = if data_part.is_empty() {
             Either::Left([discr_val].into_iter())
@@ -210,7 +210,7 @@ impl<'tcx> Generator<'tcx> {
             Either::Right([discr_val, data_part].into_iter())
         };
 
-        self.net_list
+        self.netlist
             .add_and_get_out(module_id, Merger::new(enum_ty.width(), inputs, false, None))
             .into()
     }

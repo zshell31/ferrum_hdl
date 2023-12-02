@@ -11,6 +11,8 @@ use rustc_macros::{Decodable, Encodable};
 
 use crate::{
     arena::{with_arena, ArenaSlice, ArenaValue},
+    net_list::{ParamId, TyId},
+    resolver::{Resolve, Resolver},
     symbol::Symbol,
 };
 
@@ -41,6 +43,12 @@ impl<T> Deref for Named<T> {
 impl<T> DerefMut for Named<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
+    }
+}
+
+impl<R: Resolver, T: Resolve<R>> Resolve<R> for Named<T> {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Named::new(self.inner.resolve(resolver)?, self.name))
     }
 }
 
@@ -80,12 +88,12 @@ impl Width {
         matches!(self.kind, WidthKind::Value(_))
     }
 
-    pub fn mk_node(ty_idx: u32) -> Self {
-        Width::new(WidthKind::Node(ty_idx), true)
+    pub fn mk_node(ty_id: TyId) -> Self {
+        Width::new(WidthKind::Node(ty_id), true)
     }
 
-    pub fn mk_param(ty_idx: u32, param_idx: u32) -> Self {
-        Width::new(WidthKind::Param { ty_idx, param_idx }, true)
+    pub fn mk_param(ty_id: TyId, param_id: ParamId) -> Self {
+        Width::new(WidthKind::Param { ty_id, param_id }, true)
     }
 
     fn mk_array(count: u128, ty: &SignalTy) -> Self {
@@ -98,7 +106,7 @@ impl Width {
                 true,
             )
         } else {
-            (ty.width().value() * count).into()
+            WidthKind::calc_arr_width(count, ty.width()).into()
         }
     }
 
@@ -112,7 +120,9 @@ impl Width {
                 true,
             )
         } else {
-            tys.iter().map(|ty| ty.width().value()).sum::<u128>().into()
+            WidthKind::calc_struct_width::<()>(tys.iter().map(|ty| Ok(ty.width())))
+                .unwrap()
+                .into()
         }
     }
 
@@ -126,32 +136,44 @@ impl Width {
                 true,
             )
         } else {
-            tys.iter()
-                .fold(0, |max, ty| cmp::max(ty.width().value(), max))
+            WidthKind::calc_enum_data_width::<()>(tys.iter().map(|ty| Ok(ty.width())))
+                .unwrap()
                 .into()
         }
     }
 
     fn mk_enum(discr_width: u128, width: Width) -> Self {
         if width.is_generic() {
-            let items = match width.kind {
-                WidthKind::EnumData { items } => items,
-                _ => unreachable!(),
-            };
-            Width::new(WidthKind::Enum { discr_width, items }, true)
+            Width::new(
+                WidthKind::Enum {
+                    discr_width,
+                    width: ArenaValue::make_value(width),
+                },
+                true,
+            )
         } else {
-            (discr_width + width.value()).into()
+            WidthKind::calc_enum_width(discr_width, width).into()
         }
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Width {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        let kind = self.kind.resolve(resolver)?;
+        Ok(Self {
+            kind,
+            is_generic: false,
+        })
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum WidthKind {
     Value(u128),
-    Node(u32),
+    Node(TyId),
     Param {
-        ty_idx: u32,
-        param_idx: u32,
+        ty_id: TyId,
+        param_id: ParamId,
     },
     Array {
         count: u128,
@@ -165,8 +187,67 @@ pub enum WidthKind {
     },
     Enum {
         discr_width: u128,
-        items: ArenaSlice<Width>,
+        width: ArenaValue<Width>,
     },
+}
+
+impl WidthKind {
+    fn calc_arr_width(count: u128, width: Width) -> u128 {
+        count * width.value()
+    }
+
+    fn calc_struct_width<E>(
+        widths: impl IntoIterator<Item = Result<Width, E>>,
+    ) -> Result<u128, E> {
+        widths
+            .into_iter()
+            .map(|width| width.map(|width| width.value()))
+            .sum()
+    }
+
+    fn calc_enum_data_width<E>(
+        widths: impl IntoIterator<Item = Result<Width, E>>,
+    ) -> Result<u128, E> {
+        widths.into_iter().try_fold(0, |max, width| {
+            width.map(|width| cmp::max(max, width.value()))
+        })
+    }
+
+    fn calc_enum_width(discr_width: u128, width: Width) -> u128 {
+        discr_width + width.value()
+    }
+}
+
+impl<R: Resolver> Resolve<R> for WidthKind {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, R::Error> {
+        Ok(match self {
+            Self::Value(val) => Self::Value(*val),
+            Self::Node(id) => {
+                let ty = resolver.resolve_node_ty(*id)?;
+                Self::Value(ty.width().value())
+            }
+            Self::Param { ty_id, param_id } => {
+                let value = resolver.resolve_const_param(*ty_id, *param_id)?;
+                Self::Value(value)
+            }
+            Self::Array { count, width } => {
+                let width = width.resolve(resolver)?;
+                Self::Value(Self::calc_arr_width(*count, width))
+            }
+            Self::Struct { items } => {
+                let widths = items.iter().map(|item| item.resolve(resolver));
+                Self::Value(Self::calc_struct_width(widths)?)
+            }
+            Self::EnumData { items } => {
+                let widths = items.iter().map(|item| item.resolve(resolver));
+                Self::Value(Self::calc_enum_data_width(widths)?)
+            }
+            Self::Enum { discr_width, width } => {
+                let width = width.resolve(resolver)?;
+                Self::Value(Self::calc_enum_width(*discr_width, width))
+            }
+        })
+    }
 }
 
 impl Display for WidthKind {
@@ -208,7 +289,7 @@ pub enum NodeTy {
     Enum(EnumTy),
     Clock,
     ClockDomain,
-    Ty(u32),
+    Ty(TyId),
 }
 
 impl Display for NodeTy {
@@ -309,6 +390,30 @@ impl NodeTy {
     }
 }
 
+impl<R: Resolver> Resolve<R> for NodeTy {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        match self {
+            Self::Bool
+            | NodeTy::Bit
+            | NodeTy::U8
+            | NodeTy::U16
+            | NodeTy::U32
+            | NodeTy::U64
+            | NodeTy::U128
+            | NodeTy::Usize
+            | NodeTy::Clock
+            | NodeTy::ClockDomain => Ok(*self),
+            NodeTy::Unsigned(n) => Ok(Self::Unsigned(n.resolve(resolver)?)),
+            NodeTy::BitVec(n) => Ok(Self::BitVec(n.resolve(resolver)?)),
+            NodeTy::Enum(ty) => Ok(Self::Enum(ty.resolve(resolver)?)),
+            NodeTy::Ty(idx) => {
+                let node_ty = resolver.resolve_node_ty(*idx)?;
+                Ok(node_ty)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct ArrayTy {
     count: u128,
@@ -353,6 +458,13 @@ impl ArrayTy {
     #[inline(always)]
     pub fn is_generic(&self) -> bool {
         self.width.is_generic()
+    }
+}
+
+impl<R: Resolver> Resolve<R> for ArrayTy {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        let ty = unsafe { with_arena().alloc(self.ty.resolve(resolver)?) };
+        Ok(Self::new(self.count, ty))
     }
 }
 
@@ -439,6 +551,17 @@ impl StructTy {
     }
 }
 
+impl<R: Resolver> Resolve<R> for StructTy {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        let tys = unsafe {
+            with_arena()
+                .alloc_from_res_iter(self.tys.iter().map(|ty| ty.resolve(resolver)))?
+        };
+
+        Ok(Self::new(tys))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct EnumTy {
     discr_width: u128,
@@ -495,6 +618,18 @@ impl EnumTy {
     }
 }
 
+impl<R: Resolver> Resolve<R> for EnumTy {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        let variants = unsafe {
+            with_arena().alloc_from_res_iter(
+                self.variants.iter().map(|ty| ty.resolve(resolver)),
+            )?
+        };
+
+        Ok(Self::new(variants))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum SignalTyKind {
     Node(NodeTy),
@@ -530,6 +665,17 @@ impl From<EnumTy> for SignalTyKind {
     }
 }
 
+impl<R: Resolver> Resolve<R> for SignalTyKind {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(match self {
+            Self::Node(ty) => Self::Node(ty.resolve(resolver)?),
+            Self::Array(ty) => Self::Array(ty.resolve(resolver)?),
+            Self::Struct(ty) => Self::Struct(ty.resolve(resolver)?),
+            Self::Enum(ty) => Self::Enum(ty.resolve(resolver)?),
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct SignalTy {
     pub blackbox: Option<BlackboxTy>,
@@ -562,7 +708,7 @@ impl SignalTy {
         )
     }
 
-    pub fn opt_prim_ty(&self) -> Option<NodeTy> {
+    pub fn opt_node_ty(&self) -> Option<NodeTy> {
         match self.kind {
             SignalTyKind::Node(prim_ty) => Some(prim_ty),
             _ => None,
@@ -570,7 +716,7 @@ impl SignalTy {
     }
 
     pub fn node_ty(&self) -> NodeTy {
-        self.opt_prim_ty().expect("expected Prim type")
+        self.opt_node_ty().expect("expected Prim type")
     }
 
     pub fn opt_array_ty(&self) -> Option<ArrayTy> {
@@ -642,5 +788,11 @@ impl SignalTy {
             SignalTyKind::Struct(ty) => ty.is_generic(),
             SignalTyKind::Enum(ty) => ty.is_generic(),
         }
+    }
+}
+
+impl<R: Resolver> Resolve<R> for SignalTy {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self::new(self.blackbox, self.kind.resolve(resolver)?))
     }
 }

@@ -9,6 +9,7 @@ use std::ops::{Index, IndexMut};
 pub use ident::*;
 pub(crate) use in_out::InOut;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_macros::{Decodable, Encodable};
 pub use with_id::WithId;
 
 pub use self::module::Module;
@@ -22,7 +23,7 @@ use crate::{
 pub type Nodes = FxHashMap<NodeId, Node>;
 pub type Links = FxHashSet<NodeId>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Encodable, Decodable)]
 pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,
@@ -360,6 +361,9 @@ impl NetList {
     }
 
     pub fn add_output(&mut self, node_out_id: NodeOutId) {
+        // Check that node_out_id exists
+        let _ = self.nodes[node_out_id];
+
         let mod_id = node_out_id.node_id().module_id();
         let module = &mut self.modules[mod_id];
         module.add_output(node_out_id.into());
@@ -384,6 +388,32 @@ impl NetList {
 
     pub fn modules(&self) -> impl Iterator<Item = ModuleId> {
         (0 .. self.modules.len()).map(ModuleId::new)
+    }
+
+    pub fn modules_len(&self, skip: bool) -> usize {
+        if !skip {
+            self.modules.len()
+        } else {
+            self.modules()
+                .filter(|module| self.modules[*module].is_skip)
+                .count()
+        }
+    }
+
+    pub fn nodes_len(&self, module_id: ModuleId, skip: bool) -> usize {
+        let mut cursor = self.mod_cursor(module_id);
+        let mut count = 0;
+        while let Some(node_id) = self.next(&mut cursor) {
+            if skip {
+                if !self.nodes[node_id].is_skip {
+                    count += 1;
+                }
+            } else {
+                count += 1;
+            }
+        }
+
+        count
     }
 
     pub fn top_module(&self) -> Option<ModuleId> {

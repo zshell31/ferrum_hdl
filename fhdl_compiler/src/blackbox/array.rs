@@ -9,7 +9,7 @@ pub struct ArrayReverse;
 impl<'tcx> EvalExpr<'tcx> for ArrayReverse {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         _generator: &mut Generator<'tcx>,
         _expr: &'tcx Expr<'tcx>,
         _ctx: &mut EvalContext<'tcx>,
@@ -59,7 +59,7 @@ pub struct ArrayMap;
 impl<'tcx> EvalExpr<'tcx> for ArrayMap {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         _generator: &mut Generator<'tcx>,
         _expr: &'tcx Expr<'tcx>,
         _ctx: &mut EvalContext<'tcx>,

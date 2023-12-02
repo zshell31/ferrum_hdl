@@ -5,6 +5,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
@@ -70,6 +71,17 @@ impl WithId<ModuleId, &'_ Splitter> {
         let out_width = self.outputs[0].ty.width();
 
         in_width == out_width
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Splitter {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            input: self.input,
+            outputs: self.outputs.resolve(resolver)?,
+            start: self.start.resolve(resolver)?,
+            rev: self.rev,
+        })
     }
 }
 

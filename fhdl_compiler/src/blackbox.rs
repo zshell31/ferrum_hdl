@@ -11,18 +11,14 @@ pub mod std;
 
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{group::ItemId, node::BinOp};
-use rustc_hir::Expr;
+use rustc_hir::{def_id::DefId, Expr};
 
-use crate::{
-    error::Error,
-    eval_context::EvalContext,
-    generator::{ty_or_def_id::TyOrDefIdWithGen, Generator},
-};
+use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub trait EvalExpr<'tcx> {
     fn eval_expr(
         &self,
-        blackbox: &Blackbox<'tcx>,
+        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -30,16 +26,16 @@ pub trait EvalExpr<'tcx> {
 }
 
 #[derive(Debug)]
-pub struct Blackbox<'tcx> {
+pub struct Blackbox {
     pub kind: BlackboxKind,
-    pub key: TyOrDefIdWithGen<'tcx>,
+    pub fn_did: DefId,
 }
 
 macro_rules! eval_expr {
     (
         $( $blackbox_kind:ident => $eval:expr ),+
     ) => {
-        impl<'tcx> Blackbox<'tcx> {
+        impl<'tcx> Blackbox {
             pub fn eval_expr(
                 &self,
                 generator: &mut Generator<'tcx>,

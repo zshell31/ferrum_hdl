@@ -1,36 +1,53 @@
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::net_list::{NodeOutId, NodeOutIdx};
+use crate::{
+    net_list::{NodeOutId, NodeOutIdx, TempNodeId},
+    resolver::{Resolve, Resolver},
+};
 
 #[derive(Debug, Clone, Encodable, Decodable)]
-pub struct GenNode {
-    gen_node_idx: u32,
+pub struct TemplateNode {
+    id: TempNodeId,
     inputs: Vec<NodeOutIdx>,
     outputs: Vec<NodeOutput>,
 }
 
-impl GenNode {
+impl TemplateNode {
     pub fn new(
-        gen_node_idx: u32,
+        id: TempNodeId,
         inputs: impl IntoIterator<Item = NodeOutId>,
         outputs: impl IntoIterator<Item = NodeOutput>,
     ) -> Self {
         Self {
-            gen_node_idx,
+            id,
             inputs: inputs.into_iter().map(Into::into).collect(),
             outputs: outputs.into_iter().collect(),
         }
     }
-}
 
-impl From<GenNode> for NodeKind {
-    fn from(node: GenNode) -> Self {
-        Self::GenNode(node)
+    pub fn temp_node_id(&self) -> TempNodeId {
+        self.id
     }
 }
 
-impl IsNode for GenNode {
+impl<R: Resolver> Resolve<R> for TemplateNode {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            id: self.id,
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.resolve(resolver)?,
+        })
+    }
+}
+
+impl From<TemplateNode> for NodeKind {
+    fn from(node: TemplateNode) -> Self {
+        Self::TemplateNode(node)
+    }
+}
+
+impl IsNode for TemplateNode {
     type Inputs = [NodeOutIdx];
     type Outputs = [NodeOutput];
 

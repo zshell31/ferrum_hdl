@@ -3,7 +3,12 @@ use std::fmt::Debug;
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutIdx, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::NodeOutIdx,
+    resolver::{Resolve, Resolver},
+    sig_ty::NodeTy,
+    symbol::Symbol,
+};
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Input {
@@ -19,6 +24,14 @@ impl Input {
 
     pub fn output(&self) -> &NodeOutput {
         &self.output
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Input {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

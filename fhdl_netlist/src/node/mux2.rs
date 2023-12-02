@@ -4,6 +4,7 @@ use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     encoding::Wrap,
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -48,6 +49,15 @@ impl WithId<ModuleId, &'_ Mux2> {
             input1: NodeOutId::make(module_id, self.inputs[1]),
             input2: NodeOutId::make(module_id, self.inputs[2]),
         }
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Mux2 {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            inputs: self.inputs,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

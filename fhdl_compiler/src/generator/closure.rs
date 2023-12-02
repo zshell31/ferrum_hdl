@@ -14,7 +14,7 @@ use crate::{
 impl<'tcx> Generator<'tcx> {
     pub fn eval_closure_fn_without_params(
         &mut self,
-        fn_id: DefId,
+        fn_did: DefId,
         expr: &Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
@@ -36,14 +36,14 @@ impl<'tcx> Generator<'tcx> {
             let generic_args = ctx.instantiate(self.tcx, utils::subst(ty).unwrap());
             let new_ctx = ctx.with_generic_args(generic_args);
 
-            let fn_sig = self.fn_sig(fn_id, &new_ctx);
+            let fn_sig = self.fn_sig(fn_did, &new_ctx);
             let input_ty = self.find_sig_ty(fn_sig.inputs()[0], &new_ctx, span)?;
             let output_ty = self.find_sig_ty(fn_sig.output(), &new_ctx, span)?;
 
-            if self.is_local_def_id(fn_id) {
+            if self.is_local_def_id(fn_did) {
                 let input = self.get_closure_inputs_for_sig_ty(input_ty, ctx);
 
-                let closure = match self.find_local_impl_id(fn_id, generic_args) {
+                let closure = match self.find_local_impl_id(fn_did, generic_args) {
                     Some((impl_id, generic_args)) => self.eval_impl_fn_call(
                         impl_id,
                         generic_args,
@@ -53,7 +53,7 @@ impl<'tcx> Generator<'tcx> {
                         expr.span,
                     )?,
                     None => self.eval_fn_call(
-                        fn_id.expect_local(),
+                        fn_did.expect_local(),
                         generic_args,
                         [input.into()],
                         ctx,
@@ -63,7 +63,8 @@ impl<'tcx> Generator<'tcx> {
 
                 return Ok(closure);
             } else {
-                let blackbox = self.find_blackbox(fn_id, ctx, span)?;
+                let blackbox = self.find_blackbox(fn_did, span)?;
+
                 if let Some(from) = blackbox.kind.is_cast() {
                     let conversion = Conversion::new(from);
                     let from = self.get_closure_inputs_for_sig_ty(input_ty, ctx);
@@ -79,9 +80,10 @@ impl<'tcx> Generator<'tcx> {
                         None => conversion
                             .convert(&blackbox, self, expr, ctx, from, output_ty),
                     };
-                }
+                };
             }
         }
+
         Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
     }
 

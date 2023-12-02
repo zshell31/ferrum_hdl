@@ -12,7 +12,6 @@ pub const fn idx_constr(n: usize) -> usize {
 }
 
 #[derive(Clone)]
-#[fhdl_tool::synth_ty]
 pub struct Idx<const N: usize>(Unsigned<{ idx_constr(N) }>)
 where
     ConstConstr<{ idx_constr(N) }>:;
@@ -80,7 +79,7 @@ where
         }
     }
 
-    #[fhdl_tool::synth]
+    // #[fhdl_tool::synth]
     pub fn pred(self) -> Self {
         if self.is_min() {
             Self((N - 1).cast::<Unsigned<_>>())
@@ -95,7 +94,7 @@ where
         self.0 == (N - 1).cast::<Unsigned<_>>()
     }
 
-    #[fhdl_tool::synth]
+    // #[fhdl_tool::synth]
     #[inline]
     pub fn is_min(&self) -> bool {
         self.0 == 0_u8.cast::<Unsigned<_>>()

@@ -7,7 +7,7 @@ use std::{
 use fhdl_netlist::{
     group::ItemId,
     net_list::NodeOutId,
-    node::{BinOp, BinOpNode, BitNot, Case, Const, Mux2, Not, Splitter},
+    node::{BinOp, BinOpNode, BitNot, Case, Const, Mux2, Not},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
@@ -45,6 +45,7 @@ struct Scope<'tcx> {
     module: Symbol,
     kind: &'tcx ExprKind<'tcx>,
     generic_args: GenericArgsRef<'tcx>,
+    span: Span,
 }
 
 #[allow(dead_code)]
@@ -55,15 +56,17 @@ impl<'tcx> Scope<'tcx> {
         module: Symbol,
         kind: &'tcx ExprKind<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
+        span: Span,
     ) -> Self {
         if print {
             let ident = AtomicU8::fetch_add(&IDENT, 1, Ordering::Relaxed) as usize;
             println!(
-                "{}--> {} ({} <{:?}>)",
+                "{}--> {} ({} <{:?}>) ({:?})",
                 " ".repeat(ident << 2),
                 Self::to_str(kind),
                 module,
-                generic_args
+                generic_args,
+                span
             );
         }
 
@@ -72,6 +75,7 @@ impl<'tcx> Scope<'tcx> {
             module,
             kind,
             generic_args,
+            span,
         }
     }
 
@@ -79,11 +83,12 @@ impl<'tcx> Scope<'tcx> {
         if self.print {
             let ident = AtomicU8::fetch_sub(&IDENT, 1, Ordering::Relaxed) as usize;
             println!(
-                "{}<-- {} ({} <{:?}>)",
+                "{}<-- {} ({} <{:?}>) ({:?})",
                 " ".repeat((ident - 1) << 2),
                 Self::to_str(self.kind),
                 self.module,
-                self.generic_args
+                self.generic_args,
+                self.span
             );
         }
     }
@@ -204,9 +209,10 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         let scope = Scope::enter(
             self.settings.trace_eval_expr,
-            self.net_list[ctx.module_id].name,
+            self.netlist[ctx.module_id].name,
             &expr.kind,
             ctx.generic_args,
+            expr.span,
         );
 
         let res = self.eval_expr_(expr, ctx);
@@ -304,10 +310,9 @@ impl<'tcx> Generator<'tcx> {
                                 ..
                             },
                         ) => {
+                            let fn_ty = self.node_type(fn_item.hir_id, ctx);
+                            let generic_args = utils::subst(fn_ty).unwrap();
                             if self.is_local_def_id(*fn_did) {
-                                let fn_ty = self.node_type(fn_item.hir_id, ctx);
-                                let generic_args = utils::subst(fn_ty).unwrap();
-
                                 self.eval_fn_call(
                                     fn_did.expect_local(),
                                     generic_args,
@@ -316,8 +321,13 @@ impl<'tcx> Generator<'tcx> {
                                     expr.span,
                                 )
                             } else {
-                                let blackbox = self.find_blackbox(*fn_did, ctx, *span)?;
-                                blackbox.eval_expr(self, expr, ctx)
+                                self.eval_synth_fn_or_blackbox(
+                                    *fn_did,
+                                    expr,
+                                    generic_args,
+                                    ctx,
+                                    *span,
+                                )
                             }
                         }
                         QPath::Resolved(
@@ -330,7 +340,7 @@ impl<'tcx> Generator<'tcx> {
                                     ),
                                 ..
                             },
-                        ) if self.is_local_def_id(*variant_ctor_did) => self
+                        ) if !self.is_blackbox_ty(*variant_ctor_did) => self
                             .eval_enum_variant_ctor(
                                 *variant_ctor_did,
                                 expr_ty,
@@ -345,7 +355,7 @@ impl<'tcx> Generator<'tcx> {
                                     Res::Def(DefKind::Ctor(CtorOf::Struct, _), struct_did),
                                 ..
                             },
-                        ) if self.is_local_def_id(*struct_did)
+                        ) if !self.is_blackbox_ty(*struct_did)
                             || self
                                 .find_blackbox_ty(*struct_did)
                                 .filter(|ty| ty.has_constructor())
@@ -455,7 +465,7 @@ impl<'tcx> Generator<'tcx> {
                 let if_block = self.to_bitvec(ctx.module_id, if_block);
                 let else_block = self.to_bitvec(ctx.module_id, else_block);
 
-                let mux = self.net_list.add(
+                let mux = self.netlist.add(
                     ctx.module_id,
                     Mux2::new(
                         sig_ty.to_bitvec(),
@@ -465,7 +475,7 @@ impl<'tcx> Generator<'tcx> {
                         SymIdent::Mux,
                     ),
                 );
-                let mux = self.net_list[mux].only_one_out().node_out_id();
+                let mux = self.netlist[mux].only_one_out().node_out_id();
 
                 Ok(self.from_bitvec(ctx.module_id, mux, sig_ty))
             }
@@ -486,7 +496,7 @@ impl<'tcx> Generator<'tcx> {
                 let value = lit::eval_lit(prim_ty, lit)?;
 
                 Ok(self
-                    .net_list
+                    .netlist
                     .add_and_get_out(
                         ctx.module_id,
                         Const::new(prim_ty, value.into(), None),
@@ -558,40 +568,40 @@ impl<'tcx> Generator<'tcx> {
                     inputs.push((discr, node_out_id));
                 }
 
-                let mut sel = self.to_bitvec(ctx.module_id, sel);
+                let sel = self.to_bitvec(ctx.module_id, sel);
 
                 // TODO: move to verilog generation
-                let small_mask_ones = small_mask.trailing_ones() as u128;
-                if small_mask != 0 && small_mask_ones > 0 {
-                    let sel_out = self.net_list[sel];
-                    let sel_width = sel_out.width();
+                // let small_mask_ones = small_mask.trailing_ones() as u128;
+                // if small_mask != 0 && small_mask_ones > 0 {
+                //     let sel_out = self.net_list[sel];
+                //     let sel_width = sel_out.width();
 
-                    let new_sel = self.net_list.add(
-                        ctx.module_id,
-                        Splitter::new(
-                            sel,
-                            [(
-                                NodeTy::BitVec(
-                                    (sel_width.value() - small_mask_ones).into(),
-                                ),
-                                None,
-                            )],
-                            None,
-                            true,
-                        ),
-                    );
-                    sel = self.net_list[new_sel].only_one_out().node_out_id();
+                //     let new_sel = self.net_list.add(
+                //         ctx.module_id,
+                //         Splitter::new(
+                //             sel,
+                //             [(
+                //                 NodeTy::BitVec(
+                //                     (sel_width.value() - small_mask_ones).into(),
+                //                 ),
+                //                 None,
+                //             )],
+                //             None,
+                //             true,
+                //         ),
+                //     );
+                //     sel = self.net_list[new_sel].only_one_out().node_out_id();
 
-                    for (discr, _) in &mut inputs {
-                        discr.shiftr(small_mask_ones);
-                    }
-                }
+                //     for (discr, _) in &mut inputs {
+                //         discr.shiftr(small_mask_ones);
+                //     }
+                // }
 
-                let case = self.net_list.add(
+                let case = self.netlist.add(
                     ctx.module_id,
                     Case::new(expr_ty.to_bitvec(), sel, inputs, default, SymIdent::Mux),
                 );
-                let case = self.net_list[case].only_one_out().node_out_id();
+                let case = self.netlist[case].only_one_out().node_out_id();
                 Ok(self.from_bitvec(ctx.module_id, case, expr_ty))
             }
             ExprKind::MethodCall(_, rec, args, span) => {
@@ -612,17 +622,23 @@ impl<'tcx> Generator<'tcx> {
                         ctx,
                         expr.span,
                     ),
-                    None => {
-                        let blackbox = self.find_blackbox(
-                            fn_did,
-                            &ctx.with_generic_args(generic_args),
-                            span,
-                        )?;
-                        blackbox.eval_expr(self, expr, ctx)
-                    }
+                    None => self.eval_synth_fn_or_blackbox(
+                        fn_did,
+                        expr,
+                        generic_args,
+                        ctx,
+                        span,
+                    ),
                 }
             }
-            ExprKind::Path(QPath::Resolved(_, Path { res, segments, .. })) => match res {
+            ExprKind::Path(QPath::Resolved(
+                _,
+                Path {
+                    res,
+                    segments,
+                    span,
+                },
+            )) => match res {
                 Res::Local(_) if segments.len() == 1 => {
                     let ident = segments[0].ident;
                     self.item_id_for_ident(ctx.module_id, ident)
@@ -633,26 +649,26 @@ impl<'tcx> Generator<'tcx> {
                 Res::Def(DefKind::Const, def_id) => {
                     if self.is_local_def_id(*def_id) {
                         if let Some(const_val) =
-                            self.eval_const_val(*def_id, ctx, Some(expr.span))
+                            self.eval_const_val(*def_id, ctx, Some(*span))
                         {
-                            let sig_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?;
+                            let sig_ty = self.find_sig_ty(expr_ty, ctx, *span)?;
 
-                            let node = self.net_list.add(
+                            let node = self.netlist.add(
                                 ctx.module_id,
                                 Const::new(sig_ty.to_bitvec(), const_val.into(), None),
                             );
                             let node_out_id =
-                                self.net_list[node].only_one_out().node_out_id();
+                                self.netlist[node].only_one_out().node_out_id();
 
-                            Ok(self.from_bitvec(ctx.module_id, node_out_id, sig_ty))
-                        } else {
-                            Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span)
-                                .into())
+                            return Ok(self.from_bitvec(
+                                ctx.module_id,
+                                node_out_id,
+                                sig_ty,
+                            ));
                         }
-                    } else {
-                        let blackbox = self.find_blackbox(*def_id, ctx, expr.span)?;
-                        blackbox.eval_expr(self, expr, ctx)
                     }
+
+                    Err(SpanError::new(SpanErrorKind::NotSynthExpr, *span).into())
                 }
                 Res::Def(DefKind::ConstParam, def_id) => {
                     let parent = self.tcx.parent(*def_id);
@@ -683,12 +699,12 @@ impl<'tcx> Generator<'tcx> {
 
                     let node_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.node_ty();
                     Ok(self
-                        .net_list
+                        .netlist
                         .add_and_get_out(ctx.module_id, Const::new(node_ty, value, None))
                         .into())
                 }
                 Res::Def(DefKind::Ctor(CtorOf::Variant, ..), variant_ctor_did)
-                    if self.is_local_def_id(*variant_ctor_did) =>
+                    if !self.is_blackbox_ty(*variant_ctor_did) =>
                 {
                     self.eval_enum_variant_ctor(
                         *variant_ctor_did,
@@ -730,7 +746,7 @@ impl<'tcx> Generator<'tcx> {
                                 let prim_ty =
                                     self.find_sig_ty(ty, ctx, expr.span)?.to_bitvec();
                                 return Ok(self
-                                    .net_list
+                                    .netlist
                                     .add_and_get_out(
                                         ctx.module_id,
                                         Const::new(prim_ty, const_val.into(), None),
@@ -757,7 +773,7 @@ impl<'tcx> Generator<'tcx> {
                 ),
                 fields,
                 base,
-            ) if self.is_local_def_id(*struct_did) && base.is_none() => self
+            ) if !self.is_blackbox_ty(*struct_did) && base.is_none() => self
                 .make_struct_group_from_exprs(
                     expr,
                     fields.iter().map(|field| field.expr),
@@ -773,7 +789,7 @@ impl<'tcx> Generator<'tcx> {
                 ),
                 fields,
                 base,
-            ) if self.is_local_def_id(*variant_did) && base.is_none() => self
+            ) if !self.is_blackbox_ty(*variant_did) && base.is_none() => self
                 .eval_enum_variant(
                     *variant_did,
                     expr_ty,
@@ -793,10 +809,10 @@ impl<'tcx> Generator<'tcx> {
                 let prim_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.node_ty();
 
                 Ok((if prim_ty.is_bool() {
-                    self.net_list
+                    self.netlist
                         .add_and_get_out(ctx.module_id, Not::new(prim_ty, comb, None))
                 } else {
-                    self.net_list
+                    self.netlist
                         .add_and_get_out(ctx.module_id, BitNot::new(prim_ty, comb, None))
                 })
                 .into())
@@ -946,7 +962,7 @@ impl<'tcx> Generator<'tcx> {
         let rhs = subnode(rhs, rhs_prim_ty)?;
 
         Ok(self
-            .net_list
+            .netlist
             .add_and_get_out(
                 ctx.module_id,
                 BinOpNode::new(prim_ty, bin_op, lhs, rhs, None),
@@ -974,10 +990,13 @@ impl<'tcx> Generator<'tcx> {
                 ctx,
                 expr.span,
             ),
-            None => {
-                let blackbox = self.find_blackbox(fn_did, ctx, fn_item.span)?;
-                blackbox.eval_expr(self, expr, ctx)
-            }
+            None => self.eval_synth_fn_or_blackbox(
+                fn_did,
+                expr,
+                generic_args,
+                ctx,
+                fn_item.span,
+            ),
         }
     }
 

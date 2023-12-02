@@ -3,13 +3,13 @@ mod bit_not;
 mod case;
 mod cons;
 mod dff;
-mod gen_node;
 mod input;
 mod merger;
 mod mod_inst;
 mod mux2;
 mod not;
 mod splitter;
+mod temp_node;
 mod zero_extend;
 
 use std::mem;
@@ -24,13 +24,13 @@ pub use self::{
     case::{Case, CaseInputs},
     cons::Const,
     dff::{DFFInputs, DFF},
-    gen_node::GenNode,
     input::Input,
     merger::Merger,
     mod_inst::ModInst,
     mux2::{Mux2, Mux2Inputs},
     not::Not,
     splitter::Splitter,
+    temp_node::TemplateNode,
     zero_extend::ZeroExtend,
 };
 use crate::{
@@ -39,6 +39,7 @@ use crate::{
         list::ListItem, Idx, InOut, ModuleId, NetList, NodeId, NodeIdx, NodeInId,
         NodeOutId, NodeOutIdx, WithId,
     },
+    resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
@@ -54,7 +55,6 @@ pub struct NodeOutput {
     pub ty: NodeTy,
     pub kind: NetKind,
     pub sym: Option<Symbol>,
-    // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
 }
@@ -86,11 +86,20 @@ impl NodeOutput {
     }
 }
 
+impl<R: Resolver> Resolve<R> for NodeOutput {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            ty: self.ty.resolve(resolver)?,
+            ..*self
+        })
+    }
+}
+
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Node {
     pub is_skip: bool,
     pub inject: bool,
-    kind: Box<NodeKind>,
+    kind: NodeKind,
     module_id: ModuleId,
     node_idx: NodeIdx,
     next: Option<NodeIdx>,
@@ -124,7 +133,7 @@ impl Node {
         let (module_id, node_idx) = node_id.split();
 
         Self {
-            kind: Box::new(kind),
+            kind,
             is_skip: true,
             inject: false,
             module_id,
@@ -132,6 +141,13 @@ impl Node {
             next: None,
             prev: None,
         }
+    }
+
+    pub fn resolve_kind<R: Resolver>(
+        &self,
+        resolver: &mut R,
+    ) -> Result<NodeKind, R::Error> {
+        self.kind.resolve(resolver)
     }
 
     pub fn kind(&self) -> NodeKindWithId<'_> {
@@ -341,38 +357,38 @@ impl Node {
     }
 
     pub fn is_input(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Input(_))
+        matches!(&self.kind, NodeKind::Input(_))
     }
 
     pub fn is_expr(&self) -> bool {
         matches!(
-            &*self.kind,
+            &self.kind,
             NodeKind::Not(_) | NodeKind::BitNot(_) | NodeKind::BinOp(_)
         )
     }
 
     pub fn is_const(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Const(_) | NodeKind::MultiConst(_))
+        matches!(&self.kind, NodeKind::Const(_) | NodeKind::MultiConst(_))
     }
 
     pub fn is_splitter(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Splitter(_))
+        matches!(&self.kind, NodeKind::Splitter(_))
     }
 
     pub fn is_merger(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Merger(_))
+        matches!(&self.kind, NodeKind::Merger(_))
     }
 
     pub fn is_zero_extend(&self) -> bool {
-        matches!(&*self.kind, NodeKind::ZeroExtend(_))
+        matches!(&self.kind, NodeKind::ZeroExtend(_))
     }
 
     pub fn is_mux(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Mux2(_) | NodeKind::Case(_))
+        matches!(&self.kind, NodeKind::Mux2(_) | NodeKind::Case(_))
     }
 
     pub fn is_mod_inst(&self) -> bool {
-        matches!(&*self.kind, NodeKind::ModInst(_))
+        matches!(&self.kind, NodeKind::ModInst(_))
     }
 }
 
@@ -578,6 +594,16 @@ macro_rules! define_nodes {
             }
         }
 
+        impl<R: Resolver> Resolve<R> for NodeKind {
+            fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+                Ok(match self {
+                    $(
+                        Self::$kind(kind) => Self::$kind(kind.resolve(resolver)?),
+                    )+
+                })
+            }
+        }
+
     };
 }
 
@@ -598,7 +624,7 @@ define_nodes!(
     Not => Not,
     Mux2 => Mux2,
     DFF => DFF,
-    GenNode => GenNode,
+    TemplateNode => TemplateNode,
 );
 
 impl NodeKind {}

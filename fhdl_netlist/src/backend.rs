@@ -333,8 +333,8 @@ impl<'n> Visitor for Verilog<'n> {
 
         let node = &self.net_list[node_id];
         match node.kind() {
-            NodeKind::GenNode(_) => {
-                panic!("Cannot generate verilog for GenNode");
+            NodeKind::TemplateNode(_) => {
+                panic!("Cannot generate verilog for TemplateNode");
             }
             NodeKind::Input(_) => {}
             NodeKind::ModInst(mod_inst) => {

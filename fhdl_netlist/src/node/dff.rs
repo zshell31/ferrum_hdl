@@ -5,6 +5,7 @@ use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     encoding::Wrap,
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -66,6 +67,17 @@ impl DFF {
 
     pub fn output(&self) -> &NodeOutput {
         &self.output
+    }
+}
+
+impl<R: Resolver> Resolve<R> for DFF {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            inputs: self.inputs.clone(),
+            en_idx: self.en_idx,
+            data_idx: self.data_idx,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

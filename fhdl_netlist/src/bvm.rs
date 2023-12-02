@@ -1,7 +1,10 @@
 use fhdl_const_func::mask;
 use rustc_macros::{Decodable, Encodable};
 
-use crate::const_val::ConstVal;
+use crate::{
+    const_val::ConstVal,
+    resolver::{Resolve, Resolver},
+};
 
 #[derive(Debug, Clone, Copy, Default, Encodable, Decodable)]
 pub struct BitVecMask {
@@ -52,5 +55,11 @@ impl BitVecMask {
         let current = (self.val & mask) & !self.mask;
         let val = (val.val & mask) & !self.mask;
         current == val
+    }
+}
+
+impl<R: Resolver> Resolve<R> for BitVecMask {
+    fn resolve(&self, _resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(*self)
     }
 }

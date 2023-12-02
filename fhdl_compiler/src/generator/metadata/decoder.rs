@@ -1,5 +1,6 @@
 use std::mem;
 
+use fhdl_netlist::net_list::NetList;
 use rustc_const_eval::interpret::AllocDecodingSession;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_middle::{
@@ -17,6 +18,26 @@ pub struct NetListDecoder<'g, 'tcx> {
     opaque: MemDecoder<'g>,
     alloc_decoding_session: AllocDecodingSession<'g>,
     type_shorthands: FxHashMap<usize, Ty<'tcx>>,
+}
+
+impl<'g, 'tcx> NetListDecoder<'g, 'tcx> {
+    pub fn new(
+        generator: &'g mut Generator<'tcx>,
+        opaque: MemDecoder<'g>,
+        alloc_decoding_session: AllocDecodingSession<'g>,
+    ) -> Self {
+        Self {
+            generator,
+            opaque,
+            alloc_decoding_session,
+            type_shorthands: Default::default(),
+        }
+    }
+
+    pub fn decode_netlist(&mut self) -> NetList {
+        // TODO: Decode only specified modules by request
+        NetList::decode(self)
+    }
 }
 
 implement_ty_decoder!(NetListDecoder<'g, 'tcx>);

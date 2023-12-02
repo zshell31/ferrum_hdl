@@ -23,7 +23,7 @@ pub fn bit_vec_trans<'tcx>(
     let bit_vec = generator.to_bitvec(ctx.module_id, source);
 
     let (trans, sig_ty) = trans(generator, ctx, bit_vec)?;
-    let trans = generator.net_list[trans].only_one_out().node_out_id();
+    let trans = generator.netlist[trans].only_one_out().node_out_id();
 
     let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
 
@@ -80,7 +80,7 @@ pub struct BitVecShrink;
 impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -95,7 +95,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
         let rec = generator.to_bitvec(ctx.module_id, rec);
 
         Ok(generator
-            .net_list
+            .netlist
             .add_and_get_out(
                 ctx.module_id,
                 Splitter::new(rec, [(NodeTy::BitVec(width), None)], None, false),
@@ -109,7 +109,7 @@ pub struct BitVecSlice;
 impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -123,12 +123,12 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
         let start = generics.as_const(1).unwrap();
         let width = generics.as_const(2).unwrap();
 
-        let sym = generator.net_list[rec]
+        let sym = generator.netlist[rec]
             .sym
             .map(|sym| Symbol::new_from_args(format_args!("{}_slice", sym)));
 
         Ok(generator
-            .net_list
+            .netlist
             .add_and_get_out(
                 ctx.module_id,
                 Splitter::new(rec, [(NodeTy::BitVec(width), sym)], Some(start), false),
@@ -142,7 +142,7 @@ pub struct BitVecUnpack;
 impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

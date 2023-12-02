@@ -57,7 +57,7 @@ pub fn subst_type(ty: Ty<'_>, index: usize) -> Option<Ty<'_>> {
 
 pub struct CallArgs<'tcx> {
     pub fn_item: HirId,
-    pub args: SmallVec<[&'tcx Expr<'tcx>; 8]>,
+    pub args: SmallVec<[&'tcx Expr<'tcx>; 4]>,
 }
 
 pub fn expected_call<'tcx>(expr: &'tcx Expr<'tcx>) -> Result<CallArgs<'tcx>, Error> {

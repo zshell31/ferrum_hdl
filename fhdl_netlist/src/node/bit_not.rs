@@ -3,6 +3,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -29,6 +30,15 @@ impl BitNot {
 impl WithId<ModuleId, &'_ BitNot> {
     pub fn input(&self) -> NodeOutId {
         NodeOutId::make(self.id(), self.input)
+    }
+}
+
+impl<R: Resolver> Resolve<R> for BitNot {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            input: self.input,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

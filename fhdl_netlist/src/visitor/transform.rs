@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use crate::{
     const_val::ConstVal,
     net_list::{ModuleId, NetList, NodeCursor, NodeId},
-    node::{BinOp, CaseInputs, Const, MultiConst, NodeKind, NodeKindWithId},
+    node::{BinOp, CaseInputs, Const, MultiConst, Mux2Inputs, NodeKind, NodeKindWithId},
     visitor::Visitor,
 };
 
@@ -228,6 +228,29 @@ impl<'n> Transform<'n> {
                         None
                     }
                 }
+            }
+
+            NodeKind::Mux2(node) => {
+                let Mux2Inputs {
+                    sel,
+                    input1,
+                    input2,
+                } = node.inputs();
+
+                if let Some(new_input) = self.net_list.to_const(sel).map(|const_val| {
+                    if const_val.val > 0 {
+                        input1
+                    } else {
+                        input2
+                    }
+                }) {
+                    let out_id =
+                        self.net_list[node_id].only_one_out().node_out_id().idx();
+                    self.net_list
+                        .reconnect_input_by_ind(node_id, out_id, new_input);
+                }
+
+                None
             }
 
             NodeKind::Case(node) => {

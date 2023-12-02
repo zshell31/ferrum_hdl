@@ -1,5 +1,6 @@
 pub mod adt;
 pub mod arg_matcher;
+pub mod attr;
 pub mod bitvec;
 pub mod closure;
 pub mod expr;
@@ -9,7 +10,9 @@ pub mod metadata;
 pub mod pattern_match;
 pub mod ty_or_def_id;
 
-use std::{env, error::Error as StdError, fmt::Display, fs, io, path::Path as StdPath};
+use std::{
+    env, error::Error as StdError, fmt::Display, fs, io, path::Path as StdPath, rc::Rc,
+};
 
 use cargo_toml::Manifest;
 use fhdl_blackbox::BlackboxKind;
@@ -155,11 +158,11 @@ pub enum TraitKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MonoItem<'tcx>(LocalDefId, GenericArgsRef<'tcx>);
+pub struct MonoItem<'tcx>(DefId, GenericArgsRef<'tcx>);
 
 impl<'tcx> MonoItem<'tcx> {
-    pub fn new(item_id: LocalDefId, generic_args: GenericArgsRef<'tcx>) -> Self {
-        Self(item_id, generic_args)
+    pub fn new<T: Into<DefId>>(item_id: T, generic_args: GenericArgsRef<'tcx>) -> Self {
+        Self(item_id.into(), generic_args)
     }
 }
 
@@ -226,7 +229,7 @@ impl Crates {
         def_id.krate == self.ferrum_hdl
     }
 
-    pub(crate) fn is_local_ferrum_hdl(&self) -> bool {
+    pub(crate) fn is_ferrum_hdl_local(&self) -> bool {
         self.ferrum_hdl == LOCAL_CRATE
     }
 }
@@ -249,19 +252,27 @@ impl Settings {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleKey {
+    krate: CrateNum,
+    module_id: ModuleId,
+}
+
 pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
-    pub net_list: NetList,
+    pub netlist: NetList,
     pub idents: Scopes,
     pub settings: Settings,
     is_primary: bool,
     top_module: Option<HirItemId>,
     crates: Crates,
-    blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
+    blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     metadata: Metadata<'tcx>,
+    loaded_metadata: FxHashMap<CrateNum, Rc<Metadata<'tcx>>>,
+    imported_modules: FxHashMap<ModuleKey, ModuleId>,
 }
 
 impl<'tcx> Generator<'tcx> {
@@ -273,7 +284,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> Self {
         Self {
             tcx,
-            net_list: NetList::new(),
+            netlist: NetList::new(),
             idents: Scopes::new(),
             settings: Settings::new(),
             top_module,
@@ -284,6 +295,8 @@ impl<'tcx> Generator<'tcx> {
             local_trait_impls: Default::default(),
             evaluated_modules: Default::default(),
             metadata: Default::default(),
+            loaded_metadata: Default::default(),
+            imported_modules: Default::default(),
         }
     }
 
@@ -303,13 +316,18 @@ impl<'tcx> Generator<'tcx> {
             self.print_message(&"Synthesizing", Some(&crate_name.as_str()))?;
 
             for body_id in self.tcx.hir().body_owners() {
-                if self.is_synth(body_id.into()) {
-                    match self.tcx.hir().get_by_def_id(body_id) {
+                if self
+                    .metadata
+                    .find_module_id_by_def_id(body_id.into())
+                    .is_none()
+                    && self.is_synth(body_id.into())
+                {
+                    let module_id = match self.tcx.hir().get_by_def_id(body_id) {
                         HirNode::Item(item) => {
-                            self.eval_fn_item(item, false, generic_args)?;
+                            self.eval_fn_item(item, false, generic_args)?
                         }
                         HirNode::ImplItem(impl_item) => {
-                            self.eval_impl_item(impl_item, generic_args)?;
+                            self.eval_impl_item(impl_item, generic_args)?
                         }
                         _ => {
                             return Err(SpanError::new(
@@ -321,16 +339,15 @@ impl<'tcx> Generator<'tcx> {
                             .into());
                         }
                     };
+
+                    self.metadata.add_module_id(body_id, module_id);
                 }
             }
 
-            self.net_list.transform();
-            self.net_list.reachability();
+            self.netlist.transform();
+            self.netlist.reachability();
 
-            let output_filenames = self.tcx.output_filenames(());
-            let path = output_filenames.with_extension("net_list");
-            self.encode_netlist(path)?;
-            self.net_list.dump(true);
+            self.encode_netlist()?;
 
             Ok(())
         } else {
@@ -356,12 +373,12 @@ impl<'tcx> Generator<'tcx> {
             let item = self.tcx.hir().item(top_module);
             self.eval_fn_item(item, true, GenericArgs::empty())?;
 
-            self.net_list.transform();
-            self.net_list.reachability();
-            self.net_list.set_names();
-            self.net_list.inject_nodes();
+            self.netlist.transform();
+            self.netlist.reachability();
+            self.netlist.set_names();
+            self.netlist.inject_nodes();
 
-            let verilog = Verilog::new(&self.net_list).generate();
+            let verilog = Verilog::new(&self.netlist).generate();
 
             Ok(fs::write(path, verilog)?)
         }
@@ -511,7 +528,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> GenericArgsRef<'tcx> {
         match from {
             true => generic_args,
-            // Swap generic args from Into::<Self, T> -> From::<Self = T, T = Self>
+            // Swap generic args for Cast::<Self>::cast<T>() -> CastFrom::<Self = T, T = Self>
             false => self.tcx.mk_args(&[generic_args[1], generic_args[0]]),
         }
     }
@@ -524,7 +541,7 @@ impl<'tcx> Generator<'tcx> {
         let def_id = def_id.into();
         let local_def_id = def_id.as_local()?;
 
-        match self.crates.is_local_ferrum_hdl() {
+        match self.crates.is_ferrum_hdl_local() {
             false => Some(local_def_id),
             true if self.is_synth(def_id) => Some(local_def_id),
             _ => None,

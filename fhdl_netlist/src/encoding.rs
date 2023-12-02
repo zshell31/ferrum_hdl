@@ -50,12 +50,15 @@ where
 
 impl<E: Encoder, T: Encodable<E>> Encodable<E> for Wrap<[T; 3]> {
     fn encode(&self, s: &mut E) {
-        self.0.encode(s)
+        self.0.as_slice().encode(s)
     }
 }
 
 impl<D: Decoder, T: Decodable<D>> Decodable<D> for Wrap<[T; 3]> {
     fn decode(d: &mut D) -> Self {
+        // read the length
+        let _ = usize::decode(d);
+
         Wrap([
             Decodable::decode(d),
             Decodable::decode(d),

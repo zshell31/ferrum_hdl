@@ -3,6 +3,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::NodeOutIdx,
+    resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
@@ -27,6 +28,15 @@ impl Const {
 
     pub fn output(&self) -> &NodeOutput {
         &self.output
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Const {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            value: self.value.resolve(resolver)?,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 
@@ -80,6 +90,15 @@ impl MultiConst {
 
     pub fn outputs(&self) -> &[NodeOutput] {
         &self.outputs
+    }
+}
+
+impl<R: Resolver> Resolve<R> for MultiConst {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            values: self.values.resolve(resolver)?,
+            outputs: self.outputs.resolve(resolver)?,
+        })
     }
 }
 

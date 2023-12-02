@@ -36,7 +36,7 @@ impl SignalReg {
 impl<'tcx> EvalExpr<'tcx> for SignalReg {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -68,7 +68,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         let rst_val = generator.to_bitvec(ctx.module_id, rst_val);
         let prim_ty = sig_ty.to_bitvec();
 
-        let dff = generator.net_list.add(
+        let dff = generator.netlist.add(
             ctx.module_id,
             DFF::new(
                 prim_ty,
@@ -85,14 +85,14 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
             ),
         );
 
-        let dff_out = generator.net_list[dff].only_one_out().node_out_id();
+        let dff_out = generator.netlist[dff].only_one_out().node_out_id();
         let dff_out = generator.from_bitvec(ctx.module_id, dff_out, sig_ty);
 
         ctx.new_closure_inputs().push(dff_out);
         let comb = generator.eval_expr(comb, ctx)?;
         let comb_out = generator.to_bitvec(ctx.module_id, comb);
 
-        generator.net_list.set_dff_data(dff, comb_out);
+        generator.netlist.set_dff_data(dff, comb_out);
 
         Ok(dff_out)
     }
@@ -103,7 +103,7 @@ pub struct SignalLift;
 impl<'tcx> EvalExpr<'tcx> for SignalLift {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -119,7 +119,7 @@ pub struct SignalMap;
 impl<'tcx> EvalExpr<'tcx> for SignalMap {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -139,7 +139,7 @@ pub struct SignalAndThen;
 impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -159,7 +159,7 @@ pub struct SignalApply2;
 impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -180,7 +180,7 @@ pub struct SignalValue;
 impl<'tcx> EvalExpr<'tcx> for SignalValue {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -196,7 +196,7 @@ pub struct SignalWatch;
 impl<'tcx> EvalExpr<'tcx> for SignalWatch {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -214,7 +214,7 @@ pub struct SignalOp {
 impl<'tcx> EvalExpr<'tcx> for SignalOp {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

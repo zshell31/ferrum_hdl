@@ -18,7 +18,7 @@ use super::{Blackbox, EvalExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    generator::{expr::ExprOrItemId, metadata::GenNodeKind, Generator, TraitKind},
+    generator::{expr::ExprOrItemId, metadata::TemplateNodeKind, Generator, TraitKind},
     utils,
 };
 
@@ -69,7 +69,7 @@ impl Conversion {
 
     pub fn convert<'tcx>(
         &self,
-        blackbox: &Blackbox<'tcx>,
+        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -121,7 +121,7 @@ impl Conversion {
 
     fn cast_array<'tcx>(
         &self,
-        blackbox: &Blackbox<'tcx>,
+        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &Expr<'tcx>,
         from: ItemId,
@@ -129,7 +129,7 @@ impl Conversion {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let fn_item = utils::expected_call(expr)?.fn_item;
-        let fn_did = blackbox.key.def_id().unwrap();
+        let fn_did = blackbox.fn_did;
         let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
         let generic_args =
             generator
@@ -177,14 +177,14 @@ impl Conversion {
 
     fn try_local_cast<'tcx>(
         &self,
-        blackbox: &Blackbox<'tcx>,
+        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         fn_item: HirId,
         from: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<Option<ItemId>, Error> {
-        let fn_did = blackbox.key.def_id().unwrap();
+        let fn_did = blackbox.fn_did;
         let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
 
         self.try_local_cast_(generator, ctx, generic_args, from.into(), span)
@@ -221,16 +221,20 @@ impl Conversion {
     }
 
     fn bool_to_bit(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        generator.net_list[from.node_out_id()].ty = NodeTy::Bit;
+        generator.netlist[from.node_out_id()].ty = NodeTy::Bit;
         from
     }
 
     fn bit_to_bool(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        generator.net_list[from.node_out_id()].ty = NodeTy::Bool;
+        generator.netlist[from.node_out_id()].ty = NodeTy::Bool;
         from
     }
 
-    fn to_unsigned(from: ItemId, to_ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
+    pub fn to_unsigned(
+        from: ItemId,
+        to_ty: NodeTy,
+        generator: &mut Generator<'_>,
+    ) -> ItemId {
         let node_out_id = from.node_out_id();
         let module_id = node_out_id.node_id().module_id();
         let from_ty = generator.item_ty(from);
@@ -240,7 +244,7 @@ impl Conversion {
         {
             if from_width >= to_width {
                 generator
-                    .net_list
+                    .netlist
                     .add_and_get_out(
                         module_id,
                         Splitter::new(node_out_id, [(to_ty, None)], None, false),
@@ -248,14 +252,14 @@ impl Conversion {
                     .into()
             } else {
                 generator
-                    .net_list
+                    .netlist
                     .add_and_get_out(module_id, ZeroExtend::new(to_ty, node_out_id, None))
                     .into()
             }
         } else {
-            let node_id = generator.add_gen_node(
+            let node_id = generator.add_temp_node(
                 module_id,
-                GenNodeKind::CastToUnsigned {
+                TemplateNodeKind::CastToUnsigned {
                     from: node_out_id,
                     to_ty,
                 },
@@ -263,7 +267,7 @@ impl Conversion {
                 [NodeOutput::wire(to_ty, None)],
             );
 
-            generator.net_list[node_id]
+            generator.netlist[node_id]
                 .only_one_out()
                 .node_out_id()
                 .into()
@@ -276,7 +280,7 @@ fn assert_convert<F, T: CastFrom<F>>() {}
 impl<'tcx> EvalExpr<'tcx> for Conversion {
     fn eval_expr(
         &self,
-        blackbox: &Blackbox<'tcx>,
+        blackbox: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

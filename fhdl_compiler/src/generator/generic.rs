@@ -2,6 +2,7 @@ use either::Either;
 use fhdl_blackbox::BlackboxTy;
 use fhdl_netlist::{
     arena::with_arena,
+    net_list::{Idx, ParamId, TyId},
     sig_ty::{SignalTy, Width},
 };
 use rustc_middle::ty::{
@@ -45,7 +46,7 @@ impl<'tcx> GenericArgExt for GenericArg<'tcx> {
 pub enum Generic {
     Ty(SignalTy),
     Const(u128),
-    Param((u32, u32)),
+    Param((TyId, ParamId)),
     Ignored,
 }
 
@@ -72,9 +73,7 @@ impl Generic {
     fn as_const(&self) -> Option<Width> {
         match self {
             Self::Const(val) => Some((*val).into()),
-            Self::Param((ty_idx, param_idx)) => {
-                Some(Width::mk_param(*ty_idx, *param_idx))
-            }
+            Self::Param((ty_id, param_id)) => Some(Width::mk_param(*ty_id, *param_id)),
             _ => None,
         }
     }
@@ -98,7 +97,7 @@ impl Generic {
 
     fn from_gen_arg<'tcx>(
         generator: &mut Generator<'tcx>,
-        param_idx: u32,
+        param_id: ParamId,
         arg: &GenericArg<'tcx>,
         ty: Ty<'tcx>,
         ctx: &EvalContext<'tcx>,
@@ -113,16 +112,16 @@ impl Generic {
         let cons_val = arg.as_const().and_then(|cons| match cons.kind() {
             ConstKind::Unevaluated(unevaluated) => {
                 if unevaluated.args.iter().any(|arg| arg.is_param()) {
-                    let ty_idx = generator.add_gen_ty(ty);
-                    Some(Generic::Param((ty_idx, param_idx)))
+                    let ty_idx = generator.add_generic_ty(ty);
+                    Some(Generic::Param((ty_idx, param_id)))
                 } else {
                     Self::resolve_const(unevaluated, generator.tcx).map(Into::into)
                 }
             }
             ConstKind::Value(val_tree) => utils::eval_val_tree(val_tree).map(Into::into),
             ConstKind::Param(_) => {
-                let ty_idx = generator.add_gen_ty(ty);
-                Some(Generic::Param((ty_idx, param_idx)))
+                let ty_idx = generator.add_generic_ty(ty);
+                Some(Generic::Param((ty_idx, param_id)))
             }
             _ => None,
         });
@@ -205,10 +204,10 @@ impl Generics {
                     generic_args
                         .into_iter()
                         .enumerate()
-                        .map(|(param_idx, generic)| match generic {
+                        .map(|(param_id, generic)| match generic {
                             Some(generic) => Generic::from_gen_arg(
                                 generator,
-                                param_idx as u32,
+                                ParamId::new(param_id),
                                 &generic,
                                 ty,
                                 ctx,

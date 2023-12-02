@@ -6,6 +6,7 @@ use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     bvm::BitVecMask,
     net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -86,6 +87,17 @@ impl WithId<ModuleId, &'_ Case> {
                 .collect(),
             variants: self.variants.as_slice(),
         }
+    }
+}
+
+impl<R: Resolver> Resolve<R> for Case {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            inputs: self.inputs.clone(),
+            variants: self.variants.resolve(resolver)?,
+            is_default: self.is_default,
+            output: self.output.resolve(resolver)?,
+        })
     }
 }
 

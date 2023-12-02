@@ -26,7 +26,7 @@ impl BitVal {
 
         let cons = Const::new(NodeTy::Bit, value.into(), None);
         Ok(generator
-            .net_list
+            .netlist
             .add_and_get_out(ctx.module_id, cons)
             .into())
     }
@@ -35,7 +35,7 @@ impl BitVal {
 impl<'tcx> EvalExpr<'tcx> for BitVal {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

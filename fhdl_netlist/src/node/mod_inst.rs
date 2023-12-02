@@ -3,6 +3,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -83,6 +84,18 @@ impl WithId<ModuleId, &'_ ModInst> {
         self.inputs
             .iter()
             .map(move |input| NodeOutId::make(module_id, *input))
+    }
+}
+
+impl<R: Resolver> Resolve<R> for ModInst {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        Ok(Self {
+            name: self.name,
+            inlined: self.inlined,
+            module_id: resolver.resolve_module_id(self.module_id),
+            inputs: self.inputs.clone(),
+            outputs: self.outputs.resolve(resolver)?,
+        })
     }
 }
 

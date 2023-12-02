@@ -9,7 +9,7 @@ pub struct StdClone;
 impl<'tcx> EvalExpr<'tcx> for StdClone {
     fn eval_expr(
         &self,
-        _: &Blackbox<'tcx>,
+        _: &Blackbox,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

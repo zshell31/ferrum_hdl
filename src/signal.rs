@@ -208,7 +208,7 @@ impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
 pub struct Wrapped<D: ClockDomain, T: SignalValue>(Signal<D, T>);
 
 impl<D: ClockDomain, T: SignalValue> Clone for Wrapped<D, T> {
-    #[inline(always)]
+    #[inline]
     fn clone(&self) -> Self {
         Self(self.0.clone())
     }
@@ -226,7 +226,7 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     }
 
     #[allow(clippy::should_implement_trait)]
-    #[inline(always)]
+    #[inline]
     #[blackbox(SignalValue)]
     pub fn value(&self) -> T {
         self.0.next.borrow().value()

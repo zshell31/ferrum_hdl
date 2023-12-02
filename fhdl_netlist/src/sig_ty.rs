@@ -68,7 +68,7 @@ impl Width {
         Self { kind, is_generic }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_generic(&self) -> bool {
         self.is_generic
     }
@@ -429,32 +429,32 @@ impl ArrayTy {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn width(&self) -> Width {
         self.width
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn count(&self) -> u128 {
         self.count
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn item_width(&self) -> Width {
         self.ty.width()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn tys(&self) -> ArrayTyIter<'_> {
         ArrayTyIter { ind: 0, ty: self }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn item_ty(&self) -> &SignalTy {
         self.ty.0
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_generic(&self) -> bool {
         self.width.is_generic()
     }
@@ -508,27 +508,27 @@ impl StructTy {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn width(&self) -> Width {
         self.width
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn len(&self) -> usize {
         self.tys.len()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.tys.is_empty()
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn tys(&self) -> &[Named<SignalTy>] {
         self.tys.0
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn by_field(&self, field: &str) -> Option<SignalTy> {
         self.tys
             .iter()
@@ -544,7 +544,7 @@ impl StructTy {
             .map(|(idx, _)| idx)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_generic(&self) -> bool {
         self.width.is_generic()
     }
@@ -579,22 +579,22 @@ impl EnumTy {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn width(&self) -> Width {
         Width::mk_enum(self.discr_width, self.data_width)
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn discr_width(&self) -> u128 {
         self.discr_width
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn data_width(&self) -> Width {
         self.data_width
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn discr_val(&self, idx: usize) -> u128 {
         (idx as u128) & ((1 << self.discr_width()) - 1)
     }
@@ -611,7 +611,7 @@ impl EnumTy {
         self.variants[idx]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn is_generic(&self) -> bool {
         self.data_width.is_generic()
     }

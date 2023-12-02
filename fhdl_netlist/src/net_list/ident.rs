@@ -17,13 +17,13 @@ pub trait Idx: Debug + Default + Copy + Eq + Hash + 'static {
 pub trait IsId: Debug + Copy + PartialEq + Hash + 'static {}
 
 impl Idx for u32 {
-    #[inline(always)]
+    #[inline]
     fn new(idx: usize) -> Self {
         assert!(idx <= u32::MAX as usize);
         idx as u32
     }
 
-    #[inline(always)]
+    #[inline]
     fn idx(self) -> usize {
         self as usize
     }
@@ -62,19 +62,19 @@ macro_rules! idx_type {
         }
 
         impl From<u32> for $name {
-            #[inline(always)]
+            #[inline]
             fn from(idx: u32) -> Self {
                 Self(idx)
             }
         }
 
         impl Idx for $name {
-            #[inline(always)]
+            #[inline]
             fn new(idx: usize) -> Self {
                 Self(<u32 as Idx>::new(idx))
             }
 
-            #[inline(always)]
+            #[inline]
             fn idx(self) -> usize {
                 <u32 as Idx>::idx(self.0)
             }
@@ -98,28 +98,28 @@ macro_rules! composite_type {
         impl IsId for $name {}
 
         impl $name {
-            #[inline(always)]
+            #[inline]
             pub fn new(base_id: $base, idx: usize) -> Self {
                 Self(base_id, <u32 as Idx>::new(idx))
             }
 
-            #[inline(always)]
+            #[inline]
             pub fn $get_base(&self) -> $base {
                 self.0
             }
 
-            #[inline(always)]
+            #[inline]
             pub fn $get_idx(&self) -> usize {
                 <u32 as Idx>::idx(self.1)
             }
 
             $(
-                #[inline(always)]
+                #[inline]
                 pub fn combine(base_id: $base, idx: $idx) -> Self {
                     Self::new(base_id, idx.idx())
                 }
 
-                #[inline(always)]
+                #[inline]
                 pub fn split(self) -> ($base, $idx) {
                     (self.$get_base(), self.1.into())
             }

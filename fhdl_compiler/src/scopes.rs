@@ -24,14 +24,14 @@ impl SymIdent {
 }
 
 impl From<SymIdent> for Symbol {
-    #[inline(always)]
+    #[inline]
     fn from(ident: SymIdent) -> Self {
         Symbol::new(ident.as_str())
     }
 }
 
 impl From<SymIdent> for Option<Symbol> {
-    #[inline(always)]
+    #[inline]
     fn from(ident: SymIdent) -> Self {
         Some(ident.into())
     }

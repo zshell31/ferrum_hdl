@@ -34,14 +34,14 @@ impl<Id: IsId, T> DerefMut for WithId<Id, T> {
 }
 
 impl<T> WithId<NodeInId, T> {
-    #[inline(always)]
+    #[inline]
     pub fn node_in_id(&self) -> NodeInId {
         self.id()
     }
 }
 
 impl<T> WithId<NodeOutId, T> {
-    #[inline(always)]
+    #[inline]
     pub fn node_out_id(&self) -> NodeOutId {
         self.id()
     }

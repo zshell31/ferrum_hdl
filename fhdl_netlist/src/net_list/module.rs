@@ -68,7 +68,7 @@ impl Module {
         self.list.last_idx()
     }
 
-    #[inline(always)]
+    #[inline]
     fn node_storage<'n>(&self, nodes: &'n mut Nodes) -> NodeStorage<'n> {
         NodeStorage {
             module_id: self.module_id,

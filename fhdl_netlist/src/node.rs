@@ -80,7 +80,7 @@ impl NodeOutput {
 }
 
 impl NodeOutput {
-    #[inline(always)]
+    #[inline]
     pub fn width(&self) -> Width {
         self.ty.width()
     }
@@ -188,7 +188,7 @@ impl Node {
         )
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn node_id(&self) -> NodeId {
         NodeId::combine(self.module_id, self.node_idx)
     }

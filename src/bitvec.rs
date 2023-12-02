@@ -118,7 +118,7 @@ impl<const N: usize> BitVec<N> {
 impl<const N: usize> SignalValue for BitVec<N> {}
 
 impl<const N: usize> IsPacked for BitVec<N> {
-    #[inline(always)]
+    #[inline]
     fn zero() -> Self {
         Self::cast_from(0_u8)
     }
@@ -137,14 +137,14 @@ macro_rules! impl_from {
     ($( $prim:ty ),+) => {
         $(
             impl<const N: usize> CastFrom<$prim> for BitVec<N> {
-                #[inline(always)]
+                #[inline]
                 fn cast_from(val: $prim) -> Self {
                     Self::from_short(val as u128)
                 }
             }
 
             impl<const N: usize> CastFrom<BitVec<N>> for $prim {
-                #[inline(always)]
+                #[inline]
                 fn cast_from(val: BitVec<N>) -> Self {
                     match val {
                         BitVec::Short(short) => short as $prim,

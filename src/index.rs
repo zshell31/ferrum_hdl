@@ -7,7 +7,7 @@ use crate::{
     cast::Cast, const_helpers::ConstConstr, signal::SignalValue, unsigned::Unsigned,
 };
 
-#[inline(always)]
+#[inline]
 pub const fn idx_constr(n: usize) -> usize {
     clog2(n)
 }

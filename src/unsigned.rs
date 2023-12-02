@@ -52,14 +52,14 @@ macro_rules! impl_for_unsigned_prim_ty {
             impl SignalValue for $prim {}
 
             impl <const N: usize> CastFrom<$prim> for Unsigned<N> {
-                #[inline(always)]
+                #[inline]
                 fn cast_from(val: $prim) -> Self {
                     Self(val.cast())
                 }
             }
 
             impl <const N: usize> CastFrom<Unsigned<N>> for $prim {
-                #[inline(always)]
+                #[inline]
                 fn cast_from(val: Unsigned<N>) -> Self {
                     val.0.cast()
                 }

@@ -1,5 +1,5 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     fmt::Debug,
     marker::PhantomData,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Sub},
@@ -18,7 +18,7 @@ use crate::{
     simulation::{SimCtx, Simulate},
 };
 
-pub trait SignalValue: Debug + Copy + 'static {}
+pub trait SignalValue: Debug + Clone + 'static {}
 
 impl SignalValue for bool {}
 
@@ -82,7 +82,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
 
     #[blackbox(SignalLift)]
     pub fn lift(value: T) -> Signal<D, T> {
-        Self::new(move |_| value)
+        Self::new(move |_| value.clone())
     }
 
     #[blackbox(SignalMap)]
@@ -281,15 +281,15 @@ impl<D: ClockDomain> Wrapped<D, Bit> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Source<T: SignalValue>(Rc<Cell<T>>);
+pub struct Source<T: SignalValue>(Rc<RefCell<T>>);
 
 impl<T: SignalValue> Source<T> {
     pub(crate) fn new(value: T) -> Self {
-        Self(Rc::new(Cell::new(value)))
+        Self(Rc::new(RefCell::new(value)))
     }
 
     pub fn value(&self) -> T {
-        self.0.get()
+        self.0.borrow().clone()
     }
 
     pub fn set_value(&self, value: T) -> T {
@@ -299,13 +299,13 @@ impl<T: SignalValue> Source<T> {
 
 impl Source<Bit> {
     pub fn revert(&self) {
-        self.0.update(|val| !val);
+        self.0.replace_with(|val| !(*val));
     }
 }
 
 impl Source<bool> {
     pub fn revert(&self) {
-        self.0.update(|val| !val);
+        self.0.replace_with(|val| !(*val));
     }
 }
 
@@ -431,10 +431,14 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut next_val = rst_val;
+    let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
-        let value = if rst.next(ctx) { rst_val } else { next_val };
-        next_val = (comb_fn)(value);
+        let value = if rst.next(ctx) {
+            rst_val.clone()
+        } else {
+            next_val.clone()
+        };
+        next_val = (comb_fn)(value.clone());
 
         value
     })
@@ -448,19 +452,19 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut next_val = rst_val;
+    let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
         if rst.next(ctx) {
-            next_val = rst_val;
-            (comb_fn)(next_val);
-            next_val
+            next_val = rst_val.clone();
+            (comb_fn)(next_val.clone());
+            next_val.clone()
         } else if en.next(ctx).into() {
-            let val = (comb_fn)(next_val);
-            next_val = val;
+            let val = (comb_fn)(next_val.clone());
+            next_val = val.clone();
             val
         } else {
-            (comb_fn)(next_val);
-            next_val
+            (comb_fn)(next_val.clone());
+            next_val.clone()
         }
     })
 }
@@ -574,7 +578,7 @@ mod tests {
     fn test_reg() {
         let clk = Clock::<TestSystem>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1);
+        let r = reg::<TestSystem, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1_u8);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
@@ -584,7 +588,7 @@ mod tests {
     #[test]
     fn unbundle() {
         let s: Signal<TestSystem, (Unsigned<4>, Bit)> = [
-            (0, false),
+            (0_u8, false),
             (1, true),
             (2, true),
             (3, false),
@@ -600,7 +604,7 @@ mod tests {
         assert_eq!(
             res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
             [
-                (0, false),
+                (0_u8, false),
                 (1, true),
                 (2, true),
                 (3, false),
@@ -613,7 +617,10 @@ mod tests {
     #[test]
     fn bundle() {
         let s: (Signal<TestSystem, Unsigned<4>>, Signal<TestSystem, Bit>) = (
-            [0, 1, 2, 3, 4, 5].into_iter().map(Cast::cast).into_signal(),
+            [0_u8, 1, 2, 3, 4, 5]
+                .into_iter()
+                .map(Cast::cast)
+                .into_signal(),
             [false, true, true, false, true, false]
                 .into_iter()
                 .map(Cast::cast)
@@ -625,7 +632,7 @@ mod tests {
         assert_eq!(
             res.simulate().take(6).map(Cast::cast).collect::<Vec<_>>(),
             [
-                (0, false),
+                (0_u8, false),
                 (1, true),
                 (2, true),
                 (3, false),

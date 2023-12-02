@@ -7,8 +7,8 @@ use fhdl_macros::{blackbox, blackbox_ty};
 use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
-    bit_pack::{BitPack, BitSize},
-    bit_vec::BitVec,
+    bitpack::{BitPack, BitSize},
+    bitvec::BitVec,
     cast::IsPrimTy,
     signal::SignalValue,
 };
@@ -17,12 +17,6 @@ use crate::{
 #[blackbox_ty(Bit)]
 #[repr(transparent)]
 pub struct Bit(bool);
-
-impl Bit {
-    pub(crate) const fn from_u128(value: u128) -> Self {
-        Self(value > 0)
-    }
-}
 
 pub fn bit_value(value: bool) -> u128 {
     match value {
@@ -37,6 +31,10 @@ impl IsPrimTy for Bit {
     const PRIM_TY: PrimTy = PrimTy::Bit;
 }
 
+impl IsPrimTy for bool {
+    const PRIM_TY: PrimTy = PrimTy::Bool;
+}
+
 impl BitSize for Bit {
     const BITS: usize = 1;
 }
@@ -44,16 +42,12 @@ impl BitSize for Bit {
 impl BitPack for Bit {
     type Packed = BitVec<1>;
 
-    fn pack(&self) -> Self::Packed {
-        (match self.0 {
-            true => 1,
-            false => 0,
-        })
-        .into()
+    fn pack(self) -> Self::Packed {
+        bool::from(self).pack()
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
-        Self::from_u128(bitvec.inner())
+        bool::unpack(bitvec).into()
     }
 }
 
@@ -64,16 +58,16 @@ impl BitSize for bool {
 impl BitPack for bool {
     type Packed = BitVec<1>;
 
-    fn pack(&self) -> Self::Packed {
+    fn pack(self) -> Self::Packed {
         (match self {
-            true => 1,
+            true => 1_u8,
             false => 0,
         })
         .into()
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
-        bitvec.inner() == 1
+        bitvec.is_non_zero()
     }
 }
 

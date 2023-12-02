@@ -11,6 +11,7 @@ bumpalo = { version = "3.13.0", features = ["collections"] }
 derive-where = "1.2.5"
 either = "1.9.0"
 indexmap = "2.0.0"
+fhdl_blackbox = { path = "../fhdl_blackbox/" }
 fnv = "1.0.7"
 smallvec = "1.11.0"
 

@@ -1,58 +1,74 @@
 use std::{
     cmp::Ordering,
     fmt::{self, Binary, Display, LowerHex},
-    ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
 use fhdl_macros::{blackbox, blackbox_ty};
 use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
-    bit_pack::{BitPack, BitSize},
-    bit_vec::BitVec,
+    bitpack::{BitPack, BitSize},
+    bitvec::BitVec,
     cast::IsPrimTy,
+    const_functions::bit,
     const_helpers::{Assert, IsTrue},
     signal::SignalValue,
 };
 
-const fn bit_mask(n: u128) -> u128 {
-    // TODO: n == 128?
-    if n == 128 {
-        u128::MAX
+pub fn unsigned_value(val: u128, width: u128) -> u128 {
+    if width == 128 {
+        val
     } else {
-        (1 << n) - 1
+        val & ((1 << width) - 1)
     }
 }
 
-#[inline(always)]
-pub const fn unsigned_value(value: u128, width: u128) -> u128 {
-    value & bit_mask(width)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[blackbox_ty(Unsigned)]
 #[repr(transparent)]
-pub struct Unsigned<const N: usize>(u128);
+pub struct Unsigned<const N: usize>(BitVec<N>);
 
 #[allow(non_camel_case_types)]
-#[blackbox_ty(UnsignedMatch)]
-pub struct u<const N: usize>(pub u128);
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[blackbox_ty(UnsignedShort)]
+#[repr(transparent)]
+pub struct u<const N: usize>(pub u128)
+where
+    Assert<{ N <= 128 }>: IsTrue;
 
-impl<const N: usize> IsPrimTy for u<N> {
+macro_rules! impl_is_prim_ty {
+    ($( $prim:ty => $prim_ty:ident ),+) => {
+        $(
+            impl IsPrimTy for $prim {
+                const PRIM_TY: PrimTy = PrimTy::$prim_ty;
+            }
+        )+
+    };
+}
+
+impl_is_prim_ty!(
+    u8 => U8,
+    u16 => U16,
+    u32 => U32,
+    u64 => U64,
+    u128 => U128
+);
+
+impl<const N: usize> IsPrimTy for u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
     const PRIM_TY: PrimTy = PrimTy::Unsigned(N as u128);
 }
 
 impl<const N: usize> Unsigned<N> {
-    pub const fn new(n: u128) -> Self {
-        Self(unsigned_value(n, N as u128))
-    }
-
     #[blackbox(UnsignedIndex)]
-    pub fn ind<const M: usize>(self) -> bool
+    pub fn bit<const M: usize>(self) -> bool
     where
-        Assert<{ M < N }>: IsTrue,
+        Assert<{ bit(M, N) }>: IsTrue,
     {
-        (self.0 & (1 << M)) != 0
+        self.0.bit::<M>()
     }
 }
 
@@ -69,217 +85,178 @@ impl<const N: usize> BitSize for Unsigned<N> {
 impl<const N: usize> BitPack for Unsigned<N> {
     type Packed = BitVec<N>;
 
-    fn pack(&self) -> Self::Packed {
-        BitVec::from(self.0)
+    fn pack(self) -> Self::Packed {
+        self.0.clone()
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
-        Self::from(bitvec.inner())
+        Self(bitvec)
     }
 }
 
 impl<const N: usize> Display for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unsigned({})", self.0)
+        write!(f, "u({})", self.0)
     }
 }
 
 impl<const N: usize> Binary for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unsigned({:0width$b})", self.0, width = N)
+        write!(f, "u({:b})", self.0)
     }
 }
 
 impl<const N: usize> LowerHex for Unsigned<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Unsigned({:x})", self.0)
+        write!(f, "u({:x})", self.0)
     }
 }
 
-impl<const N: usize> From<u8> for Unsigned<N> {
-    fn from(value: u8) -> Self {
-        Self::new(value as u128)
-    }
+macro_rules! impl_from {
+    ($( $prim:ty => $prim_bits:literal ),+) => {
+        $(
+            impl <const N: usize> From<$prim> for Unsigned<N> {
+                #[inline(always)]
+                fn from(val: $prim) -> Self {
+                    Self(val.into())
+                }
+            }
+
+            impl <const N: usize> From<Unsigned<N>> for $prim
+            where
+                Assert<{ N <= $prim_bits }>: IsTrue
+            {
+                #[inline(always)]
+                fn from(val: Unsigned<N>) -> Self {
+                    val.0.into()
+                }
+            }
+        )+
+    };
 }
 
-impl<const N: usize> From<u16> for Unsigned<N> {
-    fn from(value: u16) -> Self {
-        Self::new(value as u128)
-    }
-}
+impl_from!(
+    u8 => 8,
+    u16 => 16,
+    u32 => 32,
+    u64 => 64,
+    u128 => 128,
+    usize => 64
+);
 
-impl<const N: usize> From<u32> for Unsigned<N> {
-    fn from(value: u32) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> From<u64> for Unsigned<N> {
-    fn from(value: u64) -> Self {
-        Self::new(value as u128)
-    }
-}
-
-impl<const N: usize> From<u128> for Unsigned<N> {
-    fn from(value: u128) -> Self {
-        Self::new(value)
-    }
-}
-
-impl<const N: usize> From<Unsigned<N>> for u128 {
-    fn from(value: Unsigned<N>) -> Self {
-        value.0
-    }
-}
-
-impl<const N: usize> From<Unsigned<N>> for u<N> {
-    fn from(value: Unsigned<N>) -> Self {
-        Self(value.0)
-    }
-}
-
-impl<const N: usize> From<u<N>> for Unsigned<N> {
+impl<const N: usize> From<u<N>> for Unsigned<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
     fn from(value: u<N>) -> Self {
-        Self::new(value.0)
+        Self(value.0.into())
+    }
+}
+
+impl<const N: usize> From<Unsigned<N>> for u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    fn from(value: Unsigned<N>) -> Self {
+        Self(value.0.into())
     }
 }
 
 impl<const N: usize> PartialEq<u128> for Unsigned<N> {
     fn eq(&self, other: &u128) -> bool {
-        self.0 == *other
+        self.eq(&Self::from(*other))
     }
 }
 
 impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
     fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
-        Some(self.0.cmp(other))
+        Some(self.cmp(&Self::from(*other)))
     }
 }
 
-impl<const N: usize> BitAnd for Unsigned<N> {
-    type Output = Self;
+macro_rules! impl_op {
+    ($trait:ident => $method:ident) => {
+        impl<const N: usize> $trait for Unsigned<N> {
+            type Output = Self;
 
-    fn bitand(self, rhs: Self) -> Self::Output {
-        (self.0 & rhs.0).into()
-    }
+            fn $method(self, rhs: Self) -> Self::Output {
+                Self(self.0.$method(rhs.0))
+            }
+        }
+    };
 }
 
-impl<const N: usize> BitAnd<u128> for Unsigned<N> {
-    type Output = Self;
+macro_rules! impl_ops_for_prim {
+    ($trait:ident => $method:ident => $( $prim:ty ),+) => {
+        $(
+            impl<const N: usize> $trait<$prim> for Unsigned<N> {
+                type Output = Unsigned<N>;
 
-    fn bitand(self, rhs: u128) -> Self::Output {
-        self.bitand(Self::from(rhs))
-    }
+                fn $method(self, rhs: $prim) -> Self::Output {
+                    Unsigned::<N>(self.0.$method(rhs))
+                }
+            }
+
+            impl<const N: usize> $trait<Unsigned<N>> for $prim {
+                type Output = Unsigned<N>;
+
+                fn $method(self, rhs: Unsigned<N>) -> Self::Output {
+                    Unsigned::<N>(self.$method(rhs.0))
+                }
+            }
+        )+
+    };
 }
 
-impl<const N: usize> BitOr for Unsigned<N> {
-    type Output = Self;
+macro_rules! impl_ops {
+    ($( $trait:ident => $method:ident $( => $spec_method:ident )? ),+) => {
+        $(
+            impl_op!($trait => $method $( => $spec_method)?);
 
-    fn bitor(self, rhs: Self) -> Self::Output {
-        (self.0 | rhs.0).into()
-    }
+            impl_ops_for_prim!($trait => $method => u8, u16, u32, u64, u128, usize);
+        )+
+    };
 }
 
-impl<const N: usize> BitOr<u128> for Unsigned<N> {
-    type Output = Self;
+impl_ops!(
+    BitAnd => bitand,
+    BitOr => bitor,
+    BitXor => bitxor,
+    Add => add,
+    Sub => sub,
+    Mul => mul,
+    Div => div,
+    Rem => rem
+);
 
-    fn bitor(self, rhs: u128) -> Self::Output {
-        self.bitor(Self::from(rhs))
-    }
+macro_rules! impl_shift_ops {
+    ($( $prim:ty ),+) => {
+        $(
+            impl<const N: usize> Shl<$prim> for Unsigned<N> {
+                type Output = Self;
+
+                fn shl(self, rhs: $prim) -> Self::Output {
+                    Self(self.0.shl(rhs))
+                }
+            }
+
+            impl<const N: usize> Shr<$prim> for Unsigned<N> {
+                type Output = Self;
+
+                fn shr(self, rhs: $prim) -> Self::Output {
+                    Self(self.0.shr(rhs))
+                }
+            }
+        )+
+    };
 }
 
-impl<const N: usize> Shl for Unsigned<N> {
+impl_shift_ops!(u8, u16, u32, u64, u128, usize);
+
+impl<const N: usize> Not for Unsigned<N> {
     type Output = Self;
 
-    fn shl(self, rhs: Self) -> Self::Output {
-        (self.0 << rhs.0).into()
-    }
-}
-
-impl<const N: usize> Shl<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn shl(self, rhs: u128) -> Self::Output {
-        self.shl(Self::from(rhs))
-    }
-}
-
-impl<const N: usize> Shr for Unsigned<N> {
-    type Output = Self;
-
-    fn shr(self, rhs: Self) -> Self::Output {
-        (self.0 >> rhs.0).into()
-    }
-}
-
-impl<const N: usize> Shr<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn shr(self, rhs: u128) -> Self::Output {
-        self.shr(Self::from(rhs))
-    }
-}
-
-impl<const N: usize> Add for Unsigned<N> {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_add(rhs.0).into()
-    }
-}
-
-impl<const N: usize> Add<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn add(self, rhs: u128) -> Self::Output {
-        self.add(Self::from(rhs))
-    }
-}
-
-impl<const N: usize> Sub for Unsigned<N> {
-    type Output = Self;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_sub(rhs.0).into()
-    }
-}
-
-impl<const N: usize> Sub<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn sub(self, rhs: u128) -> Self::Output {
-        self.sub(Self::from(rhs))
-    }
-}
-
-impl<const N: usize> Mul for Unsigned<N> {
-    type Output = Self;
-
-    fn mul(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_mul(rhs.0).into()
-    }
-}
-
-impl<const N: usize> Mul<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn mul(self, rhs: u128) -> Self::Output {
-        self.mul(Self::from(rhs))
-    }
-}
-
-impl<const N: usize> Div for Unsigned<N> {
-    type Output = Self;
-
-    fn div(self, rhs: Self) -> Self::Output {
-        self.0.wrapping_div(rhs.0).into()
-    }
-}
-
-impl<const N: usize> Div<u128> for Unsigned<N> {
-    type Output = Self;
-
-    fn div(self, rhs: u128) -> Self::Output {
-        self.div(Self::from(rhs))
+    fn not(self) -> Self::Output {
+        Self(self.0.not())
     }
 }

@@ -77,7 +77,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
             node.set_out(Some((PrimTy::BitVec(count * width), output)));
         }
 
-        Ok((loop_id, SignalTy::mk_array(count, sig_ty)))
+        Ok((loop_id, SignalTy::mk_array(None, count, sig_ty)))
     })
 }
 

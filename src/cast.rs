@@ -5,14 +5,6 @@ pub trait IsPrimTy: Sized {
     const PRIM_TY: PrimTy;
 }
 
-impl IsPrimTy for bool {
-    const PRIM_TY: PrimTy = PrimTy::Bool;
-}
-
-impl IsPrimTy for u128 {
-    const PRIM_TY: PrimTy = PrimTy::U128;
-}
-
 pub trait CastInner<T: Sized>: Sized {
     fn cast_inner(self) -> T;
 }

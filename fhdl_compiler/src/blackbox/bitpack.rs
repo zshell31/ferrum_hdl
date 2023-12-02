@@ -1,4 +1,8 @@
-use fhdl_netlist::{group::ItemId, node::Splitter, sig_ty::PrimTy};
+use fhdl_netlist::{
+    group::ItemId,
+    node::Splitter,
+    sig_ty::{PrimTy, SignalTy},
+};
 use rustc_hir::Expr;
 
 use super::{bitvec, EvaluateExpr};
@@ -71,7 +75,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
                         true,
                     ),
                 ),
-                ty.into(),
+                SignalTy::new(None, ty.into()),
             ))
         })
     }

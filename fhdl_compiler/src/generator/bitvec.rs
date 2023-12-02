@@ -4,7 +4,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NodeId, NodeOutId},
     node::{Const, IsNode, Merger, Pass, Splitter},
     params::Outputs,
-    sig_ty::{EnumTy, PrimTy, SignalTy},
+    sig_ty::{EnumTy, PrimTy, SignalTy, SignalTyKind},
 };
 use smallvec::SmallVec;
 
@@ -13,13 +13,16 @@ use crate::generator::Generator;
 impl<'tcx> Generator<'tcx> {
     pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
         match item_id {
-            ItemId::Node(node_id) => self.net_list[node_id]
-                .kind
-                .outputs()
-                .only_one()
-                .out
-                .ty
-                .into(),
+            ItemId::Node(node_id) => SignalTy::new(
+                None,
+                self.net_list[node_id]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .out
+                    .ty
+                    .into(),
+            ),
             ItemId::Group(group) => group.sig_ty,
         }
     }
@@ -46,7 +49,9 @@ impl<'tcx> Generator<'tcx> {
                 .collect::<SmallVec<[_; 8]>>();
 
             let ty = self
-                .make_tuple_ty(nodes.iter(), |_, (ty, _)| Ok((*ty).into()))
+                .make_tuple_ty(nodes.iter(), |_, (ty, _)| {
+                    Ok(SignalTy::new(None, (*ty).into()))
+                })
                 .unwrap();
 
             self.make_struct_group(ty, nodes, |generator, (_, node)| {
@@ -133,15 +138,15 @@ impl<'tcx> Generator<'tcx> {
         let node_width = self.net_list[node_out_id].ty.width();
         assert_eq!(node_width, sig_ty.width());
 
-        match sig_ty {
-            SignalTy::Prim(ty) => {
+        match sig_ty.kind {
+            SignalTyKind::Prim(ty) => {
                 // TODO: подумать, можно ли избавиться от Pass здесь
                 // Если да, то это бы упростило код в функции pattern_match
                 let pass =
                     Pass::new(ty, node_out_id, self.idents.for_module(module_id).tmp());
                 self.net_list.add_node(module_id, pass).into()
             }
-            SignalTy::Array(ty) => {
+            SignalTyKind::Array(ty) => {
                 let item_width = ty.item_width();
 
                 let mut n = 0;
@@ -175,7 +180,7 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap()
             }
-            SignalTy::Struct(ty) => {
+            SignalTyKind::Struct(ty) => {
                 let mut n = 0;
                 let splitter = Splitter::new(
                     node_out_id,
@@ -210,7 +215,7 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap()
             }
-            SignalTy::Enum(ty) => {
+            SignalTyKind::Enum(ty) => {
                 let pass = Pass::new(
                     ty.prim_ty(),
                     node_out_id,

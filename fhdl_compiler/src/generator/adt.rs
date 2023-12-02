@@ -1,7 +1,7 @@
 use fhdl_netlist::{
     arena::with_arena,
     group::{Group, ItemId},
-    sig_ty::{ArrayTy, EnumTy, Named, SignalTy, StructTy},
+    sig_ty::{ArrayTy, EnumTy, Named, SignalTy, SignalTyKind, StructTy},
     symbol::Symbol,
 };
 use rustc_middle::ty::{FieldDef, GenericArgsRef, Ty, TyKind};
@@ -46,7 +46,10 @@ impl<'tcx> Generator<'tcx> {
 
         let tys = unsafe { with_arena().alloc_from_res_iter(fields)? };
 
-        Ok(SignalTy::Struct(StructTy::new(tys)))
+        Ok(SignalTy::new(
+            None,
+            SignalTyKind::Struct(StructTy::new(tys)),
+        ))
     }
 
     pub fn evaluate_adt_ty(
@@ -78,7 +81,10 @@ impl<'tcx> Generator<'tcx> {
                     ))?
                 };
 
-                Ok(SignalTy::Enum(EnumTy::new(variants)))
+                Ok(SignalTy::new(
+                    None,
+                    SignalTyKind::Enum(EnumTy::new(variants)),
+                ))
             }
             _ => {
                 println!("{:#?}", ty.kind());
@@ -115,7 +121,10 @@ impl<'tcx> Generator<'tcx> {
                 .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
         };
 
-        Ok(Group::new_with_item_ids(SignalTy::Array(ty), group).into())
+        Ok(
+            Group::new_with_item_ids(SignalTy::new(None, SignalTyKind::Array(ty)), group)
+                .into(),
+        )
     }
 
     pub fn make_struct_group<T>(
@@ -129,6 +138,12 @@ impl<'tcx> Generator<'tcx> {
                 .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
         };
 
-        Ok(Group::new_with_item_ids(SignalTy::Struct(ty), group).into())
+        Ok(
+            Group::new_with_item_ids(
+                SignalTy::new(None, SignalTyKind::Struct(ty)),
+                group,
+            )
+            .into(),
+        )
     }
 }

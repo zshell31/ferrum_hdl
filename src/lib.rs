@@ -10,8 +10,8 @@ pub use fhdl_macros::p;
 
 pub mod array;
 pub mod bit;
-pub mod bit_pack;
-pub mod bit_vec;
+pub mod bitpack;
+pub mod bitvec;
 pub mod cast;
 pub mod const_functions;
 pub mod const_helpers;

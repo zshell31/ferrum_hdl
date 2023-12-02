@@ -61,13 +61,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
-name = "ferrum"
+name = "ferrum_hdl"
 version = "0.1.0"
 dependencies = [
  "derive-where",
  "dyn-clone",
- "ferrum_macros",
- "ferrum_netlist",
+ "fhdl_macros",
+ "fhdl_netlist",
  "fnv",
  "seq-macro",
  "smallvec",
@@ -75,39 +75,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "ferrum_blackbox"
+name = "fhdl_blackbox"
 version = "0.1.0"
 dependencies = [
  "strum",
 ]
 
 [[package]]
-name = "ferrum_compiler"
+name = "fhdl_compiler"
 version = "0.1.0"
 dependencies = [
  "auto_enums",
  "bumpalo",
  "either",
- "ferrum",
- "ferrum_blackbox",
- "ferrum_netlist",
+ "ferrum_hdl",
+ "fhdl_blackbox",
+ "fhdl_netlist",
  "if_chain",
  "smallvec",
  "thiserror",
 ]
 
 [[package]]
-name = "ferrum_macros"
+name = "fhdl_macros"
 version = "0.1.0"
 dependencies = [
- "ferrum_blackbox",
+ "fhdl_blackbox",
  "proc-macro2",
  "quote",
  "syn",
 ]
 
 [[package]]
-name = "ferrum_netlist"
+name = "fhdl_netlist"
 version = "0.1.0"
 dependencies = [
  "auto_enums",

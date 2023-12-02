@@ -3,7 +3,7 @@ use std::{
     ops::{BitAnd, BitOr, BitOrAssign, Not, Shl},
 };
 
-use ferrum_macros::{blackbox, blackbox_ty};
+use fhdl_macros::{blackbox, blackbox_ty};
 
 use crate::{
     bit::Bit,

@@ -1,4 +1,4 @@
-use ferrum_macros::blackbox;
+use fhdl_macros::blackbox;
 
 use crate::{
     bit::Bit,

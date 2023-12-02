@@ -1,0 +1,18 @@
+[package]
+name = "fhdl_compiler"
+version = "0.1.0"
+edition = "2021"
+
+[package.metadata.rust-analyzer]
+rustc_private = true
+
+[dependencies]
+auto_enums = "0.8.2"
+bumpalo = "3.13.0"
+either = "1.9.0"
+if_chain = "1.0.2"
+smallvec = "1.11.0"
+thiserror = "1.0"
+ferrum_hdl = { path = "../" }
+fhdl_blackbox = { path = "../fhdl_blackbox" }
+fhdl_netlist = { path = "../fhdl_netlist" }

@@ -3,8 +3,8 @@ use std::{
     ops::{BitAnd, BitOr, Not},
 };
 
-use ferrum_macros::{blackbox, blackbox_ty};
-use ferrum_netlist::sig_ty::PrimTy;
+use fhdl_macros::{blackbox, blackbox_ty};
+use fhdl_netlist::sig_ty::PrimTy;
 
 use crate::{
     bit_pack::{BitPack, BitSize},

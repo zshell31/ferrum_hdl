@@ -1,16 +1,21 @@
 [workspace]
 members = [
   ".",
-  "ferrum_compiler",
-  "ferrum_macros",
-  "ferrum_netlist",
-  "ferrum_blackbox"
+  "fhdl_compiler",
+  "fhdl_macros",
+  "fhdl_netlist",
+  "fhdl_blackbox"
 ]
 
 [package]
-name = "ferrum"
+name = "ferrum_hdl"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
+description = "The HDL framework for writing FPGA firmware in Rust"
+repository = "https://github.com/zshell31/ferrum_hdl"
+keywords = ["fpga", "hdl", "verilog", "hardware"]
+authors = ["Evgeny Nosov <evgen3188@gmail.com>"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 # [package.metadata.rust-analyzer]
@@ -27,8 +32,8 @@ crate-type = ["staticlib"]
 [dependencies]
 derive-where = "1.2.2"
 dyn-clone = "1.0.13"
-ferrum_macros = { path = "ferrum_macros" }
-ferrum_netlist = { path = "ferrum_netlist" }
+fhdl_macros = { path = "fhdl_macros" }
+fhdl_netlist = { path = "fhdl_netlist" }
 fnv = "1.0.7"
 seq-macro = "0.3.5"
 smallvec = "1.11.0"

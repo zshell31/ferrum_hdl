@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
-use ferrum::{
+use ferrum_hdl::{
     bit::Bit,
     bit_pack::BitPack,
     const_functions::clog2,
@@ -37,8 +37,8 @@ where
     reg::<D, _>(
         clk,
         rst,
-        0.into(),
-        |r: Unsigned<{ blinking_count::<D>() }>, _| r + 1,
+        0_u8.into(),
+        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
     )
     .map(|value| (value.msb(), value))
 }

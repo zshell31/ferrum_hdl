@@ -4,7 +4,7 @@ use std::{
     ops::Index,
 };
 
-use ferrum_macros::{blackbox, blackbox_ty};
+use fhdl_macros::{blackbox, blackbox_ty};
 use smallvec::SmallVec;
 
 use crate::{

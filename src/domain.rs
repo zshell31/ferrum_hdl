@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use derive_where::derive_where;
-use ferrum_macros::blackbox_ty;
+use fhdl_macros::blackbox_ty;
 
 pub const PICOSECONDS: usize = 1_000_000_000_000;
 

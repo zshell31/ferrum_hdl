@@ -7,8 +7,9 @@
 pub mod arena;
 pub mod backend;
 pub mod buffer;
+pub mod bvm;
+pub mod const_val;
 pub mod group;
-pub mod net_kind;
 pub mod net_list;
 pub mod node;
 pub mod params;

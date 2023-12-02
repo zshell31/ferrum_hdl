@@ -9,6 +9,7 @@ use super::{bitvec, EvaluateExpr};
 use crate::{
     error::Error,
     generator::{EvalContext, Generator},
+    idents::SymIdent,
     utils,
 };
 
@@ -66,14 +67,9 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
             let ty = PrimTy::Bit;
 
             Ok((
-                generator.net_list.add_node(
+                generator.net_list.add(
                     ctx.module_id,
-                    Splitter::new(
-                        bit_vec,
-                        [(ty, generator.idents.for_module(ctx.module_id).tmp())],
-                        None,
-                        true,
-                    ),
+                    Splitter::new(bit_vec, [(ty, SymIdent::Msb)], None, true),
                 ),
                 SignalTy::new(None, ty.into()),
             ))

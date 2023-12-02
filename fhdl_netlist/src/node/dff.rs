@@ -17,7 +17,7 @@ impl DFF {
         en: Option<NodeOutId>,
         rst_val: NodeOutId,
         data: NodeOutId,
-        sym: Symbol,
+        sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
             inputs: DFFInputs {
@@ -27,7 +27,7 @@ impl DFF {
                 rst_val,
                 data,
             },
-            output: NodeOutput::reg(ty, sym),
+            output: NodeOutput::reg(ty, sym.into(), rst_val),
         }
     }
 }

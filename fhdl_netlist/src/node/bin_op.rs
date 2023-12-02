@@ -63,7 +63,7 @@ impl BinOpNode {
         bin_op: BinOp,
         input1: NodeOutId,
         input2: NodeOutId,
-        sym: Symbol,
+        sym: Option<Symbol>,
     ) -> Self {
         Self {
             bin_op,

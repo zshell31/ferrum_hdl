@@ -9,7 +9,7 @@ pub struct Input {
 }
 
 impl Input {
-    pub fn new(ty: PrimTy, sym: Symbol) -> Self {
+    pub fn new(ty: PrimTy, sym: Option<Symbol>) -> Self {
         Self {
             output: NodeOutput::wire(ty, sym),
         }

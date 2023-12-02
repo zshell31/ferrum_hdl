@@ -8,7 +8,7 @@ pub struct Const {
 }
 
 impl Const {
-    pub fn new(ty: PrimTy, value: u128, sym: Symbol) -> Self {
+    pub fn new(ty: PrimTy, value: u128, sym: Option<Symbol>) -> Self {
         Self {
             value,
             output: NodeOutput::wire(ty, sym),

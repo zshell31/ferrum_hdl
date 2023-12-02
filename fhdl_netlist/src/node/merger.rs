@@ -14,12 +14,12 @@ impl Merger {
     pub fn new(
         width: u128,
         inputs: impl IntoIterator<Item = NodeOutId>,
-        sym: Symbol,
         rev: bool,
+        sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
             inputs: Vec::collect_from(inputs),
-            output: NodeOutput::wire(PrimTy::BitVec(width), sym),
+            output: NodeOutput::wire(PrimTy::BitVec(width), sym.into()),
             rev,
         }
     }

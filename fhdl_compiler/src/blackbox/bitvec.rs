@@ -41,7 +41,7 @@ pub fn bit_vec_trans<'tcx>(
 
 pub struct LoopArgs {
     pub input: NodeOutId,
-    pub output: Symbol,
+    pub output: Option<Symbol>,
     pub loop_var: Symbol,
 }
 
@@ -58,11 +58,11 @@ pub fn bit_vec_trans_in_loop<'tcx>(
 ) -> Result<ItemId, Error> {
     bit_vec_trans(generator, source, ctx, |generator, ctx, bit_vec| {
         let loop_var = generator.idents.for_module(ctx.module_id).ident("i");
-        let output = generator.idents.for_module(ctx.module_id).tmp();
+        let output = None;
 
         let loop_id = generator
             .net_list
-            .add_node(ctx.module_id, LoopStart::new(loop_var, count, None));
+            .add(ctx.module_id, LoopStart::new(loop_var, count, None));
 
         let sig_ty = trans(generator, ctx, LoopArgs {
             input: bit_vec,
@@ -71,7 +71,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
         })?;
         let width = sig_ty.width();
 
-        generator.net_list.add_node(ctx.module_id, LoopEnd {});
+        generator.net_list.add(ctx.module_id, LoopEnd {});
 
         if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
             node.set_out(Some((PrimTy::BitVec(count * width), output)));
@@ -103,7 +103,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
 
         Ok(generator
             .net_list
-            .add_node(
+            .add(
                 ctx.module_id,
                 Splitter::new(
                     rec,
@@ -144,7 +144,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
 
         Ok(generator
             .net_list
-            .add_node(
+            .add(
                 ctx.module_id,
                 Splitter::new(
                     rec,

@@ -28,7 +28,7 @@ use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::{
     mir::UnevaluatedConst,
-    ty::{AssocKind, EarlyBinder, GenericArgsRef, ParamEnv, Ty, TyCtxt},
+    ty::{AssocKind, EarlyBinder, GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 use rustc_type_ir::fold::TypeFoldable;
@@ -219,7 +219,7 @@ impl<'tcx> Generator<'tcx> {
         self.collect_local_trait_impls();
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_top_module(item)?;
+        self.evaluate_fn_item(item, GenericArgs::empty())?;
 
         self.net_list.run_stages();
 

@@ -9,7 +9,7 @@ pub mod signal;
 pub mod std;
 
 use ferrum_blackbox::Blackbox;
-use ferrum_netlist::group::ItemId;
+use ferrum_netlist::{group::ItemId, node::BinOp};
 use rustc_hir::Expr;
 
 use crate::{
@@ -69,15 +69,18 @@ evaluate_expr!(
     StdFrom => cast::StdConversion { from: true },
     StdInto => cast::StdConversion { from: false },
 
-    SignalLift => signal::SignalLift,
-    SignalMap => signal::SignalMap,
     SignalAndThen => signal::SignalAndThen,
     SignalApply2 => signal::SignalApply2,
-    SignalValue => signal::SignalValue,
-    SignalWatch => signal::SignalWatch,
-    SignalReset => bit::BitVal(false),
+    SignalAnd => signal::SignalOp { op: BinOp::And },
+    SignalEq => signal::SignalOp { op: BinOp::Eq },
+    SignalLift => signal::SignalLift,
+    SignalMap => signal::SignalMap,
+    SignalOr => signal::SignalOp { op: BinOp::Or },
     SignalReg => signal::SignalReg { has_en: false },
     SignalRegEn => signal::SignalReg { has_en: true },
+    SignalReset => bit::BitVal(false),
+    SignalValue => signal::SignalValue,
+    SignalWatch => signal::SignalWatch,
 
     StdClone => std::StdClone
 

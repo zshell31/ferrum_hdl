@@ -2,7 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     fmt::Debug,
     marker::PhantomData,
-    ops::{Add, BitAnd, BitOr, Not, Sub},
+    ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Sub},
     rc::Rc,
 };
 
@@ -11,7 +11,7 @@ use ferrum_macros::{blackbox, blackbox_ty};
 use seq_macro::seq;
 
 use crate::{
-    bit::{Bit, H, L},
+    bit::Bit,
     cast::CastInner,
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
@@ -117,6 +117,48 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
 
         (source, signal)
     }
+
+    #[blackbox(SignalApply2)]
+    pub fn apply2<U: SignalValue, V: SignalValue, F>(
+        self,
+        other: impl Into<Signal<D, U>>,
+        f: F,
+    ) -> Signal<D, V>
+    where
+        F: Fn(T, U) -> V + Clone + 'static,
+    {
+        let mut this = self;
+        let mut other = other.into();
+
+        Signal::new(move |ctx| {
+            let this = this.next(ctx);
+            let other = other.next(ctx);
+            (f)(this, other)
+        })
+    }
+
+    pub fn eq<U: SignalValue>(self, other: Signal<D, U>) -> Signal<D, bool>
+    where
+        T: PartialEq<U>,
+    {
+        self.apply2(other, |this, other| this == other)
+    }
+}
+
+impl<D: ClockDomain> Signal<D, bool> {
+    pub fn click(source: &Source<bool>, f: impl FnOnce()) {
+        source.revert();
+        f();
+        source.revert();
+    }
+
+    pub fn and(self, other: impl Into<Self>) -> Self {
+        self.apply2(other, |this, other| this && other)
+    }
+
+    pub fn or(self, other: impl Into<Self>) -> Self {
+        self.apply2(other, |this, other| this || other)
+    }
 }
 
 impl<D: ClockDomain> Signal<D, Bit> {
@@ -125,32 +167,40 @@ impl<D: ClockDomain> Signal<D, Bit> {
         f();
         source.revert();
     }
+
+    pub fn and(self, other: impl Into<Self>) -> Self {
+        self.apply2(other, |this, other| Bit::from(this.into() && other.into()))
+    }
+
+    pub fn or(self, other: impl Into<Self>) -> Self {
+        self.apply2(other, |this, other| Bit::from(this.into() || other.into()))
+    }
 }
 
 #[allow(type_alias_bounds)]
-pub type Reset<D: ClockDomain> = Signal<D, Bit>;
+pub type Reset<D: ClockDomain> = Signal<D, bool>;
 
 impl<D: ClockDomain> Reset<D> {
     #[blackbox(SignalReset)]
     pub fn reset() -> Self {
-        Self::lift(L)
+        Self::lift(false)
     }
 
-    pub fn reset_src() -> (Source<Bit>, Self) {
-        Self::source(L)
+    pub fn reset_src() -> (Source<bool>, Self) {
+        Self::source(false)
     }
 }
 
 #[allow(type_alias_bounds)]
-pub type Enable<D: ClockDomain> = Signal<D, Bit>;
+pub type Enable<D: ClockDomain> = Signal<D, bool>;
 
 impl<D: ClockDomain> Enable<D> {
     pub fn enable() -> Self {
-        Self::lift(H)
+        Self::lift(true)
     }
 
-    pub fn enable_src() -> (Source<Bit>, Self) {
-        Self::source(H)
+    pub fn enable_src() -> (Source<bool>, Self) {
+        Self::source(true)
     }
 }
 
@@ -201,6 +251,26 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     }
 }
 
+impl<D: ClockDomain> Wrapped<D, bool> {
+    pub fn and(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
+        Signal::from(self).and(other)
+    }
+
+    pub fn or(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
+        Signal::from(self).or(other)
+    }
+}
+
+impl<D: ClockDomain> Wrapped<D, Bit> {
+    pub fn and(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
+        Signal::from(self).and(other)
+    }
+
+    pub fn or(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
+        Signal::from(self).or(other)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Source<T: SignalValue>(Rc<Cell<T>>);
 
@@ -230,25 +300,6 @@ impl Source<bool> {
     }
 }
 
-#[blackbox(SignalApply2)]
-pub fn apply2<D: ClockDomain, T: SignalValue, U: SignalValue, V: SignalValue, F>(
-    s1: impl Into<Signal<D, T>>,
-    s2: impl Into<Signal<D, U>>,
-    f: F,
-) -> Signal<D, V>
-where
-    F: Fn(T, U) -> V + Clone + 'static,
-{
-    let mut s1 = s1.into();
-    let mut s2 = s2.into();
-
-    Signal::new(move |ctx| {
-        let s1 = s1.next(ctx);
-        let s2 = s2.next(ctx);
-        (f)(s1, s2)
-    })
-}
-
 impl<D: ClockDomain, T: SignalValue, U: SignalValue> BitAnd<Signal<D, U>> for Signal<D, T>
 where
     T: BitAnd<U>,
@@ -257,7 +308,7 @@ where
     type Output = Signal<D, <T as BitAnd<U>>::Output>;
 
     fn bitand(self, rhs: Signal<D, U>) -> Self::Output {
-        apply2(self, rhs, |lhs, rhs| lhs.bitand(rhs))
+        self.apply2(rhs, |lhs, rhs| lhs.bitand(rhs))
     }
 }
 
@@ -269,7 +320,19 @@ where
     type Output = Signal<D, <T as BitOr<U>>::Output>;
 
     fn bitor(self, rhs: Signal<D, U>) -> Self::Output {
-        apply2(self, rhs, |lhs, rhs| lhs.bitor(rhs))
+        self.apply2(rhs, |lhs, rhs| lhs.bitor(rhs))
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> BitXor<Signal<D, U>> for Signal<D, T>
+where
+    T: BitXor<U>,
+    <T as BitXor<U>>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as BitXor<U>>::Output>;
+
+    fn bitxor(self, rhs: Signal<D, U>) -> Self::Output {
+        self.apply2(rhs, |lhs, rhs| lhs.bitxor(rhs))
     }
 }
 
@@ -293,7 +356,7 @@ where
     type Output = Signal<D, <T as Add<U>>::Output>;
 
     fn add(self, rhs: Signal<D, U>) -> Self::Output {
-        apply2(self, rhs, |lhs, rhs| lhs.add(rhs))
+        self.apply2(rhs, |lhs, rhs| lhs.add(rhs))
     }
 }
 
@@ -305,7 +368,31 @@ where
     type Output = Signal<D, <T as Sub<U>>::Output>;
 
     fn sub(self, rhs: Signal<D, U>) -> Self::Output {
-        apply2(self, rhs, |lhs, rhs| lhs.sub(rhs))
+        self.apply2(rhs, |lhs, rhs| lhs.sub(rhs))
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> Mul<Signal<D, U>> for Signal<D, T>
+where
+    T: Mul<U>,
+    <T as Mul<U>>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as Mul<U>>::Output>;
+
+    fn mul(self, rhs: Signal<D, U>) -> Self::Output {
+        self.apply2(rhs, |lhs, rhs| lhs.mul(rhs))
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue, U: SignalValue> Div<Signal<D, U>> for Signal<D, T>
+where
+    T: Div<U>,
+    <T as Div<U>>::Output: SignalValue,
+{
+    type Output = Signal<D, <T as Div<U>>::Output>;
+
+    fn div(self, rhs: Signal<D, U>) -> Self::Output {
+        self.apply2(rhs, |lhs, rhs| lhs.div(rhs))
     }
 }
 
@@ -337,11 +424,7 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
-        let value = if rst.next(ctx).into() {
-            rst_val
-        } else {
-            next_val
-        };
+        let value = if rst.next(ctx) { rst_val } else { next_val };
         next_val = (comb_fn)(value);
 
         value
@@ -352,13 +435,13 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     mut rst: Reset<D>,
-    mut en: Enable<D>,
+    mut en: Signal<D, impl Into<bool> + SignalValue>,
     rst_val: T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut next_val = rst_val;
     Signal::new(move |ctx| {
-        if rst.next(ctx).into() {
+        if rst.next(ctx) {
             next_val = rst_val;
             (comb_fn)(next_val);
             next_val

@@ -1,8 +1,7 @@
 use fhdl_netlist::{
     group::ItemId,
     net_list::{NodeId, NodeOutId},
-    node::{IsNode, LoopEnd, LoopStart, NodeKind, Splitter},
-    params::Outputs,
+    node::Splitter,
     sig_ty::{NodeTy, SignalTy},
     symbol::Symbol,
 };
@@ -28,57 +27,56 @@ pub fn bit_vec_trans<'tcx>(
     let bit_vec = generator.to_bitvec(ctx.module_id, source);
 
     let (trans, sig_ty) = trans(generator, ctx, bit_vec)?;
-    let trans = generator.net_list[trans]
-        .kind
-        .outputs()
-        .only_one()
-        .node_out_id(trans);
+    let trans = generator.net_list[trans].only_one_out().node_out_id();
 
     let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
 
     Ok(from)
 }
 
+#[allow(dead_code)]
 pub struct LoopArgs {
     pub input: NodeOutId,
     pub output: Option<Symbol>,
     pub loop_var: Symbol,
 }
 
+#[allow(dead_code)]
 pub fn bit_vec_trans_in_loop<'tcx>(
-    generator: &mut Generator<'tcx>,
-    source: ItemId,
-    ctx: &EvalContext<'tcx>,
-    count: u128,
-    trans: impl FnOnce(
+    _generator: &mut Generator<'tcx>,
+    _source: ItemId,
+    _ctx: &EvalContext<'tcx>,
+    _count: u128,
+    _trans: impl FnOnce(
         &mut Generator<'tcx>,
         &EvalContext<'tcx>,
         LoopArgs,
     ) -> Result<SignalTy, Error>,
 ) -> Result<ItemId, Error> {
-    bit_vec_trans(generator, source, ctx, |generator, ctx, bit_vec| {
-        let loop_var = Symbol::new("i");
-        let output = None;
+    todo!()
+    // bit_vec_trans(generator, source, ctx, |generator, ctx, bit_vec| {
+    //     let loop_var = Symbol::new("i");
+    //     let output = None;
 
-        let loop_id = generator
-            .net_list
-            .add(ctx.module_id, LoopStart::new(loop_var, count, None));
+    //     let loop_id = generator
+    //         .net_list
+    //         .add(ctx.module_id, LoopStart::new(loop_var, count, None));
 
-        let sig_ty = trans(generator, ctx, LoopArgs {
-            input: bit_vec,
-            output,
-            loop_var,
-        })?;
-        let width = sig_ty.width();
+    //     let sig_ty = trans(generator, ctx, LoopArgs {
+    //         input: bit_vec,
+    //         output,
+    //         loop_var,
+    //     })?;
+    //     let width = sig_ty.width();
 
-        generator.net_list.add(ctx.module_id, LoopEnd {});
+    //     generator.net_list.add(ctx.module_id, LoopEnd {});
 
-        if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
-            node.set_out(Some((NodeTy::BitVec(count * width), output)));
-        }
+    //     if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
+    //         node.set_out(Some((NodeTy::BitVec(count * width), output)));
+    //     }
 
-        Ok((loop_id, SignalTy::mk_array(None, count, sig_ty)))
-    })
+    //     Ok((loop_id, SignalTy::mk_array(None, count, sig_ty)))
+    // })
 }
 
 pub struct BitVecShrink;
@@ -123,11 +121,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
         utils::args!(expr as rec);
 
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
-        let rec = generator.net_list[rec]
-            .kind
-            .outputs()
-            .only_one()
-            .node_out_id(rec);
+        let rec = generator.net_list[rec].only_one_out().node_out_id();
 
         let generics = generator.method_call_generics(expr, ctx)?;
 
@@ -156,11 +150,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecUnpack {
         utils::args!(expr as rec);
 
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
-        let rec = generator.net_list[rec]
-            .kind
-            .outputs()
-            .only_one()
-            .node_out_id(rec);
+        let rec = generator.net_list[rec].only_one_out().node_out_id();
 
         let ty = generator.node_type(expr.hir_id, ctx);
         let sig_ty = generator.find_sig_ty(ty, ctx.generic_args, expr.span)?;

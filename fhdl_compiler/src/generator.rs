@@ -14,8 +14,7 @@ use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
     net_list::{ModuleId, NetList},
-    node::{IsNode, Pass},
-    params::Outputs,
+    node::Pass,
     sig_ty::SignalTy,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -323,11 +322,11 @@ impl<'tcx> Generator<'tcx> {
                 continue;
             }
 
-            let node_out = self.net_list[node_id].kind.outputs().only_one();
-            let dummy_out = self.net_list[dummy_input].kind.outputs().only_one();
-            let sym = dummy_out.out.sym;
+            let node_out = self.net_list[node_id].only_one_out();
+            let dummy_out = self.net_list[dummy_input].only_one_out();
+            let sym = dummy_out.sym;
 
-            let pass = Pass::new(node_out.out.ty, node_out.node_out_id(node_id), sym);
+            let pass = Pass::new(node_out.ty, node_out.node_out_id(), sym);
             self.net_list.replace(dummy_input, pass);
         }
 

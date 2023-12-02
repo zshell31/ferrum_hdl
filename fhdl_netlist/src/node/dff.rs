@@ -1,12 +1,22 @@
-use either::Either;
+use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, params::Inputs, sig_ty::NodeTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+
+#[derive(Debug, Clone)]
+pub struct DFF {
+    inputs: SmallVec<[NodeOutId; 5]>,
+    is_en: bool,
+    pub output: NodeOutput,
+}
 
 #[derive(Debug, Clone, Copy)]
-pub struct DFF {
-    pub inputs: DFFInputs,
-    pub output: NodeOutput,
+pub struct DFFInputs {
+    pub clk: NodeOutId,
+    pub rst: NodeOutId,
+    pub en: Option<NodeOutId>,
+    pub rst_val: NodeOutId,
+    pub data: NodeOutId,
 }
 
 impl DFF {
@@ -19,15 +29,29 @@ impl DFF {
         data: NodeOutId,
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
+        let mut inputs: SmallVec<_> = [clk, rst, rst_val, data].into_iter().collect();
+        let is_en = en.is_some();
+        if let Some(en) = en {
+            inputs.push(en);
+        }
         Self {
-            inputs: DFFInputs {
-                clk,
-                rst,
-                en,
-                rst_val,
-                data,
-            },
+            inputs,
+            is_en,
             output: NodeOutput::reg(ty, sym.into(), rst_val),
+        }
+    }
+
+    pub fn dff_inputs(&self) -> DFFInputs {
+        DFFInputs {
+            clk: self.inputs[0],
+            rst: self.inputs[1],
+            en: if self.is_en {
+                Some(self.inputs[4])
+            } else {
+                None
+            },
+            rst_val: self.inputs[2],
+            data: self.inputs[3],
         }
     }
 }
@@ -39,7 +63,7 @@ impl From<DFF> for NodeKind {
 }
 
 impl IsNode for DFF {
-    type Inputs = DFFInputs;
+    type Inputs = [NodeOutId];
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
@@ -56,58 +80,5 @@ impl IsNode for DFF {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct DFFInputs {
-    pub clk: NodeOutId,
-    pub rst: NodeOutId,
-    pub en: Option<NodeOutId>,
-    pub rst_val: NodeOutId,
-    pub data: NodeOutId,
-}
-
-impl Inputs for DFFInputs {
-    fn items(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        match self.en {
-            Some(en) => Either::Left(
-                [self.clk, self.rst, en, self.rst_val, self.data].into_iter(),
-            ),
-            None => {
-                Either::Right([self.clk, self.rst, self.rst_val, self.data].into_iter())
-            }
-        }
-    }
-
-    fn items_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
-        match &mut self.en {
-            Some(en) => Either::Left(
-                [
-                    &mut self.clk,
-                    &mut self.rst,
-                    en,
-                    &mut self.rst_val,
-                    &mut self.data,
-                ]
-                .into_iter(),
-            ),
-            None => Either::Right(
-                [
-                    &mut self.clk,
-                    &mut self.rst,
-                    &mut self.rst_val,
-                    &mut self.data,
-                ]
-                .into_iter(),
-            ),
-        }
-    }
-
-    fn len(&self) -> usize {
-        match self.en {
-            Some(_) => 5,
-            None => 4,
-        }
     }
 }

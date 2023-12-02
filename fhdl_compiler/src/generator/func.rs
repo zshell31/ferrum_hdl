@@ -3,8 +3,7 @@ use std::borrow::Cow;
 use fhdl_netlist::{
     group::ItemId,
     net_list::{ModuleId, NetList, NodeId},
-    node::{Input, IsNode, Pass},
-    params::Outputs,
+    node::{Input, Pass},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
@@ -266,16 +265,16 @@ impl<'tcx> Generator<'tcx> {
 
     fn make_output(net_list: &mut NetList, node_id: NodeId) {
         let node = &net_list[node_id];
-        let node_id = if node.kind.is_input() {
-            let out = node.kind.outputs().only_one();
-            let pass = Pass::new(out.out.ty, out.node_out_id(node_id), SymIdent::Out);
+        let node_id = if node.is_input() {
+            let out = node.only_one_out();
+            let pass = Pass::new(out.ty, out.node_out_id(), SymIdent::Out);
 
             net_list.add(node_id.module_id(), pass)
         } else {
             let node = &mut net_list[node_id];
-            for out in node.kind.outputs_mut().items_mut() {
-                if out.out.sym.is_none() {
-                    out.out.sym = SymIdent::Out.into();
+            for mut out in node.outputs_mut() {
+                if out.sym.is_none() {
+                    out.sym = SymIdent::Out.into();
                 }
             }
 

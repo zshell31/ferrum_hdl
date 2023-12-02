@@ -1,6 +1,5 @@
 use crate::{
     net_list::{ModuleId, NetList, NodeId},
-    node::IsNode,
     visitor::Visitor,
 };
 
@@ -48,7 +47,7 @@ impl<'n> Visitor for Dump<'n> {
             node.dump(&prefix, tab);
 
             println!("\n{}links:", tab);
-            for out in node.kind.node_out_ids(node_id) {
+            for out in node.node_out_ids() {
                 if self.net_list.links(out).next().is_some() {
                     println!(
                         "{}{} -> {}",

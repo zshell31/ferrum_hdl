@@ -1,4 +1,7 @@
-use std::fmt::{self, Debug};
+use std::{
+    fmt::{self, Debug},
+    hash::Hash,
+};
 
 const MOD_ID_OFFSET: u8 = 40;
 const MOD_ID_MASK: u64 = (1 << 24) - 1;
@@ -8,14 +11,12 @@ const NODE_ID_MASK: u64 = (1 << 32) - 1;
 
 const OUT_ID_MASK: u64 = (1 << 8) - 1;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub trait IsId: Debug + Copy + Eq + Hash {}
+
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(u32);
 
-impl Debug for ModuleId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ModuleId({})", self.0)
-    }
-}
+impl IsId for ModuleId {}
 
 impl ModuleId {
     pub(crate) fn new(idx: usize) -> Self {
@@ -31,6 +32,8 @@ impl ModuleId {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(u64);
+
+impl IsId for NodeId {}
 
 impl Debug for NodeId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -95,6 +98,8 @@ impl NodeId {
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeOutId(u64);
+
+impl IsId for NodeOutId {}
 
 impl Debug for NodeOutId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

@@ -1,11 +1,15 @@
 mod ident;
+mod in_out;
 mod module;
+mod with_id;
 
 use std::ops::{Index, IndexMut};
 
 use fnv::{FnvHashMap, FnvHashSet};
 pub use ident::{ModuleId, NodeId, NodeOutId};
+pub(crate) use in_out::InOut;
 use smallvec::SmallVec;
+pub use with_id::WithId;
 
 pub use self::module::Module;
 use crate::{
@@ -15,7 +19,6 @@ use crate::{
         Const, Input, IsNode, ModInst, MultiConst, MultiPass, Node, NodeKind, NodeOutput,
         Pass, Splitter, ZeroExtend,
     },
-    params::{Inputs, Outputs},
     symbol::Symbol,
 };
 
@@ -27,7 +30,7 @@ pub struct NetList {
     top_module: Option<ModuleId>,
     nodes: Vec<Node>,
     dummy_inputs: FnvHashMap<ItemId, SmallVec<[NodeId; 8]>>,
-    rev_links: FnvHashMap<NodeOutId, Links>,
+    links: FnvHashMap<NodeOutId, Links>,
 }
 
 impl !Sync for NetList {}
@@ -94,14 +97,14 @@ impl Index<NodeOutId> for NetList {
 
     fn index(&self, index: NodeOutId) -> &Self::Output {
         let node = &self.nodes[index.node_id()];
-        node.kind.outputs().by_ind(index.out_id()).out
+        node.output_by_ind(index.out_id()).into_inner()
     }
 }
 
 impl IndexMut<NodeOutId> for NetList {
     fn index_mut(&mut self, index: NodeOutId) -> &mut Self::Output {
         let node = &mut self.nodes[index.node_id()];
-        node.kind.outputs_mut().by_ind_mut(index.out_id()).out
+        node.output_by_ind_mut(index.out_id()).into_inner()
     }
 }
 
@@ -167,8 +170,8 @@ impl NetList {
             .inputs()
             .filter_map(|node_id| {
                 let node = &self.nodes[node_id];
-                if node.kind.is_input() {
-                    Some(node.kind.node_out_ids(node_id))
+                if node.is_input() {
+                    Some(node.node_out_ids())
                 } else {
                     None
                 }
@@ -181,15 +184,16 @@ impl NetList {
     }
 
     pub fn add<N: IsNode>(&mut self, mod_id: ModuleId, node: N) -> NodeId {
+        let node_id = self.next_node_id(mod_id);
         let node: NodeKind = node.into();
-        let node: Node = node.into();
+        let node: Node = Node::new(node_id, node);
         self.add_node(mod_id, node)
     }
 
     pub(crate) fn add_node(&mut self, mod_id: ModuleId, node: Node) -> NodeId {
+        let node_id = node.node_id();
         self.validate_node(&node);
-        let is_input = node.kind.is_input();
-        let node_id = self.next_node_id(mod_id);
+        let is_input = node.is_input();
         self.nodes.push(node);
 
         let module = &mut self.modules[mod_id];
@@ -208,51 +212,53 @@ impl NetList {
         node_id
     }
 
-    pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
-        let node: NodeKind = node.into();
-        let node: Node = node.into();
-        self.replace_node(node_id, node);
+    pub fn replace<N: IsNode>(&mut self, _node_id: NodeId, _node: N) {
+        todo!()
+        // let node: NodeKind = node.into();
+        // let node: Node = node.into();
+        // self.replace_node(node_id, node);
     }
 
-    pub(crate) fn replace_node(&mut self, node_id: NodeId, node: Node) {
-        self.validate_node(&node);
-        let mod_id = node_id.module_id();
-        let is_new_input = node.kind.is_input();
-        assert_eq!(
-            self[node_id].kind.outputs().len(),
-            node.kind.outputs().len()
-        );
+    pub(crate) fn replace_node(&mut self, _node_id: NodeId, _node: Node) {
+        todo!()
+        // self.validate_node(&node);
+        // let mod_id = node_id.module_id();
+        // let is_new_input = node.kind.is_input();
+        // assert_eq!(
+        //     self[node_id].kind.outputs().len(),
+        //     node.kind.outputs().len()
+        // );
 
-        self.remove_links(node_id);
+        // self.remove_links(node_id);
 
-        let old_node = &self.nodes[node_id];
-        let next_id = old_node.next();
-        let prev_id = old_node.prev();
-        let is_old_input = old_node.kind.is_input();
-        self.nodes[node_id] = node;
+        // let old_node = &self.nodes[node_id];
+        // let next_id = old_node.next();
+        // let prev_id = old_node.prev();
+        // let is_old_input = old_node.kind.is_input();
+        // self.nodes[node_id] = node;
 
-        let module = &mut self.modules[mod_id];
-        if !(is_new_input & is_old_input) {
-            if is_old_input {
-                module.remove_input(node_id);
-            }
-            if is_new_input {
-                module.add_input(node_id);
-            }
-        }
+        // let module = &mut self.modules[mod_id];
+        // if !(is_new_input & is_old_input) {
+        //     if is_old_input {
+        //         module.remove_input(node_id);
+        //     }
+        //     if is_new_input {
+        //         module.add_input(node_id);
+        //     }
+        // }
 
-        if let Some(prev_id) = prev_id {
-            self.nodes[node_id].set_prev(prev_id);
-        }
-        if let Some(next_id) = next_id {
-            self.nodes[node_id].set_next(next_id);
-        }
+        // if let Some(prev_id) = prev_id {
+        //     self.nodes[node_id].set_prev(prev_id);
+        // }
+        // if let Some(next_id) = next_id {
+        //     self.nodes[node_id].set_next(next_id);
+        // }
 
-        self.add_links(node_id);
+        // self.add_links(node_id);
     }
 
     pub(crate) fn validate_node(&self, node: &Node) {
-        match &node.kind {
+        match &*node.kind {
             NodeKind::Splitter(Splitter { input, outputs, .. }) => {
                 let input_width = self[*input].width();
                 let output_width =
@@ -280,29 +286,44 @@ impl NetList {
 
     fn add_links(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
-        for input in node.kind.inputs().items() {
-            let links = self.rev_links.entry(input).or_default();
+        for input in node.inputs() {
+            let links = self.links.entry(input).or_default();
             links.insert(node_id);
         }
     }
 
-    fn remove_links(&mut self, node_id: NodeId) {
-        let node = &self.nodes[node_id];
-        for input in node.kind.inputs().items() {
-            let links = self.rev_links.entry(input).or_default();
-            links.remove(&node_id);
-        }
-    }
+    // fn remove_links(&mut self, node_id: NodeId) {
+    //     let node = &self.nodes[node_id];
+    //     for input in node.inputs() {
+    //         if let Some(links) = self.links.get_mut(&input) {
+    //             links.remove(&node_id);
+    //         }
+    //     }
+    // }
+
+    // fn reconnect(&mut self, node_id: NodeId) {
+    //     let node = &self.nodes[node_id];
+    //     assert_eq!(node.kind.inputs().len(), node.kind.outputs().len());
+
+    //     self.remove_links(node_id);
+    //     for (input, output) in node.kind.inputs().items().zip(node.kind.outputs().items())
+    //     {
+    //         let output = output.node_out_id(node_id);
+    //         for link in self.links.get(&output) {
+
+    //             }
+    //     }
+    // }
 
     pub(crate) fn exclude_pass_nodes(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
         let mut prev_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
         let mut syms = SmallVec::<[_; 8]>::new();
 
-        for input in node.kind.inputs().items() {
+        for input in node.inputs() {
             let input_node = &self.nodes[input.node_id()];
 
-            let prev_input = match &input_node.kind {
+            let prev_input = match &*input_node.kind {
                 NodeKind::Pass(Pass { input, .. }) => Some(*input),
                 NodeKind::MultiPass(MultiPass { inputs, .. }) => {
                     Some(inputs[input.out_id()])
@@ -321,12 +342,12 @@ impl NetList {
         }
 
         let node = &mut self.nodes[node_id];
-        for (input, prev_input) in node.kind.inputs_mut().items_mut().zip(prev_inputs) {
+        for (input, prev_input) in node.inputs_mut().zip(prev_inputs) {
             if let Some(prev_input) = prev_input {
-                if let Some(links) = self.rev_links.get_mut(input) {
+                if let Some(links) = self.links.get_mut(input) {
                     links.remove(&node_id);
                 }
-                if let Some(links) = self.rev_links.get_mut(&prev_input) {
+                if let Some(links) = self.links.get_mut(&prev_input) {
                     links.remove(&input.node_id());
                     links.insert(node_id);
                 }
@@ -343,7 +364,7 @@ impl NetList {
         &self,
         node_out_id: NodeOutId,
     ) -> impl Iterator<Item = (NodeId, &Node)> + '_ {
-        self.rev_links
+        self.links
             .get(&node_out_id)
             .into_iter()
             .flat_map(|links| links.iter())
@@ -372,7 +393,7 @@ impl NetList {
         let node = &self.nodes[node_id];
         let module = &mut self.modules[mod_id];
 
-        for out in node.kind.node_out_ids(node_id) {
+        for out in node.node_out_ids() {
             module.add_output(out);
         }
     }
@@ -380,7 +401,7 @@ impl NetList {
     pub fn is_input(&self, node_id: NodeId) -> bool {
         let mod_id = node_id.module_id();
         let module = &self.modules[mod_id];
-        module.is_input(node_id) && self.nodes[node_id].kind.is_input()
+        module.is_input(node_id) && self.nodes[node_id].is_input()
     }
 
     pub fn is_output(&self, node_out_id: NodeOutId) -> bool {
@@ -411,7 +432,7 @@ impl NetList {
             item_id,
             dummy_inputs
                 .into_iter()
-                .filter(|node_id| self[*node_id].kind.is_dummy_input())
+                .filter(|node_id| self[*node_id].is_dummy_input())
                 .collect(),
         );
     }
@@ -434,7 +455,7 @@ impl NetList {
     }
 
     pub(crate) fn to_const(&self, node_out_id: NodeOutId) -> Option<ConstVal> {
-        match &self[node_out_id.node_id()].kind {
+        match &*self[node_out_id.node_id()].kind {
             NodeKind::Const(Const { value, output }) => {
                 Some(ConstVal::new(*value, output.width()))
             }
@@ -448,7 +469,7 @@ impl NetList {
 
     pub(crate) fn inline_mod(&mut self, mod_inst_node_id: NodeId) -> bool {
         let target = mod_inst_node_id.module_id();
-        let (source, inputs) = match &self.nodes[mod_inst_node_id].kind {
+        let (source, inputs) = match &*self.nodes[mod_inst_node_id].kind {
             NodeKind::ModInst(ModInst {
                 module_id, inputs, ..
             }) => (
@@ -476,17 +497,20 @@ impl NetList {
         let mut cursor = self.mod_cursor(source);
         while let Some(node_id) = self.next(&mut cursor) {
             let new_node = self.nodes[node_id].clone();
-            let new_node = match new_node.kind {
+            let mut new_node = match &*new_node.kind {
                 NodeKind::Input(input) => {
                     let input_idx = self.modules[source].input_idx(node_id);
                     let pass_input = inputs[input_idx];
                     let pass_output = input.output;
-                    Pass::new(pass_output.ty, pass_input, pass_output.sym).into()
+                    Node::new(
+                        self.next_node_id(target),
+                        Pass::new(pass_output.ty, pass_input, pass_output.sym).into(),
+                    )
                 }
                 _ => new_node,
             };
 
-            for input in new_node.kind.inputs_mut().items_mut() {
+            for input in new_node.inputs_mut() {
                 if let Some(new_node_id) = node_id_map.get(&input.node_id()) {
                     let out_id = input.out_id();
                     *input = NodeOutId::new(*new_node_id, out_id);
@@ -504,13 +528,11 @@ impl NetList {
                 Some(NodeOutId::new(*new_node_id, output.out_id()))
             }),
             self.nodes[mod_inst_node_id]
-                .kind
                 .outputs()
-                .items()
-                .map(|output| (output.out.ty, output.out.sym)),
+                .map(|output| (output.ty, output.sym)),
         );
 
-        self.replace_node(mod_inst_node_id, pass.into());
+        self.replace(mod_inst_node_id, pass);
         if let Some(last_node) = last_node {
             self.nodes[mod_inst_node_id].set_prev(last_node);
             self.nodes[last_node].set_next(mod_inst_node_id);

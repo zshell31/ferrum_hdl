@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn repack() {
-        let u: Unsigned<6> = 0b011011.into();
+        let u: Unsigned<6> = 0b011011_u8.into();
         assert_eq!(
             u.repack::<Array<3, Unsigned<2>>>(),
             [0b01, 0b10, 0b11].cast::<Array<3, Unsigned<2>>>()

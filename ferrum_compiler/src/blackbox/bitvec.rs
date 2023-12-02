@@ -90,7 +90,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
+
         let rec = generator.evaluate_expr(rec, ctx)?;
 
         let ty = generator.node_type(expr.hir_id, ctx);
@@ -127,7 +128,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
+
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
         let rec = generator.net_list[rec]
             .kind
@@ -167,7 +169,8 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecUnpack {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
+
         let rec = generator.evaluate_expr(rec, ctx)?.node_id();
         let rec = generator.net_list[rec]
             .kind

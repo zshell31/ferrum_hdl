@@ -34,6 +34,10 @@ pub const fn unsigned_value(value: u128, width: u128) -> u128 {
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(u128);
 
+pub const fn u<const N: usize>(n: u128) -> Unsigned<N> {
+    Unsigned::<N>::new(n)
+}
+
 impl<const N: usize> Unsigned<N> {
     pub const fn new(n: u128) -> Self {
         Self(unsigned_value(n, N as u128))
@@ -71,6 +75,30 @@ impl<const N: usize> BitPack for Unsigned<N> {
 
     fn unpack(bitvec: Self::Packed) -> Self {
         Self::from(bitvec.inner())
+    }
+}
+
+impl<const N: usize> const From<u8> for Unsigned<N> {
+    fn from(value: u8) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> const From<u16> for Unsigned<N> {
+    fn from(value: u16) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> const From<u32> for Unsigned<N> {
+    fn from(value: u32) -> Self {
+        Self::new(value as u128)
+    }
+}
+
+impl<const N: usize> const From<u64> for Unsigned<N> {
+    fn from(value: u64) -> Self {
+        Self::new(value as u128)
     }
 }
 

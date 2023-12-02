@@ -197,7 +197,13 @@ impl<'tcx> Generator<'tcx> {
                         TyKind::Bool => {
                             sig_ty = Some(PrimTy::Bool.into());
                         }
-                        TyKind::Uint(UintTy::U128 | UintTy::Usize) => {
+                        TyKind::Uint(UintTy::U8) => sig_ty = Some(PrimTy::U8.into()),
+                        TyKind::Uint(UintTy::U16) => sig_ty = Some(PrimTy::U16.into()),
+                        TyKind::Uint(UintTy::U32) => sig_ty = Some(PrimTy::U32.into()),
+                        TyKind::Uint(UintTy::U64 | UintTy::Usize) => {
+                            sig_ty = Some(PrimTy::U64.into())
+                        }
+                        TyKind::Uint(UintTy::U128) => {
                             sig_ty = Some(PrimTy::U128.into());
                         }
                         TyKind::Tuple(ty) => {

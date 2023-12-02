@@ -17,19 +17,19 @@ impl<'tcx> ArgMatcher<'tcx> {
         Self { tcx, generic_args }
     }
 
-    pub fn clear(&mut self) {
-        self.generic_args.clear();
-    }
+    // pub fn clear(&mut self) {
+    //     self.generic_args.clear();
+    // }
 
-    pub fn is_tys_match(&mut self, orig: &[Ty<'tcx>], with_param: &[Ty<'tcx>]) -> bool {
-        if orig.len() != with_param.len() {
-            return false;
-        }
+    // pub fn is_tys_match(&mut self, orig: &[Ty<'tcx>], with_param: &[Ty<'tcx>]) -> bool {
+    //     if orig.len() != with_param.len() {
+    //         return false;
+    //     }
 
-        orig.iter()
-            .zip(with_param)
-            .all(|(orig, with_param)| self.is_ty_match(*orig, *with_param))
-    }
+    //     orig.iter()
+    //         .zip(with_param)
+    //         .all(|(orig, with_param)| self.is_ty_match(*orig, *with_param))
+    // }
 
     pub fn extract_params(
         mut self,

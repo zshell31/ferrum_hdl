@@ -85,8 +85,6 @@ pub enum SpanErrorKind {
     UnexpectedLitValue(PrimTy),
     #[error("unsupported conversion")]
     UnsupportedConversion,
-    #[error("multiple impls of trait '{0}' found")]
-    MultipleTraitImpls(String),
     #[error("incompatible types ('{0}' and '{1}') in binary expression")]
     IncompatibleTypes(String, String),
     #[error("guards for match are not supported")]

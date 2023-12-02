@@ -25,7 +25,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
 
         let array_ty = generator
             .find_sig_ty(
@@ -73,7 +73,8 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, args, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec, closure);
+        let span = closure.span;
 
         let array_ty = generator
             .find_sig_ty(
@@ -88,8 +89,6 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
 
         let rec = generator.evaluate_expr(rec, ctx)?;
 
-        let closure = &args[0];
-        let span = closure.span;
         bitvec::bit_vec_trans_in_loop(
             generator,
             rec,

@@ -34,7 +34,12 @@ impl ConstVal {
     }
 
     fn val_(&self, width: u128) -> u128 {
-        self.val & ((1 << width) - 1)
+        let mask = if width >= 128 {
+            u128::MAX
+        } else {
+            (1 << width) - 1
+        };
+        self.val & mask
     }
 
     pub(crate) fn slice(&self, start: u128, width: u128, rev: bool) -> Self {
@@ -42,7 +47,6 @@ impl ConstVal {
 
         let mask = (1 << width) - 1;
         let val = if !rev {
-            assert!(start + width <= self.width);
             (self.val >> start) & mask
         } else {
             assert!(start >= width);

@@ -17,7 +17,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Unbundle {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
 
         generator.evaluate_expr(rec, ctx)
     }
@@ -32,7 +32,7 @@ impl<'tcx> EvaluateExpr<'tcx> for Bundle {
         expr: &'tcx Expr<'tcx>,
         ctx: &EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let (_, rec, _, _) = utils::exptected_method_call(expr)?;
+        utils::args!(expr as rec);
 
         generator.evaluate_expr(rec, ctx)
     }

@@ -118,8 +118,8 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
 
         let generics = generator.method_call_generics(expr, ctx)?;
 
-        let start = generics.as_const(1).unwrap();
-        let width = generics.as_const(2).unwrap();
+        let start = generics.as_const_opt(1).unwrap();
+        let width = generics.as_const_opt(2).unwrap();
 
         let sym = generator.netlist[rec]
             .sym

@@ -58,6 +58,14 @@ impl Module {
         NodeId::make(self.module_id, self.list.next_idx())
     }
 
+    pub(super) fn reserve_last_idx(&mut self, idx: usize) {
+        self.list.reserve_last_idx(idx);
+    }
+
+    pub(super) fn last_idx(&self) -> usize {
+        self.list.last_idx()
+    }
+
     #[inline(always)]
     fn node_storage<'n>(&self, nodes: &'n mut Nodes) -> NodeStorage<'n> {
         NodeStorage {
@@ -124,10 +132,6 @@ impl Module {
         self.inputs
             .iter()
             .map(move |input| NodeId::make(module_id, *input))
-    }
-
-    pub(super) fn input_idx(&self, node_idx: NodeIdx) -> usize {
-        self.inputs.get_index_of(&node_idx).unwrap()
     }
 
     pub(super) fn add_output(&mut self, node_out_idx: NodeOutIdx) {

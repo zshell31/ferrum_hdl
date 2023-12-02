@@ -16,7 +16,7 @@ pub use self::module::Module;
 use crate::{
     const_val::ConstVal,
     node::{Const, IsNode, Node, NodeKindWithId, NodeKindWithIdMut, NodeOutput},
-    sig_ty::NodeTy,
+    sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
@@ -194,18 +194,26 @@ impl NetList {
     }
 
     pub fn add<N: IsNode>(&mut self, mod_id: ModuleId, node: N) -> NodeId {
-        node.validate(mod_id, self);
-
         let module = &mut self.modules[mod_id];
         let node_id = module.next_node_id();
         let node: Node = Node::new(node_id, node.into());
 
+        self.add_node(mod_id, node);
+
+        node_id
+    }
+
+    pub fn add_node(&mut self, mod_id: ModuleId, node: Node) {
+        assert_eq!(node.node_id().module_id(), mod_id);
+        node.validate(mod_id, self);
+
+        let node_id = node.node_id();
         self.nodes.insert(node_id, node);
+
+        let module = &mut self.modules[mod_id];
         module.add(&mut self.nodes, node_id.into());
 
         self.add_links(node_id);
-
-        node_id
     }
 
     fn remove(&mut self, node_id: NodeId) {
@@ -223,7 +231,12 @@ impl NetList {
         self.nodes[node_id].only_one_out().node_out_id()
     }
 
-    pub fn const_val(&mut self, mod_id: ModuleId, ty: NodeTy, val: u128) -> NodeOutId {
+    pub fn const_val(
+        &mut self,
+        mod_id: ModuleId,
+        ty: NodeTy,
+        val: impl Into<Width>,
+    ) -> NodeOutId {
         self.add_and_get_out(mod_id, Const::new(ty, val.into(), None))
     }
 
@@ -235,19 +248,19 @@ impl NetList {
         self.const_val(mod_id, ty, 1)
     }
 
-    fn insert<N: IsNode>(
+    fn insert_node(
         &mut self,
         mod_id: ModuleId,
         prev_node_id: Option<NodeId>,
-        node_id: NodeId,
-        node: N,
+        node: Node,
     ) {
+        assert_eq!(node.node_id().module_id(), mod_id);
         node.validate(mod_id, self);
 
-        let module = &mut self.modules[mod_id];
-        let node = Node::new(node_id, node.into());
-
+        let node_id = node.node_id();
         self.nodes.insert(node_id, node);
+
+        let module = &mut self.modules[mod_id];
         module.insert(
             &mut self.nodes,
             prev_node_id.map(Into::into),
@@ -437,6 +450,14 @@ impl NetList {
         }
     }
 
+    pub fn reserve_last_idx(&mut self, module_id: ModuleId, idx: usize) {
+        self.modules[module_id].reserve_last_idx(idx)
+    }
+
+    pub fn last_idx(&self, module_id: ModuleId) -> usize {
+        self.modules[module_id].last_idx()
+    }
+
     pub(crate) fn inline_mod(&mut self, mod_inst_node_id: NodeId) -> Option<NodeId> {
         use NodeKindWithId as NodeKind;
 
@@ -455,57 +476,51 @@ impl NetList {
         let mut prev_id = self.nodes[mod_inst_node_id].prev();
         let res = prev_id;
 
-        #[derive(Debug, Clone, Copy)]
-        enum Item {
-            NodeId(NodeId),
-            NodeOutId(NodeOutId),
-        }
+        let offset = self.last_idx(source);
+        let last_idx = self.last_idx(target) + offset;
+        self.reserve_last_idx(target, last_idx);
 
-        let mut map = FxHashMap::default();
-        fn get_node_out_id(map: &FxHashMap<NodeId, Item>, input: NodeOutId) -> NodeOutId {
-            match map.get(&input.node_id()).unwrap() {
-                Item::NodeId(node_id) => NodeOutId::new(*node_id, input.idx()),
-                Item::NodeOutId(node_out_id) => *node_out_id,
-            }
-        }
+        let inputs: FxHashMap<NodeOutId, NodeOutId> = self.modules[source]
+            .inputs()
+            .zip(self.nodes[mod_inst_node_id].inputs())
+            .map(|(module_input, input)| {
+                let module_input = self.nodes[module_input].only_one_out().node_out_id();
+                (module_input, *input)
+            })
+            .collect();
 
-        // At first, create the map from source node ids to target node ids
-        // because some nodes like DFF may refer to nodes that are placed forward in the linked list.
+        let get_node_out_id =
+            |inputs: &FxHashMap<_, _>, node_out_id: NodeOutId| -> NodeOutId {
+                match inputs.get(&node_out_id) {
+                    Some(node_out_id) => *node_out_id,
+                    None => node_out_id.with_module_id(target) + offset,
+                }
+            };
+
         let mut cursor = self.mod_cursor(source);
         while let Some(node_id) = self.next(&mut cursor) {
             if self.nodes[node_id].is_input() {
-                let idx = self.modules[source].input_idx(node_id.into());
-                let node_out_id = *self.nodes[mod_inst_node_id].input_by_ind(idx);
-                map.insert(node_id, Item::NodeOutId(node_out_id));
                 continue;
             }
 
-            let new_node_id = self.modules[target].next_node_id();
-            map.insert(node_id, Item::NodeId(new_node_id));
-        }
+            let kind = self.nodes[node_id].kind().clone();
+            let node_id = node_id.with_module_id(target) + offset;
+            let mut node = Node::new(node_id, kind);
 
-        // Add a new node to the target for the each node from the source.
-        // Also rewrite inputs with new node ids.
-        let mut cursor = self.mod_cursor(source);
-        while let Some(node_id) = self.next(&mut cursor) {
-            if let Item::NodeId(new_node_id) = map.get(&node_id).unwrap() {
-                let mut new_node = self.nodes[node_id].kind().clone();
-
-                for (_, input) in InOut::<NodeOutIdx>::items_mut(new_node.inputs_mut()) {
-                    *input =
-                        get_node_out_id(&map, NodeOutId::make(source, *input)).into();
-                }
-
-                self.insert(target, prev_id, *new_node_id, new_node);
-                prev_id = Some(*new_node_id);
+            for mut input in node.inputs_mut() {
+                let node_out_id = NodeOutId::make(source, **input);
+                **input = get_node_out_id(&inputs, node_out_id).into();
             }
+
+            self.insert_node(target, prev_id, node);
+            prev_id = Some(node_id);
         }
 
         // Reconnect nodes referring to ModInst to nodes that are outputs for the source module.
         let len = self.nodes[mod_inst_node_id].outputs_len();
         for ind in 0 .. len {
             let input = self.modules[source].output_by_ind(ind);
-            let new_input = get_node_out_id(&map, input);
+            let new_input = get_node_out_id(&inputs, input);
 
             self.reconnect_input_by_ind(mod_inst_node_id, ind, new_input);
 

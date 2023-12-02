@@ -89,12 +89,14 @@ pub trait ArrayExt<const N: usize, T> {
         Assert<{ S + M - 1 < N }>: IsTrue,
         for<'a> [T; M]: TryFrom<&'a [T]>;
 
+    #[blackbox(ArrayIndex)]
     fn index(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
         Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone;
 
+    #[blackbox(ArrayReverse)]
     fn reverse(self) -> Self
     where
         T: Clone;
@@ -133,7 +135,6 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         self[idx].clone()
     }
 
-    #[blackbox(ArrayReverse)]
     fn reverse(self) -> Self
     where
         T: Clone,

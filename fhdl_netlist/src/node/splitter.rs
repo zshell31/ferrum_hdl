@@ -1,9 +1,11 @@
-use std::{fmt::Debug, ops::Index};
+use std::fmt::Debug;
 
 use rustc_macros::{Decodable, Encodable};
+use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
+    encoding::Wrap,
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
@@ -13,7 +15,7 @@ use crate::{
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Splitter {
     input: NodeOutIdx,
-    outputs: Vec<NodeOutput>,
+    outputs: Wrap<SmallVec<[NodeOutput; 1]>>,
     start: Option<Width>,
     rev: bool,
 }
@@ -39,35 +41,68 @@ impl Splitter {
     pub fn outputs(&self) -> &[NodeOutput] {
         &self.outputs
     }
-
-    pub fn rev(&self) -> bool {
-        self.rev
-    }
 }
+
+pub type Indices<'a> = impl Iterator<Item = (&'a NodeOutput, u128)> + 'a;
 
 impl WithId<ModuleId, &'_ Splitter> {
     pub fn input(&self) -> NodeOutId {
         NodeOutId::make(self.id(), self.input)
     }
 
-    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(&self, net_list: &T) -> Width {
-        let module_id = self.id();
-        let input = net_list[NodeOutId::make(module_id, self.input)];
-        let input_width = input.ty.width();
-        self.start.map(Into::into).unwrap_or(if !self.rev {
-            0.into()
-        } else {
-            input_width
-        })
+    pub fn start(&self) -> Option<&Width> {
+        self.start.as_ref()
+    }
+
+    fn eval_start(&self, net_list: &NetList) -> Option<(u128, bool)> {
+        let rev = self.rev;
+        let input = net_list[self.input()];
+        let width = input.ty.width().opt_value()?;
+        let start = match self.start {
+            Some(start) => start.opt_value()?,
+            None => {
+                if !rev {
+                    0
+                } else {
+                    width
+                }
+            }
+        };
+
+        Some((start, rev))
+    }
+
+    pub fn eval_indices(&self, net_list: &NetList) -> Option<Indices<'_>> {
+        let (mut start, rev) = self.eval_start(net_list)?;
+
+        if self
+            .outputs()
+            .iter()
+            .any(|output| output.width().opt_value().is_none())
+        {
+            return None;
+        }
+
+        Some(self.outputs().iter().map(move |output| {
+            let width = output.width().value();
+
+            if !rev {
+                let res = (output, start);
+                start += width;
+                res
+            } else {
+                start -= width;
+                (output, start)
+            }
+        }))
     }
 
     pub fn pass_all_bits(&self, net_list: &NetList) -> bool {
-        let module_id = self.id();
         if self.outputs.len() != 1 {
             return false;
         }
 
-        let in_width = net_list[NodeOutId::make(module_id, self.input)].width();
+        let in_width = net_list[self.input()].width();
         let out_width = self.outputs[0].ty.width();
 
         in_width == out_width
@@ -112,21 +147,39 @@ impl IsNode for Splitter {
     }
 
     fn validate(&self, module_id: ModuleId, net_list: &NetList) {
-        let input_width = net_list[NodeOutId::make(module_id, self.input)].width();
-        let output_width = self
-            .outputs
-            .iter()
-            .map(|output| output.width().opt_value())
-            .sum::<Option<u128>>();
+        assert!(
+            !self.outputs.is_empty(),
+            "Splitter should have at least one output"
+        );
 
-        if let (Some(input_width), Some(output_width)) =
-            (input_width.opt_value(), output_width)
-        {
-            if output_width > input_width {
-                panic!(
-                    "Splitter: output width {} > input width {}",
-                    output_width, input_width
-                );
+        let this = WithId::new(module_id, self);
+        let start = this.eval_start(net_list);
+        let input = net_list[NodeOutId::make(module_id, self.input)]
+            .width()
+            .opt_value();
+
+        if let (Some(input), Some((mut start, rev))) = (input, start) {
+            for output in self.outputs() {
+                match output.width().opt_value() {
+                    Some(output) => {
+                        if !rev {
+                            assert!(
+                                start + output <= input,
+                                "Invalid inputs/outputs for splitter"
+                            );
+                            start += output;
+                        } else {
+                            assert!(
+                                start >= output,
+                                "Invalid inputs/outputs for splitter"
+                            );
+                            start -= output;
+                        }
+                    }
+                    None => {
+                        return;
+                    }
+                }
             }
         }
     }

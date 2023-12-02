@@ -70,6 +70,32 @@ impl<'tcx> Generator<'tcx> {
     }
 
     #[allow(clippy::wrong_self_convention)]
+    pub fn to_rev_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
+        match item_id {
+            ItemId::Node(node_out_id) => node_out_id,
+            ItemId::Group(group) => {
+                if group.item_ids().len() == 1 {
+                    self.to_bitvec(module_id, group.item_ids()[0])
+                } else {
+                    let width = group.width();
+
+                    let merger = Merger::new(
+                        width,
+                        group
+                            .item_ids()
+                            .iter()
+                            .map(|item_id| self.to_bitvec(module_id, *item_id)),
+                        true,
+                        None,
+                    );
+
+                    self.netlist.add_and_get_out(module_id, merger)
+                }
+            }
+        }
+    }
+
+    #[allow(clippy::wrong_self_convention)]
     pub fn from_bitvec(
         &mut self,
         module_id: ModuleId,

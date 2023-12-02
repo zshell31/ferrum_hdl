@@ -7,7 +7,7 @@ use ferrum_hdl::{
 };
 use fhdl_netlist::{
     group::ItemId,
-    node::{NodeOutput, Splitter, ZeroExtend},
+    net_list::ModuleId,
     sig_ty::{ArrayTy, NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_hir::{Expr, HirId};
@@ -18,7 +18,7 @@ use super::EvalExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    generator::{expr::ExprOrItemId, metadata::TemplateNodeKind, Generator, TraitKind},
+    generator::{expr::ExprOrItemId, Generator, TraitKind},
     utils,
 };
 
@@ -35,6 +35,7 @@ impl Conversion {
 
 impl Conversion {
     pub fn convert_as_prim_ty(
+        module_id: ModuleId,
         from: ItemId,
         to_ty: SignalTy,
         generator: &mut Generator<'_>,
@@ -57,7 +58,7 @@ impl Conversion {
             (SignalTyKind::Node(from_ty), SignalTyKind::Node(to_ty))
                 if from_ty.is_unsigned() && to_ty.is_unsigned() =>
             {
-                Ok(Self::to_unsigned(from, to_ty, generator))
+                Ok(Self::to_unsigned(module_id, from, to_ty, generator))
             }
             _ => {
                 println!("from {:?} => to {:?}", from_ty, to_ty);
@@ -100,14 +101,16 @@ impl Conversion {
                 assert_convert::<u<1>, Unsigned<1>>();
 
                 let from = from.group().item_ids()[0];
-                Ok(Self::to_unsigned(from, to_ty, generator))
+                Ok(Self::to_unsigned(ctx.module_id, from, to_ty, generator))
             }
             (SignalTyKind::Array(from_ty), SignalTyKind::Array(to_ty))
                 if from_ty.count() == to_ty.count() =>
             {
                 self.cast_array(generator, expr, from, to_ty, ctx)
             }
-            _ => Self::convert_as_prim_ty(from, to_ty, generator, expr.span),
+            _ => {
+                Self::convert_as_prim_ty(ctx.module_id, from, to_ty, generator, expr.span)
+            }
         }
     }
 
@@ -229,48 +232,15 @@ impl Conversion {
         from
     }
 
-    pub fn to_unsigned(
+    fn to_unsigned(
+        module_id: ModuleId,
         from: ItemId,
         to_ty: NodeTy,
         generator: &mut Generator<'_>,
     ) -> ItemId {
-        let node_out_id = from.node_out_id();
-        let module_id = node_out_id.node_id().module_id();
-        let from_ty = generator.item_ty(from);
-
-        if let (Some(from_width), Some(to_width)) =
-            (from_ty.width().opt_value(), to_ty.width().opt_value())
-        {
-            if from_width >= to_width {
-                generator
-                    .netlist
-                    .add_and_get_out(
-                        module_id,
-                        Splitter::new(node_out_id, [(to_ty, None)], None, false),
-                    )
-                    .into()
-            } else {
-                generator
-                    .netlist
-                    .add_and_get_out(module_id, ZeroExtend::new(to_ty, node_out_id, None))
-                    .into()
-            }
-        } else {
-            let node_id = generator.add_temp_node(
-                module_id,
-                TemplateNodeKind::CastToUnsigned {
-                    from: node_out_id,
-                    to_ty,
-                },
-                [node_out_id],
-                [NodeOutput::wire(to_ty, None)],
-            );
-
-            generator.netlist[node_id]
-                .only_one_out()
-                .node_out_id()
-                .into()
-        }
+        generator
+            .trunc_or_extend(module_id, from.node_out_id(), to_ty)
+            .into()
     }
 }
 

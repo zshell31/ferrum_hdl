@@ -1,28 +1,25 @@
+use std::iter;
+
 use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{NodeOutId, NodeOutIdx, TempNodeId},
+    net_list::{InOut, NodeOutIdx, TempNodeId},
     resolver::{Resolve, Resolver},
+    sig_ty::NodeTy,
 };
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct TemplateNode {
     id: TempNodeId,
-    inputs: Vec<NodeOutIdx>,
-    outputs: Vec<NodeOutput>,
+    outputs: VirtualOutputs,
 }
 
 impl TemplateNode {
-    pub fn new(
-        id: TempNodeId,
-        inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = NodeOutput>,
-    ) -> Self {
+    pub fn new(id: TempNodeId, output_ty: NodeTy) -> Self {
         Self {
             id,
-            inputs: inputs.into_iter().map(Into::into).collect(),
-            outputs: outputs.into_iter().collect(),
+            outputs: VirtualOutputs(NodeOutput::wire(output_ty, None)),
         }
     }
 
@@ -32,11 +29,10 @@ impl TemplateNode {
 }
 
 impl<R: Resolver> Resolve<R> for TemplateNode {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+    fn resolve(&self, _resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
         Ok(Self {
             id: self.id,
-            inputs: self.inputs.clone(),
-            outputs: self.outputs.resolve(resolver)?,
+            outputs: self.outputs,
         })
     }
 }
@@ -47,16 +43,41 @@ impl From<TemplateNode> for NodeKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+pub struct VirtualOutputs(NodeOutput);
+
+impl InOut<NodeOutput> for VirtualOutputs {
+    fn items_len(&self) -> usize {
+        0
+    }
+
+    fn items(&self) -> impl Iterator<Item = (usize, &NodeOutput)> {
+        iter::empty()
+    }
+
+    fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut NodeOutput)> {
+        iter::empty()
+    }
+
+    fn by_ind(&self, _ind: usize) -> &NodeOutput {
+        &self.0
+    }
+
+    fn by_ind_mut(&mut self, _ind: usize) -> &mut NodeOutput {
+        &mut self.0
+    }
+}
+
 impl IsNode for TemplateNode {
     type Inputs = [NodeOutIdx];
-    type Outputs = [NodeOutput];
+    type Outputs = VirtualOutputs;
 
     fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
+        &[]
     }
 
     fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
+        &mut []
     }
 
     fn outputs(&self) -> &Self::Outputs {

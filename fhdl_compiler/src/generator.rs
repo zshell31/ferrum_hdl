@@ -8,6 +8,7 @@ pub mod func;
 pub mod generic;
 pub mod metadata;
 pub mod pattern_match;
+pub mod temp_nodes;
 pub mod ty_or_def_id;
 
 use std::{

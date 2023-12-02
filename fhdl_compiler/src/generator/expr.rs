@@ -12,7 +12,6 @@ use fhdl_netlist::{
     symbol::Symbol,
 };
 use if_chain::if_chain;
-use rustc_ast::LitKind;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::{
     def::{CtorOf, DefKind, Res},
@@ -24,7 +23,7 @@ use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{
     AdtKind, GenericArgsRef, InstanceDef, ParamEnv, ParamEnvAnd, Ty, TyKind,
 };
-use rustc_span::{source_map::Spanned, Span};
+use rustc_span::Span;
 use smallvec::SmallVec;
 
 use super::{EvalContext, Generator};
@@ -432,7 +431,13 @@ impl<'tcx> Generator<'tcx> {
                     ctx,
                     expr.span,
                 )?;
-                Conversion::convert_as_prim_ty(from, to_ty, self, expr.span)
+                Conversion::convert_as_prim_ty(
+                    ctx.module_id,
+                    from,
+                    to_ty,
+                    self,
+                    expr.span,
+                )
             }
             ExprKind::Closure(closure) => {
                 let body = self.tcx.hir().body(closure.body);
@@ -479,18 +484,11 @@ impl<'tcx> Generator<'tcx> {
 
                 Ok(self.from_bitvec(ctx.module_id, mux, sig_ty))
             }
-            ExprKind::Index(
-                expr,
-                Expr {
-                    kind:
-                        ExprKind::Lit(Spanned {
-                            node: LitKind::Int(ind, ..),
-                            ..
-                        }),
-                    ..
-                },
-                _,
-            ) => self.index(expr, *ind, ctx),
+            ExprKind::Index(expr, idx, _) => {
+                let idx = self.eval_expr(idx, ctx)?;
+
+                self.index(expr, idx, ctx)
+            }
             ExprKind::Lit(lit) => {
                 let node_ty = self.find_sig_ty(expr_ty, ctx, lit.span)?.node_ty();
                 let value = lit::eval_lit(node_ty, lit)?;
@@ -694,7 +692,7 @@ impl<'tcx> Generator<'tcx> {
                         .tcx
                         .generics_of(parent)
                         .param_def_id_to_index(self.tcx, *def_id)
-                        .and_then(|ind| generics.as_const(ind as usize))
+                        .and_then(|ind| generics.as_const_opt(ind as usize))
                         .ok_or_else(|| {
                             SpanError::new(SpanErrorKind::ExpectedConst, expr.span)
                         })?;
@@ -939,6 +937,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let item_id = if prim_ty != subexpr_ty {
                     Conversion::convert_as_prim_ty(
+                        ctx.module_id,
                         node,
                         SignalTy::new(subexpr_ty.into()),
                         self,
@@ -994,31 +993,33 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn index(
         &mut self,
-        _expr: &'tcx Expr<'tcx>,
-        _ind: u128,
-        _ctx: &mut EvalContext<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        idx: ItemId,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        todo!()
-        // let span = expr.span;
-        // let expr = self.eval_expr(expr, ctx)?;
-        // match self.item_ty(expr).kind {
-        //     SignalTyKind::Node(prim) => {
-        //         let indexed = expr.node_out_id();
-        //         Ok(self
-        //             .net_list
-        //             .add_and_get_out(
-        //                 ctx.module_id,
-        //                 Splitter::new(
-        //                     indexed,
-        //                     [(NodeTy::Bit, None)],
-        //                     Some(ind.into()),
-        //                     false,
-        //                 ),
-        //             )
-        //             .into())
-        //     }
-        //     SignalTyKind::Array(array_ty) => Ok(expr.group().item_ids()[ind as usize]),
-        //     _ => Err(SpanError::new(SpanErrorKind::NonIndexableExpr, span).into()),
-        // }
+        let span = expr.span;
+
+        let expr = self.eval_expr(expr, ctx)?;
+        let expr_ty = self.item_ty(expr);
+
+        let idx = self.to_bitvec(ctx.module_id, idx);
+
+        let (expr, count, item_ty) = match expr_ty.kind {
+            SignalTyKind::Node(node_ty) => (
+                self.to_bitvec(ctx.module_id, expr),
+                node_ty.width(),
+                SignalTy::new(NodeTy::Bit.into()),
+            ),
+            SignalTyKind::Array(array_ty) => (
+                self.to_rev_bitvec(ctx.module_id, expr),
+                array_ty.count().into(),
+                *array_ty.item_ty(),
+            ),
+            _ => return Err(SpanError::new(SpanErrorKind::NonIndexableExpr, span).into()),
+        };
+
+        let case = self.case_index(ctx.module_id, idx, expr, count, item_ty);
+
+        Ok(self.from_bitvec(ctx.module_id, case, item_ty))
     }
 }

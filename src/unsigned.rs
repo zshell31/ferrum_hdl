@@ -273,6 +273,17 @@ macro_rules! impl_shift_ops {
 
 impl_shift_ops!(u8, u16, u32, u64, u128, usize);
 
+impl<const N: usize> Shl<Unsigned<N>> for Unsigned<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    type Output = Unsigned<N>;
+
+    fn shl(self, rhs: Unsigned<N>) -> Self::Output {
+        Self(self.0.shl(rhs.0))
+    }
+}
+
 impl<const N: usize> Not for Unsigned<N> {
     type Output = Self;
 

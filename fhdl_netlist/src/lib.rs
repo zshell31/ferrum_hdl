@@ -1,6 +1,7 @@
 #![feature(negative_impls)]
 #![feature(iter_intersperse)]
 #![feature(rustc_private)]
+#![feature(type_alias_impl_trait)]
 
 pub mod arena;
 pub mod backend;

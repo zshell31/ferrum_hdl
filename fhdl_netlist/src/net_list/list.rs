@@ -47,26 +47,31 @@ pub(crate) struct List<I: Idx> {
 }
 
 impl<I: Idx> List<I> {
-    #[inline(always)]
     pub(crate) fn head(&self) -> Option<I> {
         self.head
     }
 
-    #[inline(always)]
     pub(crate) fn tail(&self) -> Option<I> {
         self.tail
     }
 
-    #[inline(always)]
     pub(crate) fn is_empty(&self) -> bool {
         self.head().is_none()
     }
 
-    #[inline(always)]
     pub(crate) fn next_idx(&mut self) -> I {
         let idx = I::new(self.last_idx);
         self.last_idx += 1;
         idx
+    }
+
+    pub(crate) fn last_idx(&self) -> usize {
+        self.last_idx
+    }
+
+    pub(crate) fn reserve_last_idx(&mut self, idx: usize) {
+        assert!(self.last_idx <= idx);
+        self.last_idx = idx;
     }
 
     pub(crate) fn add<S: ListStorage<I>>(&mut self, storage: &mut S, idx: I) {
@@ -162,6 +167,6 @@ impl<I: Idx> List<I> {
                 self.head = None;
                 self.tail = None;
             }
-        }
+        };
     }
 }

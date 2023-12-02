@@ -1,7 +1,9 @@
 use rustc_macros::{Decodable, Encodable};
+use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
+    encoding::Wrap,
     net_list::NodeOutIdx,
     resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
@@ -69,8 +71,8 @@ impl IsNode for Const {
 
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct MultiConst {
-    values: Vec<u128>,
-    outputs: Vec<NodeOutput>,
+    values: Wrap<SmallVec<[u128; 1]>>,
+    outputs: Wrap<SmallVec<[NodeOutput; 1]>>,
 }
 
 impl MultiConst {

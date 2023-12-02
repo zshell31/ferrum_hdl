@@ -3,6 +3,8 @@ use std::ops::{Deref, DerefMut};
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use smallvec::{Array, SmallVec};
 
+use crate::resolver::{Resolve, Resolver};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Wrap<T>(pub T);
@@ -24,6 +26,18 @@ impl<T> DerefMut for Wrap<T> {
 impl<T> From<T> for Wrap<T> {
     fn from(value: T) -> Self {
         Self(value)
+    }
+}
+
+impl<A, T: FromIterator<A>> FromIterator<A> for Wrap<T> {
+    fn from_iter<I: IntoIterator<Item = A>>(iter: I) -> Self {
+        T::from_iter(iter).into()
+    }
+}
+
+impl<R: Resolver, T: Resolve<R>> Resolve<R> for Wrap<T> {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        self.0.resolve(resolver).map(Into::into)
     }
 }
 

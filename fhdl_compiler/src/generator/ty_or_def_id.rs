@@ -96,7 +96,7 @@ impl<'tcx> TyOrDefIdWithGen<'tcx> {
     pub fn opt_generic_ty(&self, ind: usize) -> Option<SignalTy> {
         self.generics
             .as_ref()
-            .and_then(|generics| generics.as_ty(ind))
+            .and_then(|generics| generics.as_ty_opt(ind))
     }
 
     pub fn generic_ty(&self, ind: usize, span: Span) -> Result<SignalTy, Error> {
@@ -107,7 +107,7 @@ impl<'tcx> TyOrDefIdWithGen<'tcx> {
     pub fn opt_generic_const(&self, ind: usize) -> Option<Width> {
         self.generics
             .as_ref()
-            .and_then(|generics| generics.as_const(ind))
+            .and_then(|generics| generics.as_const_opt(ind))
     }
 
     pub fn generic_const(&self, ind: usize, span: Span) -> Result<Width, Error> {

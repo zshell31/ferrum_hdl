@@ -68,9 +68,8 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn find_blackbox_kind(&self, def_id: DefId) -> Option<BlackboxKind> {
         if self.crates.is_ferrum_hdl(def_id) {
-            return self
-                .find_fhdl_tool_attr(BLACKBOX_ATTR, def_id)
-                .and_then(|kind| BlackboxKind::try_from(kind).ok());
+            self.find_fhdl_tool_attr(BLACKBOX_ATTR, def_id)
+                .and_then(|kind| BlackboxKind::try_from(kind).ok())
         } else {
             None
         }

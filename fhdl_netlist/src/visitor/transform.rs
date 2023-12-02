@@ -131,36 +131,34 @@ impl<'n> Transform<'n> {
                 _ => None,
             },
             NodeKind::Splitter(splitter) => {
-                let start = splitter.start(self.net_list);
-                match (start.opt_value(), self.net_list.to_const(splitter.input())) {
-                    (Some(mut start), Some(input)) => {
-                        let rev = splitter.rev();
-                        let values = splitter
-                            .outputs()
-                            .iter()
-                            .map(|output| {
-                                let width = output.width().opt_value()?;
-                                let val = input.slice(start, width, rev).val;
-                                if !rev {
-                                    start += width;
-                                } else {
-                                    start -= width;
-                                };
-                                Some(val)
-                            })
-                            .collect::<Option<Vec<_>>>();
+                if splitter.pass_all_bits(self.net_list) {
+                    self.net_list.reconnect(node_id);
+                    None
+                } else {
+                    let indices = splitter.eval_indices(self.net_list);
+                    let input = self.net_list.to_const(splitter.input());
 
-                        values.map(|values| {
-                            MultiConst::new(values, splitter.outputs().iter().copied())
-                                .into()
-                        })
-                    }
-                    _ => {
-                        if splitter.pass_all_bits(self.net_list) {
-                            self.net_list.reconnect(node_id);
+                    match (indices, input) {
+                        (Some(indices), Some(input)) => {
+                            let values = indices
+                                .map(|(output, index)| {
+                                    ConstVal::new(
+                                        input.val >> index,
+                                        output.width().value(),
+                                    )
+                                    .val
+                                })
+                                .collect::<Vec<_>>();
+
+                            Some(
+                                MultiConst::new(
+                                    values,
+                                    splitter.outputs().iter().copied(),
+                                )
+                                .into(),
+                            )
                         }
-
-                        None
+                        _ => None,
                     }
                 }
             }

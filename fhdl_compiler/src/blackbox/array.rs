@@ -2,7 +2,7 @@ use fhdl_netlist::group::ItemId;
 use rustc_hir::Expr;
 
 use super::EvalExpr;
-use crate::{error::Error, eval_context::EvalContext, generator::Generator};
+use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
 pub struct ArrayReverse;
 
@@ -124,5 +124,22 @@ impl<'tcx> EvalExpr<'tcx> for ArrayMap {
         //         Ok(sig_ty)
         //     },
         // )
+    }
+}
+
+pub struct ArrayIndex;
+
+impl<'tcx> EvalExpr<'tcx> for ArrayIndex {
+    fn eval_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        utils::args!(expr as rec, idx);
+
+        let idx = generator.eval_expr(idx, ctx)?;
+
+        generator.index(rec, idx, ctx)
     }
 }

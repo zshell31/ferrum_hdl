@@ -1,4 +1,4 @@
-use fhdl_netlist::group::ItemId;
+use fhdl_netlist::{group::ItemId, node::Const, sig_ty::NodeTy};
 use rustc_hir::Expr;
 
 use super::EvalExpr;
@@ -15,9 +15,17 @@ impl<'tcx> EvalExpr<'tcx> for UnsignedIndex {
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        let generics = generator.method_call_generics(expr, ctx)?;
-        let ind: u128 = generics.as_const(1).unwrap().value();
+        let rec_ty = generator.node_type(rec.hir_id, ctx);
+        let rec_ty = generator.find_sig_ty(rec_ty, ctx, rec.span)?;
+        let width = rec_ty.width();
 
-        generator.index(rec, ind, ctx)
+        let generics = generator.method_call_generics(expr, ctx)?;
+        let idx = generics.as_const(1, rec.span)?;
+        let idx = generator
+            .netlist
+            .add_and_get_out(ctx.module_id, Const::new(NodeTy::BitVec(width), idx, None))
+            .into();
+
+        generator.index(rec, idx, ctx)
     }
 }

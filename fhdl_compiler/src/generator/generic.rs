@@ -142,12 +142,22 @@ impl Generics {
         self.generics.get(ind)
     }
 
-    pub fn as_ty(&self, ind: usize) -> Option<SignalTy> {
+    pub fn as_ty_opt(&self, ind: usize) -> Option<SignalTy> {
         self.get(ind).and_then(|generic| generic.as_ty()).copied()
     }
 
-    pub fn as_const(&self, ind: usize) -> Option<Width> {
+    pub fn as_ty(&self, ind: usize, span: Span) -> Result<SignalTy, Error> {
+        self.as_ty_opt(ind)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedTy, span).into())
+    }
+
+    pub fn as_const_opt(&self, ind: usize) -> Option<Width> {
         self.get(ind).and_then(|generic| generic.as_const())
+    }
+
+    pub fn as_const(&self, ind: usize, span: Span) -> Result<Width, Error> {
+        self.as_const_opt(ind)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, span).into())
     }
 
     pub fn from_ty<'tcx>(

@@ -10,8 +10,8 @@ use std::{
 };
 
 use fhdl_netlist::{
-    net_list::{Idx, ModuleId, NetList, NodeId, NodeOutId, TempNodeId, TyId},
-    node::{NodeOutput, TemplateNode},
+    net_list::{Idx, ModuleId, NetList, NodeId, TempNodeId, TyId},
+    node::TemplateNode,
     sig_ty::NodeTy,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -22,7 +22,7 @@ use rustc_serialize::{opaque::MemDecoder, Decodable, Encodable, Encoder};
 use rustc_session::config::OutputType;
 
 use self::encoder::NetListEncoder;
-use super::{Generator, ModuleKey};
+use super::{temp_nodes::TemplateNodeKind, Generator, ModuleKey};
 use crate::{error::Error, generator::metadata::decoder::NetListDecoder};
 
 const NETLIST_EXT: &str = "netlist";
@@ -64,24 +64,18 @@ impl<'tcx> Metadata<'tcx> {
 
 pub type TemplateNodes = Vec<TemplateNodeKind>;
 
-#[derive(Debug, Encodable, Decodable)]
-pub enum TemplateNodeKind {
-    CastToUnsigned { from: NodeOutId, to_ty: NodeTy },
-}
-
 impl<'tcx> Generator<'tcx> {
     pub fn add_temp_node(
         &mut self,
         module_id: ModuleId,
         template_node_kind: TemplateNodeKind,
-        inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = NodeOutput>,
+        output_ty: NodeTy,
     ) -> NodeId {
         let id = TempNodeId::new(self.metadata.template_nodes.len());
         self.metadata.template_nodes.push(template_node_kind);
 
         self.netlist
-            .add(module_id, TemplateNode::new(id, inputs, outputs))
+            .add(module_id, TemplateNode::new(id, output_ty))
     }
 
     pub fn add_generic_ty(&mut self, ty: Ty<'tcx>) -> TyId {

@@ -40,6 +40,17 @@ pub fn blackbox_ty(attr: TokenStream, input: TokenStream) -> TokenStream {
     .into()
 }
 
+#[proc_macro_attribute]
+pub fn synth(_attr: TokenStream, input: TokenStream) -> TokenStream {
+    let input: TokenStream2 = input.into();
+
+    quote! {
+        #[fhdl_tool::synth]
+        #input
+    }
+    .into()
+}
+
 #[proc_macro]
 pub fn impl_tuple_traits(input: TokenStream) -> TokenStream {
     let impl_tuple = parse_macro_input!(input as ImplTupleTraits);

@@ -1,9 +1,12 @@
 use std::{
     fmt::{self, Debug, Display},
     hash::Hash,
+    ops::{Add, AddAssign},
 };
 
 use rustc_macros::{Decodable, Encodable};
+
+use crate::resolver::{Resolve, Resolver};
 
 pub trait Idx: Debug + Default + Copy + Eq + Hash + 'static {
     fn new(idx: usize) -> Self;
@@ -31,6 +34,20 @@ macro_rules! idx_type {
         #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
         #[repr(transparent)]
         pub struct $name(u32);
+
+        impl Add<usize> for $name {
+            type Output = $name;
+
+            fn add(self, rhs: usize) -> Self::Output {
+                Self::new(self.idx() + rhs)
+            }
+        }
+
+        impl AddAssign<usize> for $name {
+            fn add_assign(&mut self, rhs: usize) {
+                *self = (*self) + rhs;
+            }
+        }
 
         impl Debug for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -134,6 +151,23 @@ impl NodeId {
     pub(crate) fn make(module_id: ModuleId, node_idx: NodeIdx) -> Self {
         Self::combine(module_id, node_idx)
     }
+
+    pub fn with_module_id(self, module_id: ModuleId) -> Self {
+        let (_, node_idx) = self.split();
+        Self::combine(module_id, node_idx)
+    }
+}
+
+impl Add<usize> for NodeId {
+    type Output = NodeId;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        let mod_id = self.module_id();
+        let mut idx = self.idx();
+        idx += rhs;
+
+        Self::new(mod_id, idx)
+    }
 }
 
 impl From<NodeOutId> for NodeOutIdx {
@@ -154,6 +188,31 @@ impl NodeOutId {
     pub fn with_module_id(self, module_id: ModuleId) -> Self {
         let node_out_idx = self.into();
         Self::make(module_id, node_out_idx)
+    }
+}
+
+impl Add<usize> for NodeOutIdx {
+    type Output = NodeOutIdx;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        let (node_idx, idx) = self.split();
+        Self::combine(node_idx + rhs, idx)
+    }
+}
+
+impl Add<usize> for NodeOutId {
+    type Output = NodeOutId;
+
+    fn add(self, rhs: usize) -> Self::Output {
+        let (node_id, idx) = self.split();
+        Self::combine(node_id + rhs, idx)
+    }
+}
+
+impl<R: Resolver> Resolve<R> for NodeOutId {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        let module_id = resolver.resolve_module_id(self.node_id().module_id());
+        Ok(self.with_module_id(module_id))
     }
 }
 

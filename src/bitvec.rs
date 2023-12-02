@@ -39,6 +39,15 @@ impl<const N: usize> BitVec<N> {
         }
     }
 
+    fn short(self) -> u128 {
+        match self {
+            Self::Short(short) => short,
+            Self::Long(_) => {
+                panic!("expected BitVec with width equal or less than 128 bits")
+            }
+        }
+    }
+
     fn from_long(val: BigUint) -> Self {
         match N.cmp(&128) {
             Ordering::Less => {
@@ -288,6 +297,20 @@ macro_rules! impl_shift_ops {
 }
 
 impl_shift_ops!(u8, u16, u32, u64, u128, usize);
+
+impl<const N: usize> Shl<BitVec<N>> for BitVec<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    type Output = Self;
+
+    fn shl(self, rhs: BitVec<N>) -> Self::Output {
+        let lhs = self.short();
+        let rhs = rhs.short();
+
+        Self::from_short(lhs.shl(rhs))
+    }
+}
 
 impl<const N: usize> Not for BitVec<N> {
     type Output = Self;

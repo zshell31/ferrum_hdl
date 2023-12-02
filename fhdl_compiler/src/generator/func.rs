@@ -4,7 +4,7 @@ use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     group::ItemId,
     net_list::ModuleId,
-    node::{Input, ModInst, NodeKind},
+    node::{Input, ModInst, Node, NodeKind},
     resolver::Resolve,
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
@@ -24,12 +24,12 @@ use super::{
     expr::ExprOrItemId,
     metadata::{
         resolver::{ImportModule, MetadataResolver},
-        Metadata, TemplateNodeKind,
+        Metadata,
     },
-    Generator, MonoItem,
+    Generator, ModuleKey, MonoItem,
 };
 use crate::{
-    blackbox::{cast::Conversion, Blackbox},
+    blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
     scopes::SymIdent,
@@ -490,6 +490,14 @@ impl<'tcx> Generator<'tcx> {
             let source = &netlist[module_id];
             let target = self.netlist.add_module(source.name, false);
 
+            self.imported_modules.insert(
+                ModuleKey {
+                    krate: fn_did.krate,
+                    module_id,
+                },
+                target,
+            );
+
             v.push_back(ImportModule {
                 source: module_id,
                 target,
@@ -500,6 +508,9 @@ impl<'tcx> Generator<'tcx> {
         let mut res = None;
 
         while let Some(ImportModule { source, target }) = modules_to_eval.pop_front() {
+            let offset = netlist.last_idx(source);
+            self.netlist.reserve_last_idx(target, offset);
+
             let mut cursor = netlist.mod_cursor(source);
             while let Some(node_id) = netlist.next(&mut cursor) {
                 let mut resolver = MetadataResolver::new(
@@ -510,39 +521,26 @@ impl<'tcx> Generator<'tcx> {
                     ctx,
                     span,
                 );
-                let node = netlist[node_id].resolve_kind(&mut resolver)?;
 
-                match node {
+                let kind = netlist[node_id].resolve_kind(&mut resolver)?;
+
+                let kind = match kind {
                     NodeKind::TemplateNode(node) => {
                         let id = node.temp_node_id();
                         let gen_node = metadata.template_node(id).ok_or_else(|| {
                             SpanError::new(SpanErrorKind::MissingTemplateNode(id), span)
                         })?;
+                        let gen_node = gen_node.resolve(&mut resolver)?;
 
-                        let item_id = match gen_node {
-                            TemplateNodeKind::CastToUnsigned { from, to_ty } => {
-                                let from = from.with_module_id(target).into();
-                                let to_ty = to_ty.resolve(&mut resolver)?;
-                                Conversion::to_unsigned(from, to_ty, self)
-                            }
-                        };
-
-                        let node_out_id = item_id.node_out_id();
-                        let new_node_id = node_out_id.node_id();
-
-                        assert_eq!(
-                            self.netlist[new_node_id].inputs_len(),
-                            netlist[node_id].inputs_len()
-                        );
-                        assert_eq!(
-                            self.netlist[new_node_id].outputs_len(),
-                            netlist[node_id].outputs_len()
-                        );
+                        gen_node.eval(target, self)
                     }
-                    _ => {
-                        self.netlist.add(target, node);
-                    }
-                }
+                    _ => kind,
+                };
+
+                let node_id = node_id.with_module_id(target);
+                let node = Node::new(node_id, kind);
+
+                self.netlist.add_node(target, node);
             }
 
             for node_out_id in netlist.mod_outputs(source) {

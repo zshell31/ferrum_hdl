@@ -54,6 +54,7 @@ macro_rules! eval_expr {
 eval_expr!(
     ArrayReverse => array::ArrayReverse,
     ArrayMap => array::ArrayMap,
+    ArrayIndex => array::ArrayIndex,
 
     BitL => bit::BitVal(false),
     BitH => bit::BitVal(true),

@@ -1,5 +1,3 @@
-use smallvec::SmallVec;
-
 use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{Node, NodeKindWithId},
@@ -44,7 +42,7 @@ impl<'n> InjectNodes<'n> {
     ) {
         let node = &self.net_list[node_id];
 
-        let mut inject_outs: SmallVec<[NodeOutId; 8]> = SmallVec::new();
+        let mut inject_outs = Vec::with_capacity(8);
 
         for node_out_id in node.node_out_ids() {
             for link in self.net_list.links(node_out_id) {

@@ -6,6 +6,8 @@ use std::{
 
 use fhdl_const_func::mask;
 
+use crate::sig_ty::Width;
+
 // TODO: use long arithmetic
 #[derive(Debug, Clone, Copy)]
 pub struct ConstVal {
@@ -16,6 +18,12 @@ pub struct ConstVal {
 impl Display for ConstVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}'d{}", self.width, self.val_(self.width))
+    }
+}
+
+impl From<ConstVal> for Width {
+    fn from(value: ConstVal) -> Self {
+        value.val.into()
     }
 }
 
@@ -41,19 +49,6 @@ impl ConstVal {
     fn val_(&self, width: u128) -> u128 {
         let mask = mask(width);
         self.val & mask
-    }
-
-    pub(crate) fn slice(&self, start: u128, width: u128, rev: bool) -> Self {
-        assert!(start <= self.width);
-
-        let val = if !rev {
-            self.val >> start
-        } else {
-            assert!(start >= width);
-            self.val >> (start - width)
-        };
-
-        Self::new(val, width)
     }
 
     pub(crate) fn shift(&mut self, new_val: Self) {

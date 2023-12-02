@@ -29,7 +29,7 @@ pub use self::{
     mod_inst::ModInst,
     mux2::{Mux2, Mux2Inputs},
     not::Not,
-    splitter::Splitter,
+    splitter::{Indices, Splitter},
     temp_node::TemplateNode,
     zero_extend::ZeroExtend,
 };
@@ -279,13 +279,19 @@ impl Node {
     }
 
     pub fn only_one_out(&self) -> WithId<NodeOutId, &NodeOutput> {
-        assert_eq!(self.outputs_len(), 1);
+        if !self.is_temp_node() {
+            assert_eq!(self.outputs_len(), 1);
+        }
         self.output_by_ind(0)
     }
 
     pub fn only_one_out_mut(&mut self) -> WithId<NodeOutId, &mut NodeOutput> {
         assert_eq!(self.outputs_len(), 1);
         self.output_by_ind_mut(0)
+    }
+
+    pub fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+        self.kind.validate(module_id, net_list)
     }
 
     pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
@@ -309,12 +315,7 @@ impl Node {
                 );
             }
             NodeKindWithId::Splitter(splitter) => {
-                println!(
-                    "{}start = {} rev = {}",
-                    tab,
-                    splitter.start(net_list),
-                    splitter.rev()
-                );
+                println!("{}start = {:?}", tab, splitter.start(),);
             }
             NodeKindWithId::Const(cons) => {
                 if let (Some(value), Some(width)) =
@@ -390,6 +391,10 @@ impl Node {
     pub fn is_mod_inst(&self) -> bool {
         matches!(&self.kind, NodeKind::ModInst(_))
     }
+
+    pub fn is_temp_node(&self) -> bool {
+        matches!(&self.kind, NodeKind::TemplateNode(_))
+    }
 }
 
 pub trait IsNode: Into<NodeKind> {
@@ -425,6 +430,15 @@ macro_rules! define_nodes {
                         Self::$kind(_) => stringify!($kind),
                     )+
                 }
+            }
+
+            pub(crate) fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+                match self {
+                    $(
+                        Self::$kind(node) => node.validate(module_id, net_list),
+                    )+
+                }
+
             }
         }
 

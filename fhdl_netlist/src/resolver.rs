@@ -1,3 +1,5 @@
+use smallvec::{Array, SmallVec};
+
 use crate::{
     net_list::{ModuleId, ParamId, TyId},
     sig_ty::NodeTy,
@@ -37,6 +39,15 @@ impl<R: Resolver, T: Resolve<R>> Resolve<R> for Option<T> {
 }
 
 impl<R: Resolver, T: Resolve<R>> Resolve<R> for Vec<T> {
+    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
+        self.iter().map(|item| item.resolve(resolver)).collect()
+    }
+}
+
+impl<R: Resolver, A: Array> Resolve<R> for SmallVec<A>
+where
+    A::Item: Resolve<R>,
+{
     fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
         self.iter().map(|item| item.resolve(resolver)).collect()
     }

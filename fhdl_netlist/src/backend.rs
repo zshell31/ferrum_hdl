@@ -1,4 +1,4 @@
-use std::{borrow::Cow, cmp};
+use std::borrow::Cow;
 
 use either::Either;
 use rustc_data_structures::fx::FxHashSet;
@@ -172,24 +172,19 @@ impl<'n> Verilog<'n> {
             }
             NodeKind::Splitter(splitter) => {
                 let out_id = node_out_id.idx();
-                let mut start = splitter.start(self.net_list).value();
                 let outputs = splitter.outputs();
-                if !splitter.rev() {
-                    for output in outputs.iter().take(out_id) {
-                        start += output.width().value();
-                    }
-                } else {
-                    for output in outputs.iter().take(out_id) {
-                        start -= output.width().value();
-                    }
-                }
 
-                self.inject_node(module_id, splitter.input(), expr, false);
+                self.inject_node(module_id, splitter.input(), expr, true);
                 let width = outputs[out_id].width().value();
 
-                if splitter.rev() {
-                    start -= width;
-                }
+                let start: Cow<'_, str> = splitter
+                    .eval_indices(self.net_list)
+                    .map(|mut indices| {
+                        let (_, index) = indices.nth(out_id).unwrap();
+
+                        index.to_string().into()
+                    })
+                    .expect("Cannot evaluate indices for splitter");
 
                 if width == 1 {
                     expr.write_fmt(format_args!("[{start}]"));
@@ -447,54 +442,37 @@ impl<'n> Visitor for Verilog<'n> {
             }
             NodeKind::Splitter(splitter) => {
                 let input = splitter.input();
-                let rev = splitter.rev();
 
-                let input_width = self.net_list[input].ty.width().value();
-                let mut start = splitter.start(self.net_list).value();
+                fn write_out(
+                    buffer: &mut Buffer,
+                    output: &NodeOutput,
+                    input: &str,
+                    start: u128,
+                ) {
+                    let width = output.width().value();
+                    let output = output.sym.unwrap();
+
+                    buffer.write_tab();
+                    if width == 1 {
+                        buffer.write_fmt(format_args!(
+                            "assign {output} = {input}[{start}]\n\n"
+                        ));
+                    } else {
+                        buffer.write_fmt(format_args!(
+                            "assign {output} = {input}[{start} +: {width}]\n\n"
+                        ));
+                    }
+                }
+
                 let input = self.inject_input(input, false);
 
-                for output in splitter.outputs() {
-                    let width = output.ty.width().value();
+                let indices = splitter
+                    .eval_indices(self.net_list)
+                    .expect("Cannot evaluate indices for splitter");
 
+                for (output, index) in indices {
                     if !(output.is_skip || output.inject) {
-                        let output = output.sym.unwrap();
-
-                        self.buffer.write_tab();
-                        if width == 1 {
-                            let start = if !rev { start } else { start - 1 };
-
-                            self.buffer.write_fmt(format_args!(
-                                "assign {output} = {input}[{start}];\n\n"
-                            ));
-                        } else {
-                            #[allow(clippy::collapsible_else_if)]
-                            let (start, width) = if !rev {
-                                if start <= input_width.saturating_sub(width) {
-                                    (start, width)
-                                } else {
-                                    (start, input_width.saturating_sub(start))
-                                }
-                            } else {
-                                if start >= width {
-                                    (start - width, width)
-                                } else {
-                                    (0, start)
-                                }
-                            };
-                            if width == 0 {
-                                continue;
-                            }
-
-                            self.buffer.write_fmt(format_args!(
-                                "assign {output} = {input}[{start} +: {width}];\n\n"
-                            ));
-                        }
-                    }
-
-                    if !rev {
-                        start = cmp::min(start + width, input_width);
-                    } else {
-                        start = start.saturating_sub(width);
+                        write_out(&mut self.buffer, output, input.as_ref(), index);
                     }
                 }
             }

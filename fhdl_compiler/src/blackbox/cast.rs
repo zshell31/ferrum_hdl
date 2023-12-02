@@ -6,7 +6,7 @@ use ferrum_hdl::{
 };
 use fhdl_netlist::{
     group::ItemId,
-    node::{IsNode, Splitter},
+    node::{IsNode, Splitter, ZeroExtend},
     params::Outputs,
     sig_ty::{PrimTy, SignalTy, SignalTyKind},
 };
@@ -96,18 +96,20 @@ impl StdConversion {
             .only_one()
             .node_out_id(node_id);
 
-        generator
-            .net_list
-            .add(
-                module_id,
-                Splitter::new(
-                    node_out_id,
-                    [(ty, generator.idents.for_module(module_id).tmp())],
-                    None,
-                    false,
-                ),
-            )
-            .into()
+        if generator.item_ty(from).width() >= ty.width() {
+            generator
+                .net_list
+                .add(
+                    module_id,
+                    Splitter::new(node_out_id, [(ty, None)], None, false),
+                )
+                .into()
+        } else {
+            generator
+                .net_list
+                .add(module_id, ZeroExtend::new(ty, node_out_id, None))
+                .into()
+        }
     }
 
     pub fn convert(

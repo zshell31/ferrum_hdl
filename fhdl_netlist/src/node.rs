@@ -12,6 +12,7 @@ mod mux2;
 mod not;
 mod pass;
 mod splitter;
+mod zero_extend;
 
 use std::mem;
 
@@ -33,10 +34,12 @@ pub use self::{
     not::Not,
     pass::{MultiPass, Pass},
     splitter::Splitter,
+    zero_extend::ZeroExtend,
 };
 use crate::{
     arena::with_arena,
-    net_list::{NodeId, NodeOutId, OutId},
+    const_val::ConstVal,
+    net_list::{NodeId, NodeOutId},
     params::{Inputs, NodeOutWithId, NodeOutWithIdMut, Outputs},
     sig_ty::PrimTy,
     symbol::Symbol,
@@ -91,6 +94,8 @@ pub struct Node {
     // TODO: use flags
     pub is_skip: bool,
     pub inject: bool,
+    next: NodeId,
+    prev: NodeId,
 }
 
 impl Node {
@@ -104,7 +109,77 @@ impl Node {
             kind,
             is_skip: true,
             inject: false,
+            next: NodeId::none(),
+            prev: NodeId::none(),
         }
+    }
+
+    pub fn next(&self) -> Option<NodeId> {
+        self.next.into_opt()
+    }
+
+    pub fn set_next(&mut self, node_id: NodeId) {
+        self.next = node_id;
+    }
+
+    pub fn prev(&self) -> Option<NodeId> {
+        self.prev.into_opt()
+    }
+
+    pub fn set_prev(&mut self, node_id: NodeId) {
+        self.prev = node_id;
+    }
+
+    pub(crate) fn dump(&self, prefix: &str, tab: &str) {
+        println!(
+            "{}{} (is_skip: {}, inject: {}, prev: {:?}, next: {:?})",
+            prefix,
+            self.kind.dump(),
+            self.is_skip,
+            self.inject,
+            self.prev.idx(),
+            self.next.idx()
+        );
+
+        match &self.kind {
+            NodeKind::ModInst(mod_inst) => {
+                println!("{}mod_id = {}", tab, mod_inst.module_id.idx());
+            }
+            NodeKind::Const(cons) => {
+                println!(
+                    "{}const = {}",
+                    tab,
+                    ConstVal::new(cons.value, cons.output.width())
+                );
+            }
+            _ => {}
+        }
+
+        println!(
+            "{}inputs: {}",
+            tab,
+            self.kind
+                .inputs()
+                .items()
+                .map(|inp| format!("{} ({})", inp.node_id().idx().unwrap(), inp.out_id()))
+                .intersperse(", ".to_string())
+                .collect::<String>()
+        );
+
+        println!(
+            "{}outputs: {}",
+            tab,
+            self.kind
+                .outputs()
+                .items()
+                .map(|out| format!(
+                    "{} ({:?})",
+                    out.out.sym.map(|sym| sym.as_str()).unwrap_or("_"),
+                    out.out.ty
+                ))
+                .intersperse(", ".to_string())
+                .collect::<String>()
+        );
     }
 }
 
@@ -155,6 +230,16 @@ macro_rules! define_nodes {
             $(
                 $kind($node),
             )+
+        }
+
+        impl NodeKind {
+            pub(crate) fn dump(&self) -> &'static str {
+                match self {
+                    $(
+                        Self::$kind(_) => stringify!($kind),
+                    )+
+                }
+            }
         }
 
         // should be the same as Node
@@ -220,7 +305,7 @@ macro_rules! define_nodes {
                 }
             }
 
-            fn by_ind(&self, ind: OutId) -> NodeOutWithId<'_> {
+            fn by_ind(&self, ind: usize) -> NodeOutWithId<'_> {
                 match self {
                     $(
                         Self::$kind(node) => Outputs::by_ind(node.outputs(), ind),
@@ -228,7 +313,7 @@ macro_rules! define_nodes {
                 }
             }
 
-            fn by_ind_mut(&mut self, ind: OutId) -> NodeOutWithIdMut<'_> {
+            fn by_ind_mut(&mut self, ind: usize) -> NodeOutWithIdMut<'_> {
                 match self {
                     $(
                         Self::$kind(node) => Outputs::by_ind_mut(node.outputs_mut(), ind),
@@ -287,6 +372,7 @@ define_nodes!(
     MultiConst => MultiConst,
     Splitter => Splitter,
     Merger => Merger,
+    ZeroExtend => ZeroExtend,
     Case => Case,
     BinOp => BinOpNode,
     BitNot => BitNot,
@@ -322,6 +408,10 @@ impl NodeKind {
 
     pub fn is_merger(&self) -> bool {
         matches!(self, Self::Merger(_))
+    }
+
+    pub fn is_zero_extend(&self) -> bool {
+        matches!(self, Self::ZeroExtend(_))
     }
 
     pub fn is_mux(&self) -> bool {

@@ -36,7 +36,7 @@ use rustc_type_ir::fold::TypeFoldable;
 use self::{generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    idents::Idents,
+    scopes::Scopes,
     utils,
 };
 
@@ -178,7 +178,7 @@ pub struct Generator<'tcx> {
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,
     pub net_list: NetList,
-    pub idents: Idents,
+    pub idents: Scopes,
 }
 
 impl<'tcx> !Sync for Generator<'tcx> {}
@@ -195,7 +195,7 @@ impl<'tcx> Generator<'tcx> {
             evaluated_modules: FxHashMap::default(),
             crates,
             net_list: NetList::default(),
-            idents: Idents::new(),
+            idents: Scopes::new(),
         }
     }
 
@@ -219,7 +219,7 @@ impl<'tcx> Generator<'tcx> {
         self.collect_local_trait_impls();
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_fn_item(item, GenericArgs::empty())?;
+        self.evaluate_fn_item(item, true, GenericArgs::empty())?;
 
         self.net_list.run_stages();
 

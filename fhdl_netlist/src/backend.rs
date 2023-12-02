@@ -11,7 +11,7 @@ use crate::{
     node::{
         BinOpNode, BitNot, Case, CaseInputs, Const, DFFInputs, IsNode, LoopStart, Merger,
         ModInst, MultiConst, MultiPass, Mux2, Mux2Inputs, NetKind, NodeKind, NodeOutput,
-        Not, Pass, Splitter, DFF,
+        Not, Pass, Splitter, ZeroExtend, DFF,
     },
     params::Outputs,
     symbol::Symbol,
@@ -46,12 +46,13 @@ impl<'n> Verilog<'n> {
             if out.out.is_skip {
                 continue;
             }
+            let is_input = self.net_list.is_input(node_id);
             let is_output = self.net_list.is_output(out.node_out_id(node_id));
             let out = &out.out;
             let sym = out.sym.unwrap();
 
             if !self.locals.contains(&sym) {
-                if !is_output {
+                if !(is_input || is_output) {
                     self.buffer.write_tab();
                     write_out(&mut self.buffer, out);
                     self.buffer.write_fmt(format_args!(" {}", sym));
@@ -116,7 +117,8 @@ impl<'n> Verilog<'n> {
         if !node_out.inject {
             let mod_id = node_id.module_id();
             if module_id != mod_id {
-                panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", self.net_list[module_id].name, self.net_list[mod_id].name);
+                panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", 
+                    self.net_list[module_id].name, self.net_list[node_id.module_id()].name);
             }
             expr.write_str(self.net_list[node_out_id].sym.unwrap().as_str());
             return;
@@ -255,15 +257,15 @@ impl<'n> Visitor for Verilog<'n> {
         }
     }
 
-    fn visit_module(&mut self, module_id: ModuleId) {
+    fn visit_module(&mut self, mod_id: ModuleId) {
         self.locals = Default::default();
 
-        let module = &self.net_list[module_id];
+        let module = &self.net_list[mod_id];
 
         self.buffer
             .write_fmt(format_args!("module {}\n(\n", module.name));
 
-        let mut inputs = module.inputs().peekable();
+        let mut inputs = self.net_list.mod_inputs(mod_id).peekable();
         let mut has_inputs = false;
         self.buffer.push_tab();
         if inputs.peek().is_some() {
@@ -279,7 +281,7 @@ impl<'n> Visitor for Verilog<'n> {
         }
         self.buffer.pop_tab();
 
-        let mut outputs = module.outputs().peekable();
+        let mut outputs = self.net_list.mod_outputs(mod_id).peekable();
         self.buffer.push_tab();
         if outputs.peek().is_some() {
             if has_inputs {
@@ -300,12 +302,13 @@ impl<'n> Visitor for Verilog<'n> {
         self.buffer.write_eol();
 
         self.buffer.push_tab();
-        for node_id in module.nodes() {
+        let mut cursor = self.net_list.mod_cursor(mod_id);
+        while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
-
             if node.is_skip || node.inject {
                 continue;
             }
+
             self.visit_node(node_id);
         }
         self.buffer.pop_tab();
@@ -332,15 +335,20 @@ impl<'n> Visitor for Verilog<'n> {
 
                 self.buffer.write_tab();
 
-                self.buffer
-                    .write_fmt(format_args!("{} {} (\n", module.name, name));
+                self.buffer.write_fmt(format_args!(
+                    "{} {} (\n",
+                    module.name,
+                    name.unwrap()
+                ));
 
                 self.buffer.push_tab();
                 if !inputs.is_empty() {
                     self.buffer.write_tab();
                     self.buffer.write_str("// Inputs\n");
                 }
-                for (input, mod_input) in inputs.iter().zip(module.inputs()) {
+                for (input, mod_input) in
+                    inputs.iter().zip(self.net_list.mod_inputs(*module_id))
+                {
                     let input_sym = self.inject_input(*input);
                     let mod_input_sym = self.net_list[mod_input].sym.unwrap();
 
@@ -353,7 +361,7 @@ impl<'n> Visitor for Verilog<'n> {
 
                 self.buffer.intersperse(
                     SEP,
-                    outputs.iter().zip(module.outputs()),
+                    outputs.iter().zip(self.net_list.mod_outputs(*module_id)),
                     |buffer, (output, mod_output)| {
                         let output_sym = output.sym.unwrap();
                         let mod_output_sym = self.net_list[mod_output].sym.unwrap();
@@ -466,10 +474,10 @@ endgenerate
                     } else {
                         #[allow(clippy::collapsible_else_if)]
                         let (start, width) = if !*rev {
-                            if start <= input_width - width {
+                            if start <= input_width.saturating_sub(width) {
                                 (start, width)
                             } else {
-                                (start, input_width - start)
+                                (start, input_width.saturating_sub(start))
                             }
                         } else {
                             if start >= width {
@@ -525,6 +533,13 @@ endgenerate
                     self.buffer.write_tab();
                     self.buffer.write_str("};\n\n");
                 }
+            }
+            NodeKind::ZeroExtend(ZeroExtend { input, output }) => {
+                let input = self.inject_input(*input);
+                let output = output.sym.unwrap();
+
+                self.buffer
+                    .write_template(format_args!("assign {output} = {{ 0, {input} }};"));
             }
             NodeKind::Case(Case {
                 inputs:

@@ -16,9 +16,8 @@ pub struct Reachability<'n> {
 impl<'n> Reachability<'n> {
     pub fn new(net_list: &'n mut NetList) -> Self {
         let mut modules = FnvHashSet::default();
-        // the first module is top module
-        if let Some(first) = net_list.modules().next() {
-            modules.insert(first);
+        if let Some(top) = net_list.top_module() {
+            modules.insert(top);
         }
 
         Self {
@@ -45,7 +44,8 @@ impl<'n> Visitor for Reachability<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         self.node_out_ids.clear();
 
-        self.node_out_ids.extend(self.net_list[module_id].outputs());
+        self.node_out_ids
+            .extend(self.net_list.mod_outputs(module_id));
 
         while let Some(node_out_id) = self.node_out_ids.pop() {
             if !self.net_list[node_out_id].is_skip {

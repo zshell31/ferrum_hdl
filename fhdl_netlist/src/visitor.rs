@@ -1,8 +1,10 @@
+mod dump;
 mod inject_nodes;
 mod reachability;
 mod set_names;
 mod transform;
 
+use dump::Dump;
 use inject_nodes::InjectNodes;
 use reachability::Reachability;
 use set_names::SetNames;
@@ -30,5 +32,14 @@ impl NetList {
         Reachability::new(self).run();
         SetNames::new(self).run();
         InjectNodes::new(self).run();
+        self.dump(true);
+    }
+
+    pub fn dump(&self, skip: bool) {
+        Dump::new(self, skip).run()
+    }
+
+    pub fn dump_mod(&self, mod_id: ModuleId, skip: bool) {
+        Dump::new(self, skip).visit_module(mod_id);
     }
 }

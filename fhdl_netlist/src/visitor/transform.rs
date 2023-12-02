@@ -1,14 +1,12 @@
-use smallvec::SmallVec;
-
 use crate::{
     arena::Vec,
     const_val::ConstVal,
-    net_list::{ModuleId, NetList, NodeId, NodeOutId},
+    net_list::{ModuleId, NetList, NodeCursor, NodeId},
     node::{
         BinOp, BinOpNode, BitNot, Case, CaseInputs, Const, IsNode, Merger, MultiConst,
-        MultiPass, Node, NodeKind, Not, Pass,
+        Node, NodeKind, Not, Pass, ZeroExtend,
     },
-    params::{Inputs, Outputs},
+    params::Inputs,
     visitor::Visitor,
 };
 
@@ -25,28 +23,35 @@ impl<'n> Transform<'n> {
         self.visit_modules();
     }
 
-    fn replace_inputs(&mut self, node_id: NodeId) {
-        let node = &self.net_list[node_id];
-
-        let mut new_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
-        for input in node.kind.inputs().items() {
-            let input_node = &self.net_list[input.node_id()];
-
-            let new_input = match &input_node.kind {
-                NodeKind::Pass(Pass { input, .. }) => Some(*input),
-                NodeKind::MultiPass(MultiPass { inputs, .. }) => {
-                    Some(inputs[input.out_id()])
-                }
-                _ => None,
+    fn transform(&mut self, node_id: NodeId, cursor: &mut NodeCursor) -> Option<Node> {
+        let prev = self.net_list[node_id].prev();
+        let mut should_be_inlined = false;
+        let mod_inst_id =
+            if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
+                Some(mod_inst.module_id)
+            } else {
+                None
             };
-
-            new_inputs.push(new_input);
+        if let Some(mod_inst_id) = mod_inst_id {
+            // transform nodes before transforming mod instance
+            self.visit_module(mod_inst_id);
         }
 
-        self.net_list.replace_inputs(node_id, new_inputs);
+        let res = self.transform_(node_id, &mut should_be_inlined);
+
+        if should_be_inlined && self.net_list.inline_mod(node_id) {
+            cursor.set_node_id(prev);
+        }
+
+        res
     }
 
-    fn transform(&self, node: &Node) -> Option<Node> {
+    fn transform_(
+        &mut self,
+        node_id: NodeId,
+        should_be_inlined: &mut bool,
+    ) -> Option<Node> {
+        let node = &self.net_list[node_id];
         match &node.kind {
             NodeKind::Pass(Pass { input, output, .. }) => self
                 .net_list
@@ -54,23 +59,32 @@ impl<'n> Transform<'n> {
                 .map(|const_val| Const::new(output.ty, const_val.val, output.sym).into()),
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id;
-                let module = &self.net_list[module_id];
 
-                let values = module.outputs().map(|node_out_id| {
+                let values = self.net_list.mod_outputs(module_id).map(|node_out_id| {
                     self.net_list
                         .to_const(node_out_id)
                         .map(|const_val| const_val.val)
                 });
                 let values = Vec::collect_from_opt(values);
 
-                values.map(|values| {
-                    let outputs = Vec::collect_from(
-                        module
-                            .outputs()
-                            .map(|node_out_id| self.net_list[node_out_id]),
-                    );
-                    MultiConst::new(values, outputs).into()
-                })
+                match values {
+                    Some(values) => {
+                        let outputs = Vec::collect_from(
+                            self.net_list
+                                .mod_outputs(module_id)
+                                .map(|node_out_id| self.net_list[node_out_id]),
+                        );
+                        Some(MultiConst::new(values, outputs).into())
+                    }
+                    None => {
+                        *should_be_inlined = mod_inst.inlined
+                            || mod_inst.inputs().items().all(|input| {
+                                self.net_list[input.node_id()].kind.is_const()
+                            });
+
+                        None
+                    }
+                }
             }
             NodeKind::Not(Not { input, output })
             | NodeKind::BitNot(BitNot { input, output }) => {
@@ -145,7 +159,7 @@ impl<'n> Transform<'n> {
                         let output = splitter.outputs[0];
                         if splitter.outputs.len() == 1
                             && splitter.start.is_none()
-                            && self.net_list[splitter.input].ty.width() <= output.width()
+                            && self.net_list[splitter.input].ty.width() == output.width()
                         {
                             Some(Pass::new(output.ty, splitter.input, output.sym).into())
                         } else {
@@ -202,6 +216,21 @@ impl<'n> Transform<'n> {
                 })
             }
 
+            NodeKind::ZeroExtend(ZeroExtend { input, output }) => {
+                match self.net_list.to_const(*input) {
+                    Some(const_val) => {
+                        Some(Const::new(output.ty, const_val.val, output.sym).into())
+                    }
+                    None => {
+                        if self.net_list[*input].width() == output.width() {
+                            Some(Pass::new(output.ty, *input, output.sym).into())
+                        } else {
+                            None
+                        }
+                    }
+                }
+            }
+
             NodeKind::Case(Case {
                 inputs:
                     CaseInputs {
@@ -230,30 +259,21 @@ impl<'n> Transform<'n> {
 
 impl<'n> Visitor for Transform<'n> {
     fn visit_modules(&mut self) {
-        for module_id in self.net_list.modules() {
-            self.visit_module(module_id);
+        if let Some(top) = self.net_list.top_module() {
+            self.visit_module(top);
         }
     }
 
     fn visit_module(&mut self, module_id: ModuleId) {
-        let module = &mut self.net_list[module_id];
+        let mut cursor = self.net_list.mod_cursor(module_id);
+        while let Some(node_id) = self.net_list.next(&mut cursor) {
+            self.net_list.replace_inputs(node_id);
 
-        for node_id in module.nodes() {
-            self.visit_node(node_id);
+            if let Some(new_node) = self.transform(node_id, &mut cursor) {
+                self.net_list.replace_node(node_id, new_node);
+            }
         }
     }
 
-    fn visit_node(&mut self, node_id: NodeId) {
-        let node = &self.net_list[node_id];
-        let outputs_len = node.kind.outputs().len();
-
-        println!("before: {:?} {:#?}", node_id, node);
-        if let Some(new_node) = self.transform(node) {
-            assert_eq!(outputs_len, new_node.kind.outputs().len());
-            self.net_list.replace_node(node_id, new_node);
-            println!("after: {:#?}", self.net_list[node_id]);
-        }
-
-        self.replace_inputs(node_id);
-    }
+    fn visit_node(&mut self, _node_id: NodeId) {}
 }

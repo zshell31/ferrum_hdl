@@ -8,7 +8,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct ModInst {
-    pub name: Symbol,
+    pub name: Option<Symbol>,
     pub inlined: bool,
     pub module_id: ModuleId,
     pub inputs: Vec<NodeOutId>,
@@ -17,7 +17,7 @@ pub struct ModInst {
 
 impl ModInst {
     pub fn new(
-        name: Symbol,
+        name: Option<Symbol>,
         module_id: ModuleId,
         inlined: bool,
         inputs: impl IntoIterator<Item = NodeOutId>,

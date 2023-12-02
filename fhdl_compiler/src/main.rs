@@ -5,7 +5,7 @@
 mod blackbox;
 mod error;
 mod generator;
-mod idents;
+mod scopes;
 mod utils;
 
 use std::{

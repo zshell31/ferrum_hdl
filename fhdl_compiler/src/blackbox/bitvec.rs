@@ -57,7 +57,7 @@ pub fn bit_vec_trans_in_loop<'tcx>(
     ) -> Result<SignalTy, Error>,
 ) -> Result<ItemId, Error> {
     bit_vec_trans(generator, source, ctx, |generator, ctx, bit_vec| {
-        let loop_var = generator.idents.for_module(ctx.module_id).ident("i");
+        let loop_var = Symbol::new("i");
         let output = None;
 
         let loop_id = generator
@@ -105,15 +105,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecShrink {
             .net_list
             .add(
                 ctx.module_id,
-                Splitter::new(
-                    rec,
-                    [(
-                        PrimTy::BitVec(width),
-                        generator.idents.for_module(ctx.module_id).tmp(),
-                    )],
-                    None,
-                    false,
-                ),
+                Splitter::new(rec, [(PrimTy::BitVec(width), None)], None, false),
             )
             .into())
     }
@@ -146,15 +138,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVecSlice {
             .net_list
             .add(
                 ctx.module_id,
-                Splitter::new(
-                    rec,
-                    [(
-                        PrimTy::BitVec(width),
-                        generator.idents.for_module(ctx.module_id).tmp(),
-                    )],
-                    Some(start),
-                    false,
-                ),
+                Splitter::new(rec, [(PrimTy::BitVec(width), None)], Some(start), false),
             )
             .into())
     }

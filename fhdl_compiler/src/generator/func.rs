@@ -19,18 +19,19 @@ use rustc_span::symbol::Ident;
 use super::{EvalContext, Generator};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    idents::{Idents, SymIdent},
+    scopes::SymIdent,
 };
 
 impl<'tcx> Generator<'tcx> {
     pub fn evaluate_fn_item(
         &mut self,
         item: &Item<'tcx>,
+        top_module: bool,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Result<Option<ModuleId>, Error> {
         if let ItemKind::Fn(FnSig { decl, .. }, _, body_id) = item.kind {
             return self
-                .evaluate_fn(item.ident.as_str(), decl, body_id, generic_args)
+                .evaluate_fn(item.ident.as_str(), decl, body_id, top_module, generic_args)
                 .map(Some);
         }
 
@@ -64,7 +65,7 @@ impl<'tcx> Generator<'tcx> {
         };
         if let ImplItemKind::Fn(FnSig { decl, .. }, body_id) = impl_item.kind {
             return self
-                .evaluate_fn(ident.as_ref(), decl, body_id, generic_args)
+                .evaluate_fn(ident.as_ref(), decl, body_id, false, generic_args)
                 .map(Some);
         }
 
@@ -76,13 +77,14 @@ impl<'tcx> Generator<'tcx> {
         name: &str,
         fn_decl: &FnDecl<'tcx>,
         body_id: BodyId,
+        top_module: bool,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Result<ModuleId, Error> {
         let body = self.tcx.hir().body(body_id);
         let inputs = fn_decl.inputs.iter().zip(body.params.iter());
 
         let module_sym = Symbol::new(name);
-        let module_id = self.net_list.add_module(module_sym);
+        let module_id = self.net_list.add_module(module_sym, top_module);
 
         self.idents.for_module(module_id).push_scope();
 
@@ -258,12 +260,11 @@ impl<'tcx> Generator<'tcx> {
 
     fn evaluate_outputs(&mut self, item_id: ItemId) {
         for node_id in item_id.into_iter() {
-            Self::make_output(&mut self.net_list, &mut self.idents, node_id);
+            Self::make_output(&mut self.net_list, node_id);
         }
     }
 
-    fn make_output(net_list: &mut NetList, idents: &mut Idents, node_id: NodeId) {
-        let module_id = node_id.module_id();
+    fn make_output(net_list: &mut NetList, node_id: NodeId) {
         let node = &net_list[node_id];
         let node_id = if node.kind.is_input() {
             let out = node.kind.outputs().only_one();

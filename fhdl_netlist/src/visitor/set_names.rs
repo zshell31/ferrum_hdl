@@ -3,7 +3,7 @@ use once_cell::sync::Lazy;
 
 use crate::{
     net_list::{ModuleId, NetList, NodeId},
-    node::IsNode,
+    node::{IsNode, NodeKind},
     params::Outputs,
     symbol::Symbol,
     visitor::Visitor,
@@ -85,6 +85,26 @@ impl<'n> SetNames<'n> {
             self.idents.insert((module_id, sym), count);
             out.out.sym = Some(Self::make_sym(new_sym, count));
         }
+
+        let mut new_name = None;
+
+        if let NodeKind::ModInst(mod_inst) = &self.net_list[node_id].kind {
+            let sym = Symbol::new_from_args(format_args!(
+                "__{}",
+                self.net_list[mod_inst.module_id].name
+            ));
+            if mod_inst.name.is_none() {
+                let count = self.idents.get(&(module_id, sym)).copied();
+
+                let (new_sym, count) = Self::ident(sym, count);
+                self.idents.insert((module_id, sym), count);
+                new_name = Some(Self::make_sym(new_sym, count))
+            }
+        }
+
+        if let NodeKind::ModInst(mod_inst) = &mut self.net_list[node_id].kind {
+            mod_inst.name = mod_inst.name.or(new_name);
+        }
     }
 }
 
@@ -102,9 +122,8 @@ impl<'n> Visitor for SetNames<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         self.set_module_name(module_id);
 
-        let module = &mut self.net_list[module_id];
-
-        for node_id in module.nodes() {
+        let mut cursor = self.net_list.mod_cursor(module_id);
+        while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
             if node.is_skip {
                 continue;

@@ -11,7 +11,7 @@ use super::EvaluateExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     generator::{EvalContext, Generator},
-    idents::SymIdent,
+    scopes::SymIdent,
     utils,
 };
 
@@ -95,7 +95,11 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             ctx.module_id,
             DFF::new(
                 prim_ty,
-                generator.net_list.only_one_node_out_id(clk),
+                generator.net_list[clk]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(clk),
                 rst,
                 en,
                 rst_val,

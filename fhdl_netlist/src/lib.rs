@@ -3,6 +3,7 @@
 #![feature(iter_from_generator)]
 #![feature(negative_impls)]
 #![feature(unsafe_cell_from_mut)]
+#![feature(iter_intersperse)]
 
 pub mod arena;
 pub mod backend;

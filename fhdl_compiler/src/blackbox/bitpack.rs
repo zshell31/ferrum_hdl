@@ -9,7 +9,7 @@ use super::{bitvec, EvaluateExpr};
 use crate::{
     error::Error,
     generator::{EvalContext, Generator},
-    idents::SymIdent,
+    scopes::SymIdent,
     utils,
 };
 

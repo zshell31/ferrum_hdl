@@ -30,8 +30,7 @@ impl<'n> InjectNodes<'n> {
     }
 
     fn is_out_node(&self, node_id: NodeId) -> bool {
-        let module = &self.net_list[node_id.module_id()];
-        module.is_node_output(node_id)
+        self.net_list.is_out_node(node_id)
     }
 
     pub fn maybe_to_inject(node: &Node) -> bool {
@@ -87,9 +86,8 @@ impl<'n> Visitor for InjectNodes<'n> {
     }
 
     fn visit_module(&mut self, module_id: ModuleId) {
-        let module = &mut self.net_list[module_id];
-
-        for node_id in module.nodes() {
+        let mut cursor = self.net_list.mod_cursor(module_id);
+        while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
             if node.is_skip || !Self::maybe_to_inject(node) {
                 continue;
@@ -100,11 +98,8 @@ impl<'n> Visitor for InjectNodes<'n> {
     }
 
     fn visit_node(&mut self, node_id: NodeId) {
-        // if self.net_list[node_id].kind.is_pass() && !self.is_out_node(node_id) {
-        //     panic!("found pass node: {:?}", node_id);
-        // }
-
         let node = &self.net_list[node_id];
+
         if node.kind.is_const() || node.kind.is_expr() || node.kind.is_splitter() {
             self.try_inject(node_id, |this, link_id, link, link_out_id| {
                 (link.kind.is_pass() && this.is_out_node(link_id))
@@ -117,7 +112,7 @@ impl<'n> Visitor for InjectNodes<'n> {
             return;
         }
 
-        if node.kind.is_merger() {
+        if node.kind.is_merger() || node.kind.is_zero_extend() {
             self.try_inject(node_id, |this, link_id, link, link_out_id| {
                 (link.kind.is_pass() && this.is_out_node(link_id))
                     || link.kind.is_merger()

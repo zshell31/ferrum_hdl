@@ -6,8 +6,8 @@ use std::{
 
 use fhdl_netlist::{
     group::ItemId,
-    net_list::{ModuleId, NodeOutId},
-    node::{BinOp, BinOpNode, BitNot, Case, Const, ModInst, Mux2, Not, Splitter},
+    net_list::NodeOutId,
+    node::{BinOp, BinOpNode, BitNot, Case, Const, Mux2, Not, Splitter},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
@@ -17,22 +17,19 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::{
     def::{CtorOf, DefKind, Res},
     def_id::{DefId, LocalDefId},
-    Expr, ExprKind, Node as HirNode, PatKind, Path, QPath, StmtKind, Ty as HirTy,
+    Expr, ExprKind, HirId, PatKind, Path, QPath, StmtKind, Ty as HirTy,
     TyKind as HirTyKind, UnOp,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{
-    AdtKind, FnSig, GenericArgsRef, InstanceDef, ParamEnv, ParamEnvAnd, Ty, TyKind,
+    AdtKind, GenericArgsRef, InstanceDef, ParamEnv, ParamEnvAnd, Ty, TyKind,
 };
-use rustc_span::{source_map::Spanned, Span, Symbol as RustSymbol};
+use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
 
-use super::{
-    arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator, MonoItem,
-    TraitKind,
-};
+use super::{arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator};
 use crate::{
-    blackbox::{cast::StdConversion, lit, EvaluateExpr},
+    blackbox::{cast::Conversion, lit},
     error::{Error, SpanError, SpanErrorKind},
     scopes::SymIdent,
     utils,
@@ -152,7 +149,7 @@ impl<'tcx> ExprOrItemId<'tcx> {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         match self {
-            ExprOrItemId::Expr(expr) => generator.evaluate_expr(expr, ctx),
+            ExprOrItemId::Expr(expr) => generator.eval_expr(expr, ctx),
             ExprOrItemId::Item(item_id) => Ok(*item_id),
         }
     }
@@ -188,40 +185,14 @@ impl<'tcx> Generator<'tcx> {
                 self.make_struct_group(
                     ty,
                     ty.tys().iter().zip(sub_exprs).map(|(_, sub_expr)| sub_expr),
-                    |generator, sub_expr| generator.evaluate_expr(sub_expr, ctx),
+                    |generator, sub_expr| generator.eval_expr(sub_expr, ctx),
                 )
             }
             _ => Err(SpanError::new(SpanErrorKind::ExpectedStructType, expr.span).into()),
         }
     }
 
-    fn get_closure_inputs_for_sig_ty(
-        &mut self,
-        sig_ty: SignalTy,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> ItemId {
-        match sig_ty.kind {
-            SignalTyKind::Node(_) | SignalTyKind::Enum(_) => {
-                ctx.next_closure_input().into()
-            }
-            SignalTyKind::Array(ty) => self
-                .make_array_group(ty, ty.tys(), |generator, sig_ty| {
-                    Ok(generator.get_closure_inputs_for_sig_ty(sig_ty, ctx))
-                })
-                .unwrap(),
-            SignalTyKind::Struct(ty) => self
-                .make_struct_group(
-                    ty,
-                    ty.tys().iter().map(|ty| ty.inner),
-                    |generator, sig_ty| {
-                        Ok(generator.get_closure_inputs_for_sig_ty(sig_ty, ctx))
-                    },
-                )
-                .unwrap(),
-        }
-    }
-
-    pub fn evaluate_expr(
+    pub fn eval_expr(
         &mut self,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
@@ -232,7 +203,7 @@ impl<'tcx> Generator<'tcx> {
             ctx.generic_args,
         );
 
-        let res = self.evaluate_expr_(expr, ctx);
+        let res = self.eval_expr_(expr, ctx);
         if res.is_ok() {
             scope.exit();
         } else {
@@ -244,26 +215,31 @@ impl<'tcx> Generator<'tcx> {
         res
     }
 
-    pub fn evaluate_expr_(
+    pub fn eval_expr_(
         &mut self,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let ty = self.node_type(expr.hir_id, ctx);
+        let expr_ty = self.node_type(expr.hir_id, ctx);
 
         match expr.kind {
             ExprKind::Array(items) => {
                 let array_ty = self
-                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                    .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
                     .array_ty();
 
                 self.make_array_group(array_ty, items.iter(), |generator, item| {
-                    generator.evaluate_expr(item, ctx)
+                    generator.eval_expr(item, ctx)
                 })
             }
-            ExprKind::Binary(bin_op, lhs, rhs) => {
-                self.bin_op(ty, utils::to_bin_op(bin_op.node), lhs, rhs, ctx, expr.span)
-            }
+            ExprKind::Binary(bin_op, lhs, rhs) => self.bin_op(
+                expr_ty,
+                utils::to_bin_op(bin_op.node),
+                lhs,
+                rhs,
+                ctx,
+                expr.span,
+            ),
             ExprKind::Block(block, _) => {
                 self.idents.for_module(ctx.module_id).push_scope();
 
@@ -273,7 +249,7 @@ impl<'tcx> Generator<'tcx> {
                             let init = local.init.ok_or_else(|| {
                                 SpanError::new(SpanErrorKind::ExpectedExpr, local.span)
                             })?;
-                            let item_id = self.evaluate_expr(init, ctx)?;
+                            let item_id = self.eval_expr(init, ctx)?;
 
                             self.pattern_match(local.pat, item_id, ctx.module_id)?;
                         }
@@ -300,7 +276,7 @@ impl<'tcx> Generator<'tcx> {
                     }
                 };
 
-                let item_id = self.evaluate_expr(expr, ctx)?;
+                let item_id = self.eval_expr(expr, ctx)?;
 
                 self.idents.for_module(ctx.module_id).pop_scope();
 
@@ -326,18 +302,19 @@ impl<'tcx> Generator<'tcx> {
                         ) => {
                             if fn_did.is_local() {
                                 let fn_ty = self.node_type(fn_item.hir_id, ctx);
-                                let generic_args = utils::subst(fn_ty);
+                                let generic_args = utils::subst(fn_ty).unwrap();
 
-                                self.evaluate_fn_call(
+                                self.eval_fn_call(
                                     fn_did.expect_local(),
                                     generic_args,
                                     args.iter().map(Into::into),
                                     ctx,
+                                    expr.span,
                                 )
                             } else {
                                 let blackbox =
                                     self.find_blackbox(*fn_did, ctx.generic_args, *span)?;
-                                blackbox.evaluate_expr(self, expr, ctx)
+                                blackbox.eval_expr(self, expr, ctx)
                             }
                         }
                         QPath::Resolved(
@@ -350,14 +327,13 @@ impl<'tcx> Generator<'tcx> {
                                     ),
                                 ..
                             },
-                        ) if variant_ctor_did.is_local() => self
-                            .evaluate_enum_variant_ctor(
-                                *variant_ctor_did,
-                                ty,
-                                ctx,
-                                args,
-                                expr.span,
-                            ),
+                        ) if variant_ctor_did.is_local() => self.eval_enum_variant_ctor(
+                            *variant_ctor_did,
+                            expr_ty,
+                            ctx,
+                            args,
+                            expr.span,
+                        ),
                         QPath::Resolved(
                             _,
                             Path {
@@ -411,7 +387,7 @@ impl<'tcx> Generator<'tcx> {
                                     );
                                 then {
 
-                                self.evaluate_enum_variant(
+                                self.eval_enum_variant(
                                     variant_did,
                                     ty,
                                     ctx,
@@ -436,34 +412,43 @@ impl<'tcx> Generator<'tcx> {
                     Err(SpanError::new(SpanErrorKind::NotSynthCall, expr.span).into())
                 }
             }
-            ExprKind::Cast(expr, _) => self.evaluate_expr(expr, ctx),
+            ExprKind::Cast(expr, ty) => {
+                let from = self.eval_expr(expr, ctx)?;
+                let to_ty = self.find_sig_ty_for_hir_ty(
+                    expr.hir_id.owner.def_id,
+                    ty,
+                    ctx.generic_args,
+                    expr.span,
+                )?;
+                Conversion::convert_as_prim_ty(from, to_ty, self, expr.span)
+            }
             ExprKind::Closure(closure) => {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
 
-                self.evaluate_inputs(inputs, ctx, true)?;
-                let closure = self.evaluate_expr(body.value, ctx)?;
+                self.eval_inputs(inputs, ctx, true)?;
+                let closure = self.eval_expr(body.value, ctx)?;
 
                 Ok(closure)
             }
-            ExprKind::DropTemps(inner) => self.evaluate_expr(inner, ctx),
+            ExprKind::DropTemps(inner) => self.eval_expr(inner, ctx),
             ExprKind::Field(expr, ident) => {
-                let group = self.evaluate_expr(expr, ctx)?.group();
+                let group = self.eval_expr(expr, ctx)?.group();
 
                 group.by_field(ident.as_str()).ok_or_else(|| {
                     SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()
                 })
             }
             ExprKind::If(cond, if_block, else_block) => {
-                let sig_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+                let sig_ty = self.find_sig_ty(expr_ty, ctx.generic_args, expr.span)?;
 
                 let else_block = else_block.ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedIfElseExpr, expr.span)
                 })?;
 
-                let cond = self.evaluate_expr(cond, ctx)?.node_out_id();
-                let if_block = self.evaluate_expr(if_block, ctx)?;
-                let else_block = self.evaluate_expr(else_block, ctx)?;
+                let cond = self.eval_expr(cond, ctx)?.node_out_id();
+                let if_block = self.eval_expr(if_block, ctx)?;
+                let else_block = self.eval_expr(else_block, ctx)?;
 
                 let if_block = self.to_bitvec(ctx.module_id, if_block);
                 let else_block = self.to_bitvec(ctx.module_id, else_block);
@@ -471,7 +456,7 @@ impl<'tcx> Generator<'tcx> {
                 let mux = self.net_list.add(
                     ctx.module_id,
                     Mux2::new(
-                        sig_ty.maybe_to_bitvec(),
+                        sig_ty.to_bitvec(),
                         cond,
                         if_block,
                         else_block,
@@ -495,8 +480,10 @@ impl<'tcx> Generator<'tcx> {
                 _,
             ) => self.index(expr, *ind, ctx),
             ExprKind::Lit(lit) => {
-                let prim_ty = self.find_sig_ty(ty, ctx.generic_args, lit.span)?.prim_ty();
-                let value = lit::evaluate_lit(prim_ty, lit)?;
+                let prim_ty = self
+                    .find_sig_ty(expr_ty, ctx.generic_args, lit.span)?
+                    .prim_ty();
+                let value = lit::eval_lit(prim_ty, lit)?;
 
                 Ok(self
                     .net_list
@@ -504,9 +491,9 @@ impl<'tcx> Generator<'tcx> {
                     .into())
             }
             ExprKind::Match(sel, arms, _) => {
-                let expr_ty = self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+                let expr_ty = self.find_sig_ty(expr_ty, ctx.generic_args, expr.span)?;
 
-                let sel = self.evaluate_expr(sel, ctx)?;
+                let sel = self.eval_expr(sel, ctx)?;
                 let sel_sig_ty = self.item_ty(sel);
 
                 let mut variants_map = FxHashMap::default();
@@ -523,7 +510,7 @@ impl<'tcx> Generator<'tcx> {
                         .into());
                     }
                     if let PatKind::Wild = arm.pat.kind {
-                        let item_id = self.evaluate_expr(arm.body, ctx)?;
+                        let item_id = self.eval_expr(arm.body, ctx)?;
                         let node_out_id = self.to_bitvec(ctx.module_id, item_id);
                         default = Some(node_out_id);
 
@@ -557,7 +544,7 @@ impl<'tcx> Generator<'tcx> {
                         }
                     }
 
-                    let variant_item_id = self.evaluate_expr(arm.body, ctx)?;
+                    let variant_item_id = self.eval_expr(arm.body, ctx)?;
                     let discr =
                         self.pattern_to_bitvec(arm.pat, sel_sig_ty, ctx.generic_args)?;
                     if discr.mask < small_mask {
@@ -594,13 +581,7 @@ impl<'tcx> Generator<'tcx> {
 
                 let case = self.net_list.add(
                     ctx.module_id,
-                    Case::new(
-                        expr_ty.maybe_to_bitvec(),
-                        sel,
-                        inputs,
-                        default,
-                        SymIdent::Mux,
-                    ),
+                    Case::new(expr_ty.to_bitvec(), sel, inputs, default, SymIdent::Mux),
                 );
                 let case = self.net_list[case].only_one_out().node_out_id();
                 Ok(self.from_bitvec(ctx.module_id, case, expr_ty))
@@ -612,40 +593,20 @@ impl<'tcx> Generator<'tcx> {
                     .type_dependent_def_id(expr.hir_id)
                     .unwrap();
                 // TODO: how to define generic args for method call
-                let generic_args = self.extract_generic_args_for_fn(fn_did, expr, ctx)?;
+                let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
 
                 match self.find_local_impl_id(fn_did, generic_args) {
-                    Some((impl_id, generic_args)) => self.evaluate_impl_fn_call(
+                    Some((impl_id, generic_args)) => self.eval_impl_fn_call(
                         impl_id,
                         generic_args,
                         Some(rec.into()),
                         args.iter().map(Into::into),
                         ctx,
+                        expr.span,
                     ),
                     None => {
                         let blackbox = self.find_blackbox(fn_did, generic_args, span)?;
-                        if let Some(from) = blackbox.is_std_conversion() {
-                            if let Some(fn_did) = self.find_trait_method(TraitKind::From)
-                            {
-                                let generic_args = self
-                                    .maybe_swap_generic_args_for_conversion(
-                                        from,
-                                        generic_args,
-                                    );
-                                if let Some((impl_id, generic_args)) =
-                                    self.find_local_impl_id(fn_did, generic_args)
-                                {
-                                    return self.evaluate_impl_fn_call(
-                                        impl_id,
-                                        generic_args,
-                                        Some(rec.into()),
-                                        args.iter().map(Into::into),
-                                        ctx,
-                                    );
-                                }
-                            }
-                        }
-                        blackbox.evaluate_expr(self, expr, ctx)
+                        blackbox.eval_expr(self, expr, ctx)
                     }
                 }
             }
@@ -655,7 +616,7 @@ impl<'tcx> Generator<'tcx> {
                     self.item_id_for_ident(ctx.module_id, ident)
                 }
                 Res::Def(DefKind::AssocFn, def_id) | Res::Def(DefKind::Fn, def_id) => {
-                    self.evaluate_closure_fn_without_params(*def_id, expr, ctx)
+                    self.eval_closure_fn_without_params(*def_id, expr, ctx)
                 }
                 Res::Def(DefKind::Const, def_id) => {
                     if def_id.is_local() {
@@ -665,11 +626,11 @@ impl<'tcx> Generator<'tcx> {
                             Some(expr.span),
                         ) {
                             let sig_ty =
-                                self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+                                self.find_sig_ty(expr_ty, ctx.generic_args, expr.span)?;
 
                             let node = self.net_list.add(
                                 ctx.module_id,
-                                Const::new(sig_ty.maybe_to_bitvec(), const_val, None),
+                                Const::new(sig_ty.to_bitvec(), const_val, None),
                             );
                             let node_out_id =
                                 self.net_list[node].only_one_out().node_out_id();
@@ -682,12 +643,13 @@ impl<'tcx> Generator<'tcx> {
                     } else {
                         let blackbox =
                             self.find_blackbox(*def_id, ctx.generic_args, expr.span)?;
-                        blackbox.evaluate_expr(self, expr, ctx)
+                        blackbox.eval_expr(self, expr, ctx)
                     }
                 }
                 Res::Def(DefKind::ConstParam, def_id) => {
-                    let prim_ty =
-                        self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
+                    let prim_ty = self
+                        .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
+                        .prim_ty();
 
                     let generics = self.tcx.generics_of(self.tcx.parent(*def_id));
                     let value = generics
@@ -707,9 +669,9 @@ impl<'tcx> Generator<'tcx> {
                 Res::Def(DefKind::Ctor(CtorOf::Variant, ..), variant_ctor_did)
                     if variant_ctor_did.is_local() =>
                 {
-                    self.evaluate_enum_variant_ctor(
+                    self.eval_enum_variant_ctor(
                         *variant_ctor_did,
-                        ty,
+                        expr_ty,
                         ctx,
                         &[],
                         expr.span,
@@ -717,11 +679,11 @@ impl<'tcx> Generator<'tcx> {
                 }
                 _ => Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()),
             },
-            ExprKind::Path(qpath @ QPath::TypeRelative(rel_ty, _)) => {
+            ExprKind::Path(qpath @ QPath::TypeRelative(_, _)) => {
                 let ty = self.node_type(expr.hir_id, ctx);
                 if ty.is_fn() {
                     let fn_did = utils::ty_def_id(ty).unwrap();
-                    self.evaluate_closure_fn_without_params(fn_did, expr, ctx)
+                    self.eval_closure_fn_without_params(fn_did, expr, ctx)
                 } else {
                     let def_id = self
                         .tcx
@@ -730,23 +692,26 @@ impl<'tcx> Generator<'tcx> {
                         .opt_def_id();
                     if let Some(def_id) = def_id {
                         if let DefKind::AssocConst = self.tcx.def_kind(def_id) {
-                            let rel_ty = ctx.instantiate(
-                                self.tcx,
-                                self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
-                            );
-                            let rel_ty = ctx.instantiate(self.tcx, rel_ty);
-                            let args = self.tcx.mk_args(&[rel_ty.into()]);
+                            // let rel_ty = ctx.instantiate(
+                            //     self.tcx,
+                            //     self.ast_ty_to_ty(expr.hir_id.owner.def_id, rel_ty),
+                            // );
+                            // let rel_ty = ctx.instantiate(self.tcx, rel_ty);
+                            // let args = self.tcx.mk_args(&[ty.into()]);
+                            let args =
+                                self.extract_generic_args(def_id, expr.hir_id, ctx)?;
 
                             if let Some(const_val) =
                                 self.eval_const_val(def_id, args, Some(expr.span))
                             {
-                                let sig_ty =
-                                    self.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+                                let prim_ty = self
+                                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                                    .to_bitvec();
                                 return Ok(self
                                     .net_list
                                     .add_and_get_out(
                                         ctx.module_id,
-                                        Const::new(sig_ty.prim_ty(), const_val, None),
+                                        Const::new(prim_ty, const_val, None),
                                     )
                                     .into());
                             }
@@ -786,26 +751,27 @@ impl<'tcx> Generator<'tcx> {
                 ),
                 fields,
                 base,
-            ) if variant_did.is_local() && base.is_none() => self.evaluate_enum_variant(
+            ) if variant_did.is_local() && base.is_none() => self.eval_enum_variant(
                 *variant_did,
-                ty,
+                expr_ty,
                 ctx,
                 fields.iter().map(|field| field.expr),
                 expr.span,
             ),
             ExprKind::Tup(exprs) => {
                 let struct_ty = self
-                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
+                    .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
                     .struct_ty();
 
                 self.make_struct_group(struct_ty, exprs.iter(), |generator, expr| {
-                    generator.evaluate_expr(expr, ctx)
+                    generator.eval_expr(expr, ctx)
                 })
             }
             ExprKind::Unary(UnOp::Not, inner) => {
-                let comb = self.evaluate_expr(inner, ctx)?.node_out_id();
-                let prim_ty =
-                    self.find_sig_ty(ty, ctx.generic_args, expr.span)?.prim_ty();
+                let comb = self.eval_expr(inner, ctx)?.node_out_id();
+                let prim_ty = self
+                    .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
+                    .prim_ty();
 
                 Ok((if prim_ty.is_bool() {
                     self.net_list
@@ -820,183 +786,29 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn maybe_swap_generic_args_for_conversion(
+    pub fn extract_generic_args(
         &self,
-        from: bool,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> GenericArgsRef<'tcx> {
-        match from {
-            true => generic_args,
-            // Swap generic args from Into::<Self, T> -> From::<Self = T, T = Self>
-            false => self.tcx.mk_args(&[generic_args[1], generic_args[0]]),
-        }
-    }
-
-    fn evaluate_closure_fn_without_params(
-        &mut self,
-        fn_id: DefId,
-        expr: &Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        let arg = match self.tcx.hir().find_parent(expr.hir_id) {
-            Some(HirNode::Expr(Expr {
-                kind: ExprKind::MethodCall(_, _, args, _),
-                ..
-            })) => args.iter().find(|arg| arg.hir_id == expr.hir_id),
-            Some(HirNode::Expr(Expr {
-                kind: ExprKind::Call(_, args),
-                ..
-            })) => args.iter().find(|arg| arg.hir_id == expr.hir_id),
-            _ => None,
-        };
-
-        if let Some(arg) = arg {
-            let span = arg.span;
-            let ty = self.node_type(arg.hir_id, ctx);
-            let generic_args = ctx.instantiate(self.tcx, utils::subst(ty));
-
-            let fn_sig = self.fn_sig(fn_id, Some(generic_args));
-            let input_ty = self.find_sig_ty(fn_sig.inputs()[0], generic_args, span)?;
-            let output_ty = self.find_sig_ty(fn_sig.output(), generic_args, span)?;
-
-            // println!(
-            //     "evaluate closure fn without params: {:?}: {:?}",
-            //     fn_sig, generic_args
-            // );
-
-            if fn_id.is_local() {
-                let input = self.get_closure_inputs_for_sig_ty(input_ty, ctx);
-
-                let closure = match self.find_local_impl_id(fn_id, generic_args) {
-                    Some((impl_id, generic_args)) => self.evaluate_impl_fn_call(
-                        impl_id,
-                        generic_args,
-                        Some(input.into()),
-                        [],
-                        ctx,
-                    )?,
-                    None => self.evaluate_fn_call(
-                        fn_id.expect_local(),
-                        generic_args,
-                        [input.into()],
-                        ctx,
-                    )?,
-                };
-
-                return Ok(closure);
-            } else {
-                let blackbox = self.find_blackbox(fn_id, ctx.generic_args, span)?;
-                if let Some(from) = blackbox.is_std_conversion() {
-                    let input = self.get_closure_inputs_for_sig_ty(input_ty, ctx);
-
-                    let closure = match self.find_trait_method(TraitKind::From) {
-                        Some(fn_did) => {
-                            let generic_args = self
-                                .maybe_swap_generic_args_for_conversion(
-                                    from,
-                                    generic_args,
-                                );
-
-                            match self.find_local_impl_id(fn_did, generic_args) {
-                                Some((impl_id, generic_args)) => {
-                                    Some(self.evaluate_impl_fn_call(
-                                        impl_id,
-                                        generic_args,
-                                        Some(input.into()),
-                                        [],
-                                        ctx,
-                                    )?)
-                                }
-                                None => None,
-                            }
-                        }
-                        None => None,
-                    };
-
-                    let closure = match closure {
-                        Some(closure) => closure,
-                        None => StdConversion::convert(
-                            input_ty, output_ty, input, self, expr.span,
-                        )?,
-                    };
-
-                    return Ok(closure);
-                }
-            }
-        }
-        Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
-    }
-
-    pub fn extract_generic_args_for_fn(
-        &self,
-        fn_id: DefId,
-        expr: &Expr<'tcx>,
+        did: DefId,
+        hir_id: HirId,
         ctx: &EvalContext<'tcx>,
     ) -> Result<GenericArgsRef<'tcx>, Error> {
         let arg_matcher = ArgMatcher::new(self.tcx);
 
-        let fn_args = self.subst_with(
-            self.tcx.typeck(expr.hir_id.owner).node_args(expr.hir_id),
-            ctx,
-        );
+        let node_args =
+            self.subst_with(self.tcx.typeck(hir_id.owner).node_args(hir_id), ctx);
 
-        let fn_generic_args =
-            utils::subst(self.tcx.type_of(fn_id).instantiate_identity());
-
-        let res = arg_matcher
-            .extract_params(fn_id, fn_args, fn_generic_args)
-            .ok_or_else(|| {
-                // println!("'{:?}' and '{:?}' does not match", fn_args, fn_generic_args);
-                SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into()
-            });
-
-        // println!(
-        //     "extract generic args: fn_args {:?} == fn_generic_args {:?} ? {:?}",
-        //     fn_args, fn_generic_args, res
-        // );
-
-        res
-    }
-
-    fn eval_fn_args(
-        &mut self,
-        self_arg: Option<ExprOrItemId<'tcx>>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<SmallVec<[ItemId; 8]>, Error> {
-        let mut evaluated = SmallVec::new();
-
-        if let Some(self_arg) = self_arg {
-            let self_arg = self_arg.evaluate(self, ctx)?;
-            evaluated.push(self_arg);
+        match utils::subst(self.tcx.type_of(did).instantiate_identity()) {
+            Some(generic_args) => arg_matcher
+                .extract_params(did, node_args, generic_args)
+                .ok_or_else(|| {
+                    SpanError::new(
+                        SpanErrorKind::CannotExtractGenericArgs,
+                        self.tcx.hir().span(hir_id),
+                    )
+                    .into()
+                }),
+            None => Ok(node_args),
         }
-
-        for arg in args {
-            let arg = arg.evaluate(self, ctx)?;
-            evaluated.push(arg);
-        }
-
-        Ok(evaluated)
-    }
-
-    fn instantiate_module(
-        &mut self,
-        module_id: ModuleId,
-        inputs: SmallVec<[ItemId; 8]>,
-        inlined: bool,
-        ctx: &EvalContext<'tcx>,
-    ) -> ItemId {
-        let inputs = inputs.into_iter().flat_map(|input| input.into_iter());
-
-        let outputs = self
-            .net_list
-            .mod_outputs(module_id)
-            .map(|node_out_id| (self.net_list[node_out_id].ty, None));
-
-        let mod_inst = ModInst::new(None, module_id, inlined, inputs, outputs);
-        let node_id = self.net_list.add(ctx.module_id, mod_inst);
-
-        self.combine_outputs(node_id)
     }
 
     pub fn find_local_impl_id(
@@ -1004,8 +816,7 @@ impl<'tcx> Generator<'tcx> {
         fn_did: DefId,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Option<(LocalDefId, GenericArgsRef<'tcx>)> {
-        let res = self
-            .tcx
+        self.tcx
             .resolve_instance(ParamEnvAnd {
                 param_env: ParamEnv::reveal_all(),
                 value: (fn_did, generic_args),
@@ -1013,120 +824,14 @@ impl<'tcx> Generator<'tcx> {
             .ok()
             .and_then(identity)
             .and_then(|instance| match instance.def {
-                InstanceDef::Item(def) => Some((def, instance.args)),
+                InstanceDef::Item(def) if self.tcx.impl_of_method(def).is_some() => {
+                    def.as_local().map(|def| (def, instance.args))
+                }
                 _ => None,
-            });
-
-        res.and_then(|(def, args)| def.as_local().map(|def| (def, args)))
-        // if fn_did.is_local() && self.tcx.impl_of_method(fn_did).is_some() {
-        //     return Some((fn_did.expect_local(), generic_args));
-        // }
-
-        // if self.tcx.trait_of_item(fn_did).is_some() {
-        //     let res = self
-        //         .tcx
-        //         .resolve_instance(ParamEnvAnd {
-        //             param_env: ParamEnv::reveal_all(),
-        //             value: (fn_did, generic_args),
-        //         })
-        //         .ok()
-        //         .and_then(identity)
-        //         .and_then(|instance| match instance.def {
-        //             InstanceDef::Item(def) => Some((def, instance.args)),
-        //             _ => None,
-        //         });
-
-        //     return res.and_then(|(def, args)| def.as_local().map(|def| (def, args)));
-        // }
-
-        // None
+            })
     }
 
-    pub fn fn_sig(
-        &self,
-        def_id: DefId,
-        subst: Option<GenericArgsRef<'tcx>>,
-    ) -> FnSig<'tcx> {
-        let fn_sig = self.tcx.fn_sig(def_id);
-
-        (match subst {
-            Some(subst) => fn_sig.instantiate(self.tcx, subst),
-            None => fn_sig.instantiate_identity(),
-        })
-        .skip_binder()
-    }
-
-    pub fn evaluate_fn_call(
-        &mut self,
-        fn_id: LocalDefId,
-        generic_args: GenericArgsRef<'tcx>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        let item = self.tcx.hir().expect_item(fn_id);
-
-        let args = self.eval_fn_args(None, args, ctx)?;
-        let inlined = self.is_inlined(fn_id);
-
-        let module_id = {
-            let mono_item = MonoItem::new(fn_id, generic_args);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id =
-                    self.evaluate_fn_item(item, false, generic_args)?.unwrap();
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        };
-
-        Ok(self.instantiate_module(module_id, args, inlined, ctx))
-    }
-
-    pub fn evaluate_impl_fn_call(
-        &mut self,
-        impl_id: LocalDefId,
-        generic_args: GenericArgsRef<'tcx>,
-        self_arg: Option<ExprOrItemId<'tcx>>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        let impl_item = self.tcx.hir().expect_impl_item(impl_id);
-
-        let args = self.eval_fn_args(self_arg, args, ctx)?;
-        let inlined = self.is_inlined(impl_id);
-
-        let module_id = {
-            let mono_item = MonoItem::new(impl_id, generic_args);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                // println!(
-                //     "evaluate impl fn call: impl_id = {:?}, generic_args = {:?}",
-                //     impl_id, generic_args
-                // );
-                let module_id =
-                    self.evaluate_impl_item(impl_item, generic_args)?.unwrap();
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        };
-
-        Ok(self.instantiate_module(module_id, args, inlined, ctx))
-    }
-
-    fn is_inlined(&self, did: LocalDefId) -> bool {
-        self.tcx
-            .get_attrs(did.to_def_id(), RustSymbol::intern("inline"))
-            .next()
-            .is_some()
-    }
-
-    fn evaluate_enum_variant_ctor(
+    fn eval_enum_variant_ctor(
         &mut self,
         variant_ctor_did: DefId,
         ty: Ty<'tcx>,
@@ -1135,10 +840,10 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<ItemId, Error> {
         let variant_did = self.tcx.parent(variant_ctor_did);
-        self.evaluate_enum_variant(variant_did, ty, ctx, args, span)
+        self.eval_enum_variant(variant_did, ty, ctx, args, span)
     }
 
-    fn evaluate_enum_variant(
+    fn eval_enum_variant(
         &mut self,
         variant_did: DefId,
         ty: Ty<'tcx>,
@@ -1163,7 +868,7 @@ impl<'tcx> Generator<'tcx> {
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedStructType, span))?;
 
         let group = self.make_struct_group(struct_ty, fields, |generator, field| {
-            generator.evaluate_expr(field, ctx)
+            generator.eval_expr(field, ctx)
         })?;
 
         Ok(self.enum_variant_to_bitvec(ctx.module_id, enum_ty, variant_idx, group))
@@ -1200,13 +905,12 @@ impl<'tcx> Generator<'tcx> {
         let mut subnode =
             |expr: &'tcx Expr<'tcx>, prim_ty: NodeTy| -> Result<NodeOutId, Error> {
                 let span = expr.span;
-                let node = self.evaluate_expr(expr, ctx)?;
+                let node = self.eval_expr(expr, ctx)?;
 
                 let item_id = if prim_ty != subexpr_ty {
-                    StdConversion::convert(
-                        SignalTy::new(None, prim_ty.into()),
-                        SignalTy::new(None, subexpr_ty.into()),
+                    Conversion::convert_as_prim_ty(
                         node,
+                        SignalTy::new(None, subexpr_ty.into()),
                         self,
                         span,
                     )?
@@ -1236,21 +940,22 @@ impl<'tcx> Generator<'tcx> {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let fn_ty = self.node_type(fn_item.hir_id, ctx);
-        let fn_id = utils::ty_def_id(fn_ty).unwrap();
-        let generic_args = utils::subst(fn_ty);
+        let fn_did = utils::ty_def_id(fn_ty).unwrap();
+        let generic_args = utils::subst(fn_ty).unwrap();
 
-        match self.find_local_impl_id(fn_id, generic_args) {
-            Some((impl_id, generic_args)) => self.evaluate_impl_fn_call(
+        match self.find_local_impl_id(fn_did, generic_args) {
+            Some((impl_id, generic_args)) => self.eval_impl_fn_call(
                 impl_id,
                 generic_args,
                 None,
                 args.iter().map(Into::into),
                 ctx,
+                expr.span,
             ),
             None => {
                 let blackbox =
-                    self.find_blackbox(fn_id, ctx.generic_args, fn_item.span)?;
-                blackbox.evaluate_expr(self, expr, ctx)
+                    self.find_blackbox(fn_did, ctx.generic_args, fn_item.span)?;
+                blackbox.eval_expr(self, expr, ctx)
             }
         }
     }
@@ -1262,7 +967,7 @@ impl<'tcx> Generator<'tcx> {
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         let span = expr.span;
-        let expr = self.evaluate_expr(expr, ctx)?;
+        let expr = self.eval_expr(expr, ctx)?;
         match self.item_ty(expr).kind {
             SignalTyKind::Node(prim) => {
                 assert!(ind < prim.width());

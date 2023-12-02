@@ -1,7 +1,7 @@
 use std::iter;
 
 use either::Either;
-use fhdl_blackbox::Blackbox;
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     bvm::BitVecMask,
     group::ItemId,
@@ -256,9 +256,9 @@ impl<'tcx> Generator<'tcx> {
                     Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
                 } else {
                     let blackbox = self.find_blackbox(*def_id, generic_args, pat.span)?;
-                    let value = match blackbox {
-                        Blackbox::BitL => BitVal(false).bit_value(),
-                        Blackbox::BitH => BitVal(true).bit_value(),
+                    let value = match blackbox.kind {
+                        BlackboxKind::BitL => BitVal(false).bit_value(),
+                        BlackboxKind::BitH => BitVal(true).bit_value(),
                         _ => {
                             return Err(SpanError::new(
                                 SpanErrorKind::InvalidPattern,

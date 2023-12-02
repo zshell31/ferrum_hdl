@@ -4,27 +4,20 @@
 use ferrum_hdl::{
     bit::Bit,
     bitpack::BitPackExt,
+    cast::Cast,
     const_functions::clog2,
     const_helpers::UsizeConstr,
-    domain::{Clock, ClockDomain, PICOSECONDS},
+    domain::{clk_divider, Clock, ClockDomain, SECOND},
     signal::{reg, Reset, Signal},
     unsigned::Unsigned,
 };
 
 pub const fn second_periods<D: ClockDomain>() -> usize {
-    PICOSECONDS / D::PERIOD
+    clk_divider::<D>(SECOND)
 }
 
 pub const fn blinking_count<D: ClockDomain>() -> usize {
     clog2(second_periods::<D>())
-}
-
-pub const fn hz_to_period(freq: usize) -> usize {
-    PICOSECONDS / freq
-}
-
-pub const fn clock_divider<D: ClockDomain>(ps: usize) -> usize {
-    ps / D::PERIOD
 }
 
 pub fn blinking<D: ClockDomain>(
@@ -37,10 +30,10 @@ where
     reg::<D, _>(
         clk,
         rst,
-        0_u8.into(),
+        0_u8.cast(),
         |r: Unsigned<{ blinking_count::<D>() }>| r + 1_u8,
     )
-    .map(|value| (value.clone().msb().into(), value))
+    .map(|value| (value.clone().msb().cast(), value))
 }
 
 pub struct ZynqMiniDom;

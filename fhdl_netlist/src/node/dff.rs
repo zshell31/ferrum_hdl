@@ -46,7 +46,7 @@ impl DFF {
             inputs,
             en_idx,
             data_idx,
-            output: NodeOutput::reg(ty, sym.into(), rst_val),
+            output: NodeOutput::reg(ty, sym.into(), 2),
         }
     }
 

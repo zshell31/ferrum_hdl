@@ -1,6 +1,6 @@
 use std::{fmt::Debug, iter};
 
-use fhdl_blackbox::{Blackbox, BlackboxTy};
+use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
@@ -23,6 +23,7 @@ use rustc_type_ir::{
 
 use super::{generic::Generics, Generator};
 use crate::{
+    blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
@@ -125,9 +126,9 @@ impl<'tcx> Generator<'tcx> {
         key: T,
         generics: GenericArgsRef<'tcx>,
         span: Span,
-    ) -> Result<Blackbox, Error> {
+    ) -> Result<Blackbox<'tcx>, Error> {
         let key = key.make(self.tcx, generics);
-        let key = self.evaluate_generics(key, generics, span)?;
+        let key = self.eval_generics(key, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -150,30 +151,23 @@ impl<'tcx> Generator<'tcx> {
                     span,
                 )
             })
+            .map(|kind| Blackbox { kind, key })
             .map_err(Into::into)
     }
 
-    fn find_blackbox_(&self, def_id: DefId) -> Option<Blackbox> {
+    fn find_blackbox_(&self, def_id: DefId) -> Option<BlackboxKind> {
         if self.crates.is_core(def_id) {
             let def_path = self.tcx.def_path_str(def_id);
 
-            if def_path == "std::convert::From::from" {
-                return Some(Blackbox::StdFrom);
-            }
-
-            if def_path == "std::convert::Into::into" {
-                return Some(Blackbox::StdInto);
-            }
-
             if def_path == "std::clone::Clone::clone" {
-                return Some(Blackbox::StdClone);
+                return Some(BlackboxKind::StdClone);
             }
         }
 
         if self.crates.is_ferrum_hdl(def_id) {
             return self
                 .find_fhdl_tool_attr("blackbox", def_id)
-                .and_then(|kind| Blackbox::try_from(kind).ok());
+                .and_then(|kind| BlackboxKind::try_from(kind).ok());
         }
 
         None
@@ -186,7 +180,7 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<SignalTy, Error> {
         let key = key.make(self.tcx, generics);
-        let key = self.evaluate_generics(key, generics, span)?;
+        let key = self.eval_generics(key, generics, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -195,7 +189,7 @@ impl<'tcx> Generator<'tcx> {
 
             if let Some(ty) = &key.ty() {
                 if key.is_local() {
-                    sig_ty = Some(self.evaluate_adt_ty(ty, generics, span)?);
+                    sig_ty = Some(self.eval_adt_ty(ty, generics, span)?);
                 } else {
                     match ty.kind() {
                         TyKind::Array(..) => {
@@ -217,11 +211,14 @@ impl<'tcx> Generator<'tcx> {
                         TyKind::Uint(UintTy::U32) => {
                             sig_ty = Some(SignalTy::new(None, NodeTy::U32.into()))
                         }
-                        TyKind::Uint(UintTy::U64 | UintTy::Usize) => {
+                        TyKind::Uint(UintTy::U64) => {
                             sig_ty = Some(SignalTy::new(None, NodeTy::U64.into()))
                         }
                         TyKind::Uint(UintTy::U128) => {
                             sig_ty = Some(SignalTy::new(None, NodeTy::U128.into()))
+                        }
+                        TyKind::Uint(UintTy::Usize) => {
+                            sig_ty = Some(SignalTy::new(None, NodeTy::Usize.into()))
                         }
                         TyKind::Tuple(ty) => {
                             sig_ty = Some(SignalTy::new(
@@ -322,7 +319,7 @@ impl<'tcx> Generator<'tcx> {
         self.find_sig_ty(ty, generics, span)
     }
 
-    pub fn evaluate_generics(
+    pub fn eval_generics(
         &mut self,
         ty_or_def_id: TyOrDefId<'tcx>,
         generics: GenericArgsRef<'tcx>,
@@ -349,7 +346,11 @@ impl<'tcx> Generator<'tcx> {
         Generics::from_args(self, generic_args.into_iter().map(Some), span)
     }
 
-    fn find_fhdl_tool_attr(&self, attr_kind: &str, def_id: DefId) -> Option<&'tcx str> {
+    pub fn find_fhdl_tool_attr(
+        &self,
+        attr_kind: &str,
+        def_id: DefId,
+    ) -> Option<&'tcx str> {
         let attrs = self.tcx.get_attrs_unchecked(def_id);
         for attr in attrs {
             if let AttrKind::Normal(attr) = &attr.kind {
@@ -358,25 +359,30 @@ impl<'tcx> Generator<'tcx> {
                     && segments[0].ident.as_str() == FHDL_TOOL
                     && segments[1].ident.as_str() == attr_kind
                 {
-                    if let AttrArgs::Delimited(DelimArgs { tokens, .. }) = &attr.item.args
-                    {
-                        if tokens.len() == 1 {
-                            if let Some(TokenTree::Token(
-                                Token {
-                                    kind:
-                                        TokenKind::Literal(Lit {
-                                            kind: LitKind::Str,
-                                            symbol,
-                                            ..
-                                        }),
-                                    ..
-                                },
-                                _,
-                            )) = tokens.trees().next()
-                            {
-                                return Some(symbol.as_str());
+                    match &attr.item.args {
+                        AttrArgs::Empty => {
+                            return Some("");
+                        }
+                        AttrArgs::Delimited(DelimArgs { tokens, .. }) => {
+                            if tokens.len() == 1 {
+                                if let Some(TokenTree::Token(
+                                    Token {
+                                        kind:
+                                            TokenKind::Literal(Lit {
+                                                kind: LitKind::Str,
+                                                symbol,
+                                                ..
+                                            }),
+                                        ..
+                                    },
+                                    _,
+                                )) = tokens.trees().next()
+                                {
+                                    return Some(symbol.as_str());
+                                }
                             }
                         }
+                        _ => {}
                     }
                 }
             }

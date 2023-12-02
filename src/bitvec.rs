@@ -25,7 +25,7 @@ pub enum BitVec<const N: usize> {
 }
 
 impl<const N: usize> BitVec<N> {
-    fn new_from_u128(val: u128) -> Self {
+    fn from_short(val: u128) -> Self {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
@@ -39,7 +39,7 @@ impl<const N: usize> BitVec<N> {
         }
     }
 
-    fn new_from_biguint(val: BigUint) -> Self {
+    fn from_long(val: BigUint) -> Self {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
@@ -91,11 +91,11 @@ impl<const N: usize> BitVec<N> {
         match self {
             Self::Short(short) => {
                 let mask = (1 << M) - 1;
-                BitVec::<M>::from((short >> S) & mask)
+                BitVec::<M>::from_short((short >> S) & mask)
             }
             Self::Long(long) => {
                 let mask = (BigUint::from(1_u8) << M) - 1_u8;
-                BitVec::<M>::from((long >> S) & mask)
+                BitVec::<M>::from_long((long >> S) & mask)
             }
         }
     }
@@ -111,42 +111,32 @@ impl<const N: usize> SignalValue for BitVec<N> {}
 impl<const N: usize> IsPacked for BitVec<N> {
     #[inline(always)]
     fn zero() -> Self {
-        Self::from(0_u8)
-    }
-}
-
-impl<const N: usize> From<BigUint> for BitVec<N> {
-    #[inline(always)]
-    fn from(val: BigUint) -> Self {
-        Self::new_from_biguint(val)
+        Self::cast_from(0_u8)
     }
 }
 
 impl<const N: usize, const M: usize> CastFrom<BitVec<M>> for BitVec<N> {
     fn cast_from(from: BitVec<M>) -> BitVec<N> {
         match from {
-            BitVec::<M>::Short(short) => BitVec::<N>::from(short),
-            BitVec::<M>::Long(long) => BitVec::<N>::from(long),
+            BitVec::<M>::Short(short) => BitVec::<N>::from_short(short),
+            BitVec::<M>::Long(long) => BitVec::<N>::from_long(long),
         }
     }
 }
 
 macro_rules! impl_from {
-    ($( $prim:ty => $prim_bits:literal ),+) => {
+    ($( $prim:ty ),+) => {
         $(
-            impl<const N: usize> From<$prim> for BitVec<N> {
+            impl<const N: usize> CastFrom<$prim> for BitVec<N> {
                 #[inline(always)]
-                fn from(val: $prim) -> Self {
-                    Self::new_from_u128(val as u128)
+                fn cast_from(val: $prim) -> Self {
+                    Self::from_short(val as u128)
                 }
             }
 
-            impl<const N: usize> From<BitVec<N>> for $prim
-            where
-                Assert<{ N <= $prim_bits }>: IsTrue
-            {
+            impl<const N: usize> CastFrom<BitVec<N>> for $prim {
                 #[inline(always)]
-                fn from(val: BitVec<N>) -> Self {
+                fn cast_from(val: BitVec<N>) -> Self {
                     match val {
                         BitVec::Short(short) => short as $prim,
                         BitVec::Long(_) => unreachable!()
@@ -158,14 +148,7 @@ macro_rules! impl_from {
     };
 }
 
-impl_from!(
-    u8 => 8,
-    u16 => 16,
-    u32 => 32,
-    u64 => 64,
-    u128 => 128,
-    usize => 64
-);
+impl_from!(u8, u16, u32, u64, u128, usize);
 
 impl<const N: usize> Display for BitVec<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -202,8 +185,12 @@ macro_rules! impl_op {
 
             fn $method(self, rhs: Self) -> Self::Output {
                 match (self, rhs) {
-                    (Self::Short(lhs), Self::Short(rhs)) => lhs.$method(rhs).into(),
-                    (Self::Long(lhs), Self::Long(rhs)) => lhs.$method(rhs).into(),
+                    (Self::Short(lhs), Self::Short(rhs)) => {
+                        Self::from_short(lhs.$method(rhs))
+                    }
+                    (Self::Long(lhs), Self::Long(rhs)) => {
+                        Self::from_long(lhs.$method(rhs))
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -215,8 +202,12 @@ macro_rules! impl_op {
 
             fn $method(self, rhs: Self) -> Self::Output {
                 match (self, rhs) {
-                    (Self::Short(lhs), Self::Short(rhs)) => lhs.$spec_method(rhs).into(),
-                    (Self::Long(lhs), Self::Long(rhs)) => lhs.$method(rhs).into(),
+                    (Self::Short(lhs), Self::Short(rhs)) => {
+                        Self::from_short(lhs.$spec_method(rhs))
+                    }
+                    (Self::Long(lhs), Self::Long(rhs)) => {
+                        Self::from_long(lhs.$method(rhs))
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -231,7 +222,7 @@ macro_rules! impl_ops_for_prim {
                 type Output = BitVec<N>;
 
                 fn $method(self, rhs: $prim) -> Self::Output {
-                    self.$method(BitVec::<N>::from(rhs))
+                    self.$method(BitVec::<N>::cast_from(rhs))
                 }
             }
 
@@ -239,7 +230,7 @@ macro_rules! impl_ops_for_prim {
                 type Output = BitVec<N>;
 
                 fn $method(self, rhs: BitVec<N>) -> Self::Output {
-                    BitVec::<N>::from(self).$method(rhs)
+                    BitVec::<N>::cast_from(self).$method(rhs)
                 }
             }
 
@@ -276,8 +267,8 @@ macro_rules! impl_shift_ops {
 
                 fn shl(self, rhs: $prim) -> Self::Output {
                     match self {
-                        Self::Short(short) => short.shl(rhs).into(),
-                        Self::Long(long) => long.shl(rhs).into(),
+                        Self::Short(short) => Self::from_short(short.shl(rhs)),
+                        Self::Long(long) => Self::from_long(long.shl(rhs)),
                     }
                 }
             }
@@ -287,8 +278,8 @@ macro_rules! impl_shift_ops {
 
                 fn shr(self, rhs: $prim) -> Self::Output {
                     match self {
-                        Self::Short(short) => short.shr(rhs).into(),
-                        Self::Long(long) => long.shr(rhs).into(),
+                        Self::Short(short) => Self::from_short(short.shr(rhs)),
+                        Self::Long(long) => Self::from_long(long.shr(rhs)),
                     }
                 }
             }
@@ -303,14 +294,13 @@ impl<const N: usize> Not for BitVec<N> {
 
     fn not(self) -> Self::Output {
         match self {
-            Self::Short(short) => short.not().into(),
-            Self::Long(long) => BigUint::from_slice(
+            Self::Short(short) => Self::from_short(short.not()),
+            Self::Long(long) => Self::from_long(BigUint::from_slice(
                 long.iter_u32_digits()
                     .map(|digit| !digit)
                     .collect::<Vec<u32>>()
                     .as_slice(),
-            )
-            .into(),
+            )),
         }
     }
 }

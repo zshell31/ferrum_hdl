@@ -1,14 +1,15 @@
 use fhdl_netlist::group::ItemId;
 use rustc_hir::Expr;
 
-use super::EvaluateExpr;
+use super::{Blackbox, EvaluateExpr};
 use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
 pub struct UnsignedIndex;
 
 impl<'tcx> EvaluateExpr<'tcx> for UnsignedIndex {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

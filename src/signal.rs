@@ -12,6 +12,7 @@ use fhdl_macros::{blackbox, blackbox_ty};
 
 use crate::{
     bit::Bit,
+    cast::{Cast, CastFrom},
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
     simulation::{SimCtx, Simulate},
@@ -113,7 +114,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[blackbox(SignalEq)]
-    pub fn eq<U: SignalValue>(self, other: Signal<D, U>) -> Signal<D, bool>
+    pub fn eq<U: SignalValue>(self, other: impl Into<Signal<D, U>>) -> Signal<D, bool>
     where
         T: PartialEq<U>,
     {
@@ -148,12 +149,22 @@ impl<D: ClockDomain> Signal<D, Bit> {
 
     #[blackbox(SignalAnd)]
     pub fn and(self, other: impl Into<Self>) -> Self {
-        self.apply2(other, |this, other| Bit::from(this.into() && other.into()))
+        self.apply2(other, |this, other| {
+            Bit::cast_from(this.cast() && other.cast())
+        })
     }
 
     #[blackbox(SignalOr)]
     pub fn or(self, other: impl Into<Self>) -> Self {
-        self.apply2(other, |this, other| Bit::from(this.into() || other.into()))
+        self.apply2(other, |this, other| {
+            Bit::cast_from(this.cast() || other.cast())
+        })
+    }
+}
+
+impl<T: SignalValue, D: ClockDomain> From<T> for Signal<D, T> {
+    fn from(value: T) -> Self {
+        Self::lift(value)
     }
 }
 
@@ -467,7 +478,7 @@ mod tests {
     fn test_iter() {
         let s = [0_u8, 4, 3, 1, 2]
             .into_iter()
-            .map(Unsigned::<8>::from)
+            .map(Unsigned::<8>::cast_from)
             .into_signal::<TestSystem4>();
 
         assert_eq!(s.simulate().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
@@ -477,7 +488,7 @@ mod tests {
     fn test_reg() {
         let clk = Clock::<TestSystem4>::default();
         let rst = Reset::reset();
-        let r = reg::<TestSystem4, Unsigned<3>>(clk, rst, 0_u8.into(), |val| val + 1_u8);
+        let r = reg::<TestSystem4, Unsigned<3>>(clk, rst, 0_u8.cast(), |val| val + 1_u8);
 
         assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7

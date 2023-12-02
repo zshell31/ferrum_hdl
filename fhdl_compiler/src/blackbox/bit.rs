@@ -1,7 +1,7 @@
 use fhdl_netlist::{group::ItemId, node::Const, sig_ty::NodeTy};
 use rustc_hir::Expr;
 
-use super::EvaluateExpr;
+use super::{Blackbox, EvaluateExpr};
 use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub struct BitVal(pub bool);
@@ -33,8 +33,9 @@ impl BitVal {
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for BitVal {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

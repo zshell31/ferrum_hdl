@@ -13,7 +13,14 @@ pub trait BitSize: Sized {
 }
 
 pub trait IsPacked:
-    Sized + Clone + BitAnd + BitOr + Shl<usize> + Shr<usize> + CastFrom<Self> + From<usize>
+    Sized
+    + Clone
+    + BitAnd
+    + BitOr
+    + Shl<usize>
+    + Shr<usize>
+    + CastFrom<Self>
+    + CastFrom<usize>
 {
     fn zero() -> Self;
 }
@@ -73,7 +80,7 @@ mod tests {
 
     #[test]
     fn repack() {
-        let u: Unsigned<6> = 0b011011_u8.into();
+        let u: Unsigned<6> = 0b011011_u8.cast();
         assert_eq!(
             u.clone().repack::<Array<3, Unsigned<2>>>(),
             [0b01_u8, 0b10, 0b11].cast::<Array<3, Unsigned<2>>>()

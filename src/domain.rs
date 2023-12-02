@@ -3,11 +3,25 @@ use std::marker::PhantomData;
 use derive_where::derive_where;
 use fhdl_macros::blackbox_ty;
 
-pub const PICOSECONDS: usize = 1_000_000_000_000;
+pub const SECOND: usize = 1_000_000_000_000;
+pub const MILLISECOND: usize = 1_000_000_000;
+pub const MICROSECOND: usize = 1_000_000;
+pub const NANOSECOND: usize = 1_000;
+pub const PICOSECOND: usize = 1;
+
+pub const fn hz_to_period(freq: usize) -> usize {
+    SECOND / freq
+}
+
+pub const fn clk_divider<D: ClockDomain>(ps: usize) -> usize {
+    ps / D::PERIOD
+}
 
 pub trait ClockDomain: 'static {
+    /// In hertz
     const FREQ: usize;
-    const PERIOD: usize = PICOSECONDS / Self::FREQ;
+    /// In picoseconds
+    const PERIOD: usize = hz_to_period(Self::FREQ);
 }
 
 pub struct System;

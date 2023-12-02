@@ -19,26 +19,36 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    pub fn combine_outputs(&mut self, node_id: NodeId) -> ItemId {
-        let outputs_len = self.net_list[node_id].outputs_len();
+    pub fn combine_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
+        let mut outputs = self.net_list[node_id]
+            .node_out_ids()
+            .collect::<SmallVec<[_; 8]>>()
+            .into_iter();
 
-        if outputs_len > 1 {
-            // TODO: refactor
-            let outputs = self.net_list[node_id]
-                .outputs()
-                .map(|out| (out.ty, out.node_out_id().into()))
-                .collect::<SmallVec<[_; 8]>>();
+        let res = self.combine_outputs_(&mut outputs, sig_ty);
+        assert!(outputs.next().is_none());
+        res
+    }
 
-            let ty = self
-                .make_tuple_ty(outputs.iter(), |_, (ty, _)| {
-                    Ok(SignalTy::new(None, (*ty).into()))
+    fn combine_outputs_<I: Iterator<Item = NodeOutId>>(
+        &mut self,
+        outputs: &mut I,
+        sig_ty: SignalTy,
+    ) -> ItemId {
+        match sig_ty.kind {
+            SignalTyKind::Node(_) | SignalTyKind::Enum(_) => {
+                outputs.next().unwrap().into()
+            }
+            SignalTyKind::Array(ty) => self
+                .make_array_group(ty, ty.tys(), |generator, sig_ty| {
+                    Ok(generator.combine_outputs_(outputs, sig_ty))
                 })
-                .unwrap();
-
-            self.make_struct_group(ty, outputs, |_, (_, output)| Ok(output))
-                .unwrap()
-        } else {
-            self.net_list[node_id].only_one_out().node_out_id().into()
+                .unwrap(),
+            SignalTyKind::Struct(ty) => self
+                .make_struct_group(ty, ty.tys(), |generator, sig_ty| {
+                    Ok(generator.combine_outputs_(outputs, sig_ty.inner))
+                })
+                .unwrap(),
         }
     }
 

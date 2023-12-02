@@ -39,7 +39,7 @@ where
 
     fn unpack(bitvec: Self::Packed) -> Self {
         let width = T::BITS;
-        let mask: <T as BitPack>::Packed = ((1_usize << width) - 1_usize).into();
+        let mask: <T as BitPack>::Packed = ((1_usize << width) - 1_usize).cast();
         let mut offset = (N - 1) * width;
 
         let vec = (0 .. N)
@@ -239,12 +239,12 @@ mod tests {
         let s: Array<3, Array<2, Bit>> = [[L, L], [H, H], [L, H]];
 
         assert_eq!(<Array<3, Array<2, Bit>> as BitSize>::BITS, 6);
-        assert_eq!(s.pack(), BitVec::<6>::from(0b001101_u8));
+        assert_eq!(s.pack(), BitVec::<6>::cast_from(0b001101_u8));
     }
 
     #[test]
     fn unpack() {
-        let b: BitVec<6> = BitVec::from(0b001101_u8);
+        let b: BitVec<6> = BitVec::cast_from(0b001101_u8);
         let s = Array::<3, Array<2, Bit>>::unpack(b);
 
         assert_eq!(s, [[L, L], [H, H], [L, H]]);

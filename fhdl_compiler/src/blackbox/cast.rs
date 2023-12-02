@@ -2,43 +2,224 @@ use std::iter;
 
 use ferrum_hdl::{
     bit::Bit,
+    cast::CastFrom,
     unsigned::{u, Unsigned},
 };
 use fhdl_netlist::{
     group::ItemId,
     node::{Splitter, ZeroExtend},
-    sig_ty::{NodeTy, SignalTy, SignalTyKind},
+    sig_ty::{ArrayTy, NodeTy, SignalTy, SignalTyKind},
 };
-use rustc_hir::Expr;
+use rustc_hir::{Expr, HirId};
+use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::Span;
 
-use super::EvaluateExpr;
+use super::{Blackbox, EvaluateExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    generator::Generator,
+    generator::{expr::ExprOrItemId, Generator, TraitKind},
     utils,
 };
 
-pub struct Cast;
-
-impl<'tcx> EvaluateExpr<'tcx> for Cast {
-    fn evaluate_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        StdConversion { from: false }.evaluate_expr(generator, expr, ctx)
-    }
-}
-
 #[allow(dead_code)]
-pub struct StdConversion {
+pub struct Conversion {
     pub from: bool,
 }
 
-impl StdConversion {
+impl Conversion {
+    pub fn new(from: bool) -> Self {
+        Self { from }
+    }
+}
+
+impl Conversion {
+    pub fn convert_as_prim_ty(
+        from: ItemId,
+        to_ty: SignalTy,
+        generator: &mut Generator<'_>,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let from_ty = generator.item_ty(from);
+        if from_ty.kind == to_ty.kind {
+            return Ok(from);
+        }
+
+        match (from_ty.kind, to_ty.kind) {
+            (SignalTyKind::Node(NodeTy::Bool), SignalTyKind::Node(NodeTy::Bit)) => {
+                assert_convert::<bool, Bit>();
+                Ok(Self::bool_to_bit(from, generator))
+            }
+            (SignalTyKind::Node(NodeTy::Bit), SignalTyKind::Node(NodeTy::Bool)) => {
+                assert_convert::<Bit, bool>();
+                Ok(Self::bit_to_bool(from, generator))
+            }
+            (SignalTyKind::Node(from_ty), SignalTyKind::Node(to_ty))
+                if from_ty.is_unsigned() && to_ty.is_unsigned() =>
+            {
+                Ok(Self::to_unsigned(from, to_ty, generator))
+            }
+            _ => {
+                println!("from {:?} => to {:?}", from_ty, to_ty);
+
+                Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
+            }
+        }
+    }
+
+    pub fn convert<'tcx>(
+        &self,
+        blackbox: &Blackbox<'tcx>,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+        from: ItemId,
+        to_ty: SignalTy,
+    ) -> Result<ItemId, Error> {
+        let from_ty = generator.item_ty(from);
+        if from_ty.kind == to_ty.kind {
+            return Ok(from);
+        }
+
+        match (from_ty.kind, to_ty.kind) {
+            (
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Struct(struct_ty),
+            ) if to_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
+                assert_convert::<Unsigned<1>, u<1>>();
+                generator
+                    .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
+            }
+            (
+                SignalTyKind::Struct(_),
+                SignalTyKind::Node(to_ty @ NodeTy::Unsigned(_)),
+            ) if from_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
+                assert_convert::<u<1>, Unsigned<1>>();
+
+                let from = from.group().item_ids()[0];
+                Ok(Self::to_unsigned(from, to_ty, generator))
+            }
+            (SignalTyKind::Array(from_ty), SignalTyKind::Array(to_ty))
+                if from_ty.count() == to_ty.count() =>
+            {
+                self.cast_array(blackbox, generator, expr, from, to_ty, ctx)
+            }
+            _ => Self::convert_as_prim_ty(from, to_ty, generator, expr.span),
+        }
+    }
+
+    pub fn eval_cast_as_closure<'tcx>(
+        &self,
+        generator: &mut Generator<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+        generic_args: GenericArgsRef<'tcx>,
+        from: ItemId,
+        span: Span,
+    ) -> Result<Option<ItemId>, Error> {
+        self.try_local_cast_(generator, ctx, generic_args, from.into(), span)
+    }
+
+    fn cast_array<'tcx>(
+        &self,
+        blackbox: &Blackbox<'tcx>,
+        generator: &mut Generator<'tcx>,
+        expr: &Expr<'tcx>,
+        from: ItemId,
+        to_ty: ArrayTy,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let fn_item = utils::expected_call(expr)?.fn_item;
+        let fn_did = blackbox.key.def_id().unwrap();
+        let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
+        let generic_args =
+            generator
+                .tcx
+                .mk_args_from_iter(generic_args.iter().map(|generic_arg| {
+                    match generic_arg.as_type() {
+                        Some(ty) if ty.is_array() => match ty.kind() {
+                            TyKind::Array(ty, _) => (*ty).into(),
+                            _ => unreachable!(),
+                        },
+                        _ => generic_arg,
+                    }
+                }));
+
+        // TODO: use loop
+        let from = from.group().item_ids();
+        match generator
+            .find_trait_method(TraitKind::From)
+            .and_then(|fn_from_did| {
+                let generic_args = generator
+                    .maybe_swap_generic_args_for_conversion(self.from, generic_args);
+
+                generator.find_local_impl_id(fn_from_did, generic_args)
+            }) {
+            Some((impl_id, generic_args)) => {
+                generator.make_array_group(to_ty, from, |generator, from| {
+                    generator.eval_impl_fn_call(
+                        impl_id,
+                        generic_args,
+                        Some((*from).into()),
+                        iter::empty(),
+                        ctx,
+                        expr.span,
+                    )
+                })
+            }
+            None => {
+                let to_item_ty = *to_ty.item_ty();
+                generator.make_array_group(to_ty, from, |generator, from| {
+                    self.convert(blackbox, generator, expr, ctx, *from, to_item_ty)
+                })
+            }
+        }
+    }
+
+    fn try_local_cast<'tcx>(
+        &self,
+        blackbox: &Blackbox<'tcx>,
+        generator: &mut Generator<'tcx>,
+        fn_item: HirId,
+        from: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<Option<ItemId>, Error> {
+        let fn_did = blackbox.key.def_id().unwrap();
+        let generic_args = generator.extract_generic_args(fn_did, fn_item, ctx)?;
+
+        self.try_local_cast_(generator, ctx, generic_args, from.into(), span)
+    }
+
+    fn try_local_cast_<'tcx>(
+        &self,
+        generator: &mut Generator<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+        generic_args: GenericArgsRef<'tcx>,
+        from: ExprOrItemId<'tcx>,
+        span: Span,
+    ) -> Result<Option<ItemId>, Error> {
+        generator
+            .find_trait_method(TraitKind::From)
+            .and_then(|fn_from_did| {
+                let generic_args = generator
+                    .maybe_swap_generic_args_for_conversion(self.from, generic_args);
+
+                generator.find_local_impl_id(fn_from_did, generic_args).map(
+                    |(impl_id, generic_args)| {
+                        generator.eval_impl_fn_call(
+                            impl_id,
+                            generic_args,
+                            Some(from),
+                            iter::empty(),
+                            ctx,
+                            span,
+                        )
+                    },
+                )
+            })
+            .transpose()
+    }
+
     fn bool_to_bit(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
         generator.net_list[from.node_out_id()].ty = NodeTy::Bit;
         from
@@ -49,37 +230,7 @@ impl StdConversion {
         from
     }
 
-    #[inline(always)]
-    fn to_u8(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::U8, generator)
-    }
-
-    #[inline(always)]
-    fn to_u16(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::U16, generator)
-    }
-
-    #[inline(always)]
-    fn to_u32(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::U32, generator)
-    }
-
-    #[inline(always)]
-    fn to_u64(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::U64, generator)
-    }
-
-    #[inline(always)]
-    fn to_u128(from: ItemId, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::U128, generator)
-    }
-
-    #[inline(always)]
-    fn to_unsigned(from: ItemId, width: u128, generator: &mut Generator<'_>) -> ItemId {
-        Self::to_unsigned_(from, NodeTy::Unsigned(width), generator)
-    }
-
-    fn to_unsigned_(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
+    fn to_unsigned(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
         let node_out_id = from.node_out_id();
         let module_id = node_out_id.node_id().module_id();
 
@@ -98,155 +249,33 @@ impl StdConversion {
                 .into()
         }
     }
-
-    pub fn convert(
-        from_ty: SignalTy,
-        to_ty: SignalTy,
-        from: ItemId,
-        generator: &mut Generator<'_>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        if from_ty.kind == to_ty.kind {
-            return Ok(from);
-        }
-
-        match (from_ty.kind, to_ty.kind) {
-            (SignalTyKind::Node(NodeTy::Bool), SignalTyKind::Node(NodeTy::Bit)) => {
-                assert_convert::<bool, Bit>();
-                Ok(Self::bool_to_bit(from, generator))
-            }
-            (SignalTyKind::Node(NodeTy::Bit), SignalTyKind::Node(NodeTy::Bool)) => {
-                assert_convert::<Bit, bool>();
-                Ok(Self::bit_to_bool(from, generator))
-            }
-            (SignalTyKind::Node(NodeTy::U8), SignalTyKind::Node(NodeTy::Unsigned(n))) => {
-                assert_convert::<u8, Unsigned<1>>();
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (SignalTyKind::Node(NodeTy::Unsigned(_)), SignalTyKind::Node(NodeTy::U8)) => {
-                assert_convert::<Unsigned<1>, u8>();
-                Ok(Self::to_u8(from, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::U16),
-                SignalTyKind::Node(NodeTy::Unsigned(n)),
-            ) => {
-                assert_convert::<u16, Unsigned<1>>();
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::Unsigned(_)),
-                SignalTyKind::Node(NodeTy::U16),
-            ) => {
-                assert_convert::<Unsigned<1>, u16>();
-                Ok(Self::to_u16(from, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::U32),
-                SignalTyKind::Node(NodeTy::Unsigned(n)),
-            ) => {
-                assert_convert::<u32, Unsigned<1>>();
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::Unsigned(_)),
-                SignalTyKind::Node(NodeTy::U32),
-            ) => {
-                assert_convert::<Unsigned<1>, u32>();
-                Ok(Self::to_u32(from, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::U64),
-                SignalTyKind::Node(NodeTy::Unsigned(n)),
-            ) => {
-                assert_convert::<u64, Unsigned<1>>();
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::Unsigned(_)),
-                SignalTyKind::Node(NodeTy::U64),
-            ) => {
-                assert_convert::<Unsigned<1>, u64>();
-                Ok(Self::to_u64(from, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::U128),
-                SignalTyKind::Node(NodeTy::Unsigned(n)),
-            ) => {
-                assert_convert::<u128, Unsigned<1>>();
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::Unsigned(_)),
-                SignalTyKind::Node(NodeTy::U128),
-            ) => {
-                assert_convert::<Unsigned<1>, u128>();
-                Ok(Self::to_u128(from, generator))
-            }
-            (
-                SignalTyKind::Node(NodeTy::Unsigned(_)),
-                SignalTyKind::Struct(struct_ty),
-            ) if to_ty.is_unsigned_short() && from_ty.width() == to_ty.width() => {
-                assert_convert::<Unsigned<1>, u<1>>();
-                generator
-                    .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
-            }
-            (SignalTyKind::Struct(_), SignalTyKind::Node(NodeTy::Unsigned(n)))
-                if from_ty.is_unsigned_short() && from_ty.width() == to_ty.width() =>
-            {
-                assert_convert::<u<1>, Unsigned<1>>();
-
-                let from = from.group().item_ids()[0];
-                Ok(Self::to_unsigned(from, n, generator))
-            }
-            (SignalTyKind::Array(from_ty), SignalTyKind::Array(to_ty))
-                if from_ty.count() == to_ty.count() =>
-            {
-                let ty = to_ty;
-                let from_ty = *from_ty.item_ty();
-                let to_ty = *to_ty.item_ty();
-                let from = from.group();
-
-                generator.make_array_group(ty, from.item_ids(), |generator, item_id| {
-                    Self::convert(from_ty, to_ty, *item_id, generator, span)
-                })
-            }
-            _ => {
-                println!("from {:?} => to {:?}", from_ty, to_ty);
-
-                Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
-            }
-        }
-    }
 }
 
-fn assert_convert<F, T: From<F>>() {}
+fn assert_convert<F, T: CastFrom<F>>() {}
 
-impl<'tcx> EvaluateExpr<'tcx> for StdConversion {
-    fn evaluate_expr(
+impl<'tcx> EvaluateExpr<'tcx> for Conversion {
+    fn eval_expr(
         &self,
+        blackbox: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        utils::args!(expr as from);
+        utils::args!(expr as fn_item with from);
 
-        let span = expr.span;
+        match self.try_local_cast(blackbox, generator, fn_item, from, ctx, expr.span)? {
+            Some(item_id) => Ok(item_id),
+            None => {
+                let to_ty = generator.find_sig_ty(
+                    generator.node_type(expr.hir_id, ctx),
+                    ctx.generic_args,
+                    expr.span,
+                )?;
 
-        let from_ty = generator.find_sig_ty(
-            generator.node_type(from.hir_id, ctx),
-            ctx.generic_args,
-            span,
-        )?;
+                let from = generator.eval_expr(from, ctx)?;
 
-        let to_ty = generator.find_sig_ty(
-            generator.node_type(expr.hir_id, ctx),
-            ctx.generic_args,
-            span,
-        )?;
-
-        let from = generator.evaluate_expr(from, ctx)?;
-
-        Self::convert(from_ty, to_ty, from, generator, expr.span)
+                self.convert(blackbox, generator, expr, ctx, from, to_ty)
+            }
+        }
     }
 }

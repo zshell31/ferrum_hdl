@@ -3,7 +3,7 @@ use std::{
     io,
 };
 
-use fhdl_blackbox::Blackbox;
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::sig_ty::NodeTy;
 use rustc_span::{symbol::Ident, Span};
 
@@ -89,6 +89,8 @@ pub enum SpanErrorKind {
     UnsupportedGuard,
     #[error("invalid pattern")]
     InvalidPattern,
+    #[error("cannot extract generic args")]
+    CannotExtractGenericArgs,
 
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,
@@ -99,5 +101,5 @@ pub enum SpanErrorKind {
     #[error("not synthesizable input parameter")]
     NotSynthInput,
     #[error("not synthesizable expression for blackbox '{0:?}'")]
-    NotSynthBlackboxExpr(Blackbox),
+    NotSynthBlackboxExpr(BlackboxKind),
 }

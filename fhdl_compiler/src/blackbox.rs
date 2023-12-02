@@ -9,35 +9,46 @@ pub mod lit;
 pub mod signal;
 pub mod std;
 
-use fhdl_blackbox::Blackbox;
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{group::ItemId, node::BinOp};
 use rustc_hir::Expr;
 
-use crate::{error::Error, eval_context::EvalContext, generator::Generator};
+use crate::{
+    error::Error,
+    eval_context::EvalContext,
+    generator::{ty_or_def_id::TyOrDefIdWithGen, Generator},
+};
 
 pub trait EvaluateExpr<'tcx> {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        blackbox: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error>;
 }
 
-macro_rules! evaluate_expr {
+#[derive(Debug)]
+pub struct Blackbox<'tcx> {
+    pub kind: BlackboxKind,
+    pub key: TyOrDefIdWithGen<'tcx>,
+}
+
+macro_rules! eval_expr {
     (
         $( $blackbox_kind:ident => $eval:expr ),+
     ) => {
-        impl<'tcx> EvaluateExpr<'tcx> for Blackbox {
-            fn evaluate_expr(
+        impl<'tcx> Blackbox<'tcx> {
+            pub fn eval_expr(
                 &self,
                 generator: &mut Generator<'tcx>,
                 expr: &'tcx Expr<'tcx>,
                 ctx: &mut EvalContext<'tcx>
             ) -> Result<ItemId, Error> {
-                match self {
+                match self.kind {
                     $(
-                        Self::$blackbox_kind => $eval.evaluate_expr(generator, expr, ctx),
+                        BlackboxKind::$blackbox_kind => $eval.eval_expr(self, generator, expr, ctx),
                     )+
                 }
             }
@@ -45,7 +56,7 @@ macro_rules! evaluate_expr {
     };
 }
 
-evaluate_expr!(
+eval_expr!(
     ArrayReverse => array::ArrayReverse,
     ArrayMap => array::ArrayMap,
 
@@ -63,9 +74,8 @@ evaluate_expr!(
     Bundle => bundle::Bundle,
     Unbundle => bundle::Unbundle,
 
-    Cast => cast::Cast,
-    StdFrom => cast::StdConversion { from: true },
-    StdInto => cast::StdConversion { from: false },
+    CastFrom => cast::Conversion { from: true },
+    Cast => cast::Conversion { from: true },
 
     SignalAndThen => signal::SignalAndThen,
     SignalApply2 => signal::SignalApply2,

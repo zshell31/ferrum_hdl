@@ -96,16 +96,16 @@ mod tests {
     #[test]
     fn pack() {
         let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
-            (12_u8.into(), false.into(), [1_u8.into(), 3_u8.into()]);
+            (12_u8.cast(), false.cast(), [1_u8.cast(), 3_u8.cast()]);
 
-        assert_eq!(s.pack(), 0b110000111_u64.into());
+        assert_eq!(s.pack(), 0b110000111_u64.cast());
     }
 
     #[test]
     fn unpack() {
         let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
-            BitPack::unpack(0b110000111_u64.into());
+            BitPack::unpack(0b110000111_u64.cast());
 
-        assert_eq!(s, (12_u8.into(), false.into(), [1_u8.into(), 3_u8.into()]));
+        assert_eq!(s, (12_u8.cast(), false.cast(), [1_u8.cast(), 3_u8.cast()]));
     }
 }

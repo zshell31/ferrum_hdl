@@ -1,7 +1,7 @@
 use strum::{Display, EnumString};
 
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
-pub enum Blackbox {
+pub enum BlackboxKind {
     ArrayMap,
     ArrayReverse,
 
@@ -19,6 +19,7 @@ pub enum Blackbox {
     Bundle,
     Unbundle,
 
+    CastFrom,
     Cast,
 
     SignalAnd,
@@ -37,15 +38,13 @@ pub enum Blackbox {
     UnsignedIndex,
 
     StdClone,
-    StdFrom,
-    StdInto,
 }
 
-impl Blackbox {
-    pub fn is_std_conversion(&self) -> Option<bool> {
+impl BlackboxKind {
+    pub fn is_cast(&self) -> Option<bool> {
         match self {
-            Self::StdFrom => Some(true),
-            Self::StdInto => Some(false),
+            Self::CastFrom => Some(true),
+            Self::Cast => Some(false),
             _ => None,
         }
     }

@@ -86,19 +86,33 @@ impl IndexMut<NodeId> for NetList {
     }
 }
 
+impl Index<NodeOutId> for Vec<Node> {
+    type Output = NodeOutput;
+
+    fn index(&self, index: NodeOutId) -> &Self::Output {
+        let node = &self[index.node_id()];
+        node.output_by_ind(index.out_id()).into_inner()
+    }
+}
+
+impl IndexMut<NodeOutId> for Vec<Node> {
+    fn index_mut(&mut self, index: NodeOutId) -> &mut Self::Output {
+        let node = &mut self[index.node_id()];
+        node.output_by_ind_mut(index.out_id()).into_inner()
+    }
+}
+
 impl Index<NodeOutId> for NetList {
     type Output = NodeOutput;
 
     fn index(&self, index: NodeOutId) -> &Self::Output {
-        let node = &self.nodes[index.node_id()];
-        node.output_by_ind(index.out_id()).into_inner()
+        &self.nodes[index]
     }
 }
 
 impl IndexMut<NodeOutId> for NetList {
     fn index_mut(&mut self, index: NodeOutId) -> &mut Self::Output {
-        let node = &mut self.nodes[index.node_id()];
-        node.output_by_ind_mut(index.out_id()).into_inner()
+        &mut self.nodes[index]
     }
 }
 
@@ -144,14 +158,17 @@ impl NetList {
         }
     }
 
+    pub fn cursor(&self, mod_id: ModuleId, node_id: Option<NodeId>) -> NodeCursor {
+        NodeCursor { mod_id, node_id }
+    }
+
     pub fn next(&self, cursor: &mut NodeCursor) -> Option<NodeId> {
         match cursor.node_id {
             None => {
                 cursor.node_id = self.modules[cursor.mod_id].head();
             }
             Some(node) => {
-                let next = self[node].next();
-                cursor.node_id = next;
+                cursor.node_id = self[node].next();
             }
         }
 
@@ -206,7 +223,7 @@ impl NetList {
         self.nodes[node_id].only_one_out().node_out_id()
     }
 
-    pub fn insert<N: IsNode>(
+    fn insert<N: IsNode>(
         &mut self,
         mod_id: ModuleId,
         prev_node_id: Option<NodeId>,
@@ -245,8 +262,10 @@ impl NetList {
     fn add_links(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
         for input in node.inputs() {
-            let links = self.links.entry(*input).or_default();
-            links.insert(input.node_in_id());
+            if node_id.module_id() == input.node_id().module_id() {
+                let links = self.links.entry(*input).or_default();
+                links.insert(input.node_in_id());
+            }
         }
     }
 
@@ -289,8 +308,10 @@ impl NetList {
             .iter()
             .flat_map(|links| links.iter())
         {
-            **self.nodes[link.node_id()].input_by_ind_mut(link.out_id()) = new_input;
-            self.links.get_mut(&new_input).unwrap().insert(*link);
+            if link.node_id().module_id() == new_input.node_id().module_id() {
+                **self.nodes[link.node_id()].input_by_ind_mut(link.in_id()) = new_input;
+                self.links.get_mut(&new_input).unwrap().insert(*link);
+            }
         }
 
         self.modules[input.node_id().module_id()].replace_output(input, new_input);
@@ -368,7 +389,7 @@ impl NetList {
         let mut prev_id = self.nodes[mod_inst_node_id].prev();
         let res = prev_id;
 
-        #[derive(Clone, Copy)]
+        #[derive(Debug, Clone, Copy)]
         enum Item {
             NodeId(NodeId),
             NodeOutId(NodeOutId),
@@ -394,13 +415,23 @@ impl NetList {
                 continue;
             }
 
-            let mut new_node = self.nodes[node_id].kind.deref().clone();
-            for (_, input) in InOut::<NodeOutId>::items_mut(new_node.inputs_mut()) {
-                *input = get_node_out_id(&map, *input);
-            }
+            let new_node = self.nodes[node_id].kind.deref().clone();
             let new_node_id = self.insert(target, prev_id, new_node);
             prev_id = Some(new_node_id);
             map.insert(node_id, Item::NodeId(new_node_id));
+        }
+
+        let mut cursor = self.cursor(target, res);
+        while let Some(node_id) = self.next(&mut cursor) {
+            if node_id == mod_inst_node_id {
+                break;
+            }
+            let node = &mut self.nodes[node_id];
+            for mut input in node.inputs_mut() {
+                **input = get_node_out_id(&map, **input);
+            }
+
+            self.add_links(node_id);
         }
 
         let len = self.nodes[mod_inst_node_id].outputs_len();
@@ -409,6 +440,9 @@ impl NetList {
             let new_input = get_node_out_id(&map, input);
 
             self.reconnect_input_by_ind(mod_inst_node_id, ind, new_input);
+
+            let sym = self.nodes[mod_inst_node_id].output_by_ind(ind).sym;
+            self.nodes[new_input].sym = sym;
         }
 
         self.remove(mod_inst_node_id);
@@ -419,11 +453,13 @@ impl NetList {
     pub fn set_dff_data(&mut self, node_id: NodeId, data: NodeOutId) {
         let node = &mut self.nodes[node_id];
         if let NodeKind::DFF(dff) = node.kind.as_mut() {
-            let idx = dff.set_data(data);
-            self.links
-                .entry(data)
-                .or_default()
-                .insert(NodeInId::new(node_id, idx));
+            if node_id.module_id() == data.node_id().module_id() {
+                let idx = dff.set_data(data);
+                self.links
+                    .entry(data)
+                    .or_default()
+                    .insert(NodeInId::new(node_id, idx));
+            }
         }
     }
 }

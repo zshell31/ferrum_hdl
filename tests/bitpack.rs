@@ -5,11 +5,14 @@ use ferrum_hdl::{
     array::Array,
     bit::Bit,
     bitpack::{BitPack, BitSize},
+    cast::Cast,
     signal::SignalValue,
     unsigned::Unsigned,
 };
 
 mod test_zs_struct {
+
+    use ferrum_hdl::cast::Cast;
 
     use super::*;
 
@@ -25,18 +28,20 @@ mod test_zs_struct {
     fn pack() {
         let s = Test {};
 
-        assert_eq!(s.pack(), 0_u64.into());
+        assert_eq!(s.pack(), 0_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test = BitPack::unpack(0_u64.into());
+        let s: Test = BitPack::unpack(0_u64.cast());
 
         assert_eq!(s, Test {});
     }
 }
 
 mod test_struct {
+    use ferrum_hdl::cast::Cast;
+
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -54,27 +59,29 @@ mod test_struct {
     #[test]
     fn pack() {
         let s = Test {
-            a: 12_u8.into(),
-            b: false.into(),
-            c: [1_u8.into(), 3_u8.into()].into(),
+            a: 12_u8.cast(),
+            b: false.cast(),
+            c: [1_u8.cast::<Unsigned<2>>(), 3_u8.cast()].cast(),
         };
 
-        assert_eq!(s.pack(), 0b110000111_u64.into());
+        assert_eq!(s.pack(), 0b110000111_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test = BitPack::unpack(0b110000111_u64.into());
+        let s: Test = BitPack::unpack(0b110000111_u64.cast());
 
         assert_eq!(s, Test {
-            a: 12_u8.into(),
-            b: false.into(),
-            c: [1_u8.into(), 3_u8.into()].into(),
+            a: 12_u8.cast(),
+            b: false.cast(),
+            c: [1_u8.cast::<Unsigned<2>>(), 3_u8.cast()].cast(),
         });
     }
 }
 
 mod test_struct_with_type_param {
+    use ferrum_hdl::cast::Cast;
+
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -91,25 +98,27 @@ mod test_struct_with_type_param {
     #[test]
     fn pack() {
         let s = Test::<Unsigned<4>> {
-            a: 12u8.into(),
-            b: false.into(),
+            a: 12u8.cast(),
+            b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.into());
+        assert_eq!(s.pack(), 0b11000_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Unsigned<4>> = BitPack::unpack(0b11000_u64.into());
+        let s: Test<Unsigned<4>> = BitPack::unpack(0b11000_u64.cast());
 
         assert_eq!(s, Test {
-            a: 12_u8.into(),
-            b: false.into(),
+            a: 12_u8.cast(),
+            b: false.cast(),
         });
     }
 }
 
 mod test_struct_with_const_param {
+    use ferrum_hdl::cast::Cast;
+
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -126,25 +135,27 @@ mod test_struct_with_const_param {
     #[test]
     fn pack() {
         let s = Test::<4> {
-            a: 12u8.into(),
-            b: false.into(),
+            a: 12u8.cast(),
+            b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.into());
+        assert_eq!(s.pack(), 0b11000_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<4> = BitPack::unpack(0b11000_u64.into());
+        let s: Test<4> = BitPack::unpack(0b11000_u64.cast());
 
         assert_eq!(s, Test {
-            a: 12_u8.into(),
-            b: false.into(),
+            a: 12_u8.cast(),
+            b: false.cast(),
         });
     }
 }
 
 mod test_struct_with_type_const_param {
+    use ferrum_hdl::cast::Cast;
+
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -161,20 +172,20 @@ mod test_struct_with_type_const_param {
     #[test]
     fn pack() {
         let s = Test::<4, Bit> {
-            a: 12u8.into(),
-            b: false.into(),
+            a: 12u8.cast(),
+            b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.into());
+        assert_eq!(s.pack(), 0b11000_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<4, Bit> = BitPack::unpack(0b11000_u64.into());
+        let s: Test<4, Bit> = BitPack::unpack(0b11000_u64.cast());
 
         assert_eq!(s, Test {
-            a: 12_u8.into(),
-            b: false.into(),
+            a: 12_u8.cast(),
+            b: false.cast(),
         });
     }
 }
@@ -208,12 +219,12 @@ mod test_enum_with_1_variant {
     fn pack() {
         let s = Test::A();
 
-        assert_eq!(s.pack(), 0b0_u64.into());
+        assert_eq!(s.pack(), 0b0_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test = BitPack::unpack(0b0_u64.into());
+        let s: Test = BitPack::unpack(0b0_u64.cast());
 
         assert_eq!(s, Test::A());
     }
@@ -234,16 +245,16 @@ mod test_enum_with_1_var_and_type_param {
 
     #[test]
     fn pack() {
-        let s = Test::<Unsigned<3>>::A(5_u8.into());
+        let s = Test::<Unsigned<3>>::A(5_u8.cast());
 
-        assert_eq!(s.pack(), 0b0101_u64.into());
+        assert_eq!(s.pack(), 0b0101_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Unsigned<3>> = BitPack::unpack(0b0101_u64.into());
+        let s: Test<Unsigned<3>> = BitPack::unpack(0b0101_u64.cast());
 
-        assert_eq!(s, Test::A(5_u8.into()));
+        assert_eq!(s, Test::A(5_u8.cast()));
     }
 }
 
@@ -262,16 +273,16 @@ mod test_enum_with_1_var_and_const_param {
 
     #[test]
     fn pack() {
-        let s = Test::<3>::A(5_u8.into());
+        let s = Test::<3>::A(5_u8.cast());
 
-        assert_eq!(s.pack(), 0b0101_u64.into());
+        assert_eq!(s.pack(), 0b0101_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<3> = BitPack::unpack(0b0101_u64.into());
+        let s: Test<3> = BitPack::unpack(0b0101_u64.cast());
 
-        assert_eq!(s, Test::A(5_u8.into()));
+        assert_eq!(s, Test::A(5_u8.cast()));
     }
 }
 
@@ -291,24 +302,26 @@ mod test_enum_with_2_variants {
 
     #[test]
     fn pack() {
-        let s = Test::<3, Array<3, Bit>>::B(
-            true.into(),
-            [false.into(), true.into(), true.into()].into(),
-        );
+        let s = Test::<3, Array<3, Bit>>::B(true.cast(), [
+            false.cast(),
+            true.cast(),
+            true.cast(),
+        ]);
 
-        assert_eq!(s.pack(), 0b11011_u64.into());
+        assert_eq!(s.pack(), 0b11011_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<3, Array<3, Bit>> = BitPack::unpack(0b11011_u64.into());
+        let s: Test<3, Array<3, Bit>> = BitPack::unpack(0b11011_u64.cast());
 
         assert_eq!(
             s,
-            Test::<3, Array<3, Bit>>::B(
-                true.into(),
-                [false.into(), true.into(), true.into()].into(),
-            )
+            Test::<3, Array<3, Bit>>::B(true.cast(), [
+                false.cast(),
+                true.cast(),
+                true.cast()
+            ],)
         );
     }
 }
@@ -332,31 +345,31 @@ mod test_enum_with_3_variants {
     #[test]
     fn pack() {
         let s = Test::<3, Unsigned<3>>::C {
-            a: false.into(),
-            b: 5_u8.into(),
-            c: [true.into(), false.into(), true.into()].into(),
+            a: false.cast(),
+            b: 5_u8.cast(),
+            c: [true.cast(), false.cast(), true.cast()],
         };
 
-        assert_eq!(s.pack(), 0b100101101_u64.into());
+        assert_eq!(s.pack(), 0b100101101_u64.cast());
 
-        let s = Test::<3, Unsigned<3>>::B(true.into());
+        let s = Test::<3, Unsigned<3>>::B(true.cast());
 
-        assert_eq!(s.pack(), 0b011000000_u64.into());
+        assert_eq!(s.pack(), 0b011000000_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b100101101_u64.into());
+        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b100101101_u64.cast());
 
         assert_eq!(s, Test::<3, Unsigned<3>>::C {
-            a: false.into(),
-            b: 5_u8.into(),
-            c: [true.into(), false.into(), true.into()].into()
+            a: false.cast(),
+            b: 5_u8.cast(),
+            c: [true.cast(), false.cast(), true.cast()]
         });
 
-        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b011000000_u64.into());
+        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b011000000_u64.cast());
 
-        assert_eq!(s, Test::<3, Unsigned<3>>::B(true.into()));
+        assert_eq!(s, Test::<3, Unsigned<3>>::B(true.cast()));
     }
 }
 
@@ -392,22 +405,22 @@ mod test_nested_adts {
     fn pack() {
         let s = Test4::A(Test2 {
             b: Test1 {
-                a: [true.into(), false.into(), false.into()].into(),
+                a: [true.cast(), false.cast(), false.cast()],
             },
         });
 
-        assert_eq!(s.pack(), 0b0100_u64.into());
+        assert_eq!(s.pack(), 0b0100_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test4 = BitPack::unpack(0b0100_u64.into());
+        let s: Test4 = BitPack::unpack(0b0100_u64.cast());
 
         assert_eq!(
             s,
             Test4::A(Test2 {
                 b: Test1 {
-                    a: [true.into(), false.into(), false.into()].into(),
+                    a: [true.cast(), false.cast(), false.cast()],
                 },
             })
         );
@@ -438,19 +451,19 @@ mod test_struct_with_phantom {
     fn pack() {
         let s = Test::<Foo> {
             _marker: PhantomData,
-            a: true.into(),
+            a: true.cast(),
         };
 
-        assert_eq!(s.pack(), 0b1_u64.into());
+        assert_eq!(s.pack(), 0b1_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Foo> = BitPack::unpack(0b1_u64.into());
+        let s: Test<Foo> = BitPack::unpack(0b1_u64.cast());
 
         assert_eq!(s, Test::<Foo> {
             _marker: PhantomData,
-            a: true.into()
+            a: true.cast()
         });
     }
 }
@@ -479,12 +492,12 @@ mod test_enum_with_phantom {
     fn pack() {
         let s = Test::<Foo>::B(PhantomData);
 
-        assert_eq!(s.pack(), 0b10_u64.into());
+        assert_eq!(s.pack(), 0b10_u64.cast());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Foo> = BitPack::unpack(0b10_u64.into());
+        let s: Test<Foo> = BitPack::unpack(0b10_u64.cast());
 
         assert_eq!(s, Test::<Foo>::B(PhantomData));
     }

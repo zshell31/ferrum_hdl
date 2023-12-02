@@ -1,4 +1,4 @@
-use fhdl_blackbox::Blackbox;
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     group::ItemId,
     node::{BinOp, DFF},
@@ -6,7 +6,7 @@ use fhdl_netlist::{
 use rustc_hir::Expr;
 use rustc_span::Span;
 
-use super::EvaluateExpr;
+use super::{Blackbox, EvaluateExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -23,9 +23,9 @@ impl SignalReg {
     fn make_err(&self, span: Span) -> Error {
         SpanError::new(
             SpanErrorKind::NotSynthBlackboxExpr(if !self.has_en {
-                Blackbox::SignalReg
+                BlackboxKind::SignalReg
             } else {
-                Blackbox::SignalRegEn
+                BlackboxKind::SignalRegEn
             }),
             span,
         )
@@ -34,13 +34,14 @@ impl SignalReg {
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
-        let args = utils::expected_call(expr)?;
+        let args = utils::expected_call(expr)?.args;
 
         let ty = generator.node_type(expr.hir_id, ctx);
         let value_ty =
@@ -52,20 +53,20 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
             false => (&args[0], &args[1], None, &args[2], &args[3]),
         };
 
-        let clk = generator.evaluate_expr(clk, ctx)?.node_out_id();
+        let clk = generator.eval_expr(clk, ctx)?.node_out_id();
         let rst = generator
-            .evaluate_expr(rst, ctx)
+            .eval_expr(rst, ctx)
             .map(|item_id| item_id.node_out_id())?;
         let en = en
             .map(|en| {
                 generator
-                    .evaluate_expr(en, ctx)
+                    .eval_expr(en, ctx)
                     .map(|item_id| item_id.node_out_id())
             })
             .transpose()?;
-        let rst_val = generator.evaluate_expr(rst_val, ctx)?;
+        let rst_val = generator.eval_expr(rst_val, ctx)?;
         let rst_val = generator.to_bitvec(ctx.module_id, rst_val);
-        let prim_ty = sig_ty.maybe_to_bitvec();
+        let prim_ty = sig_ty.to_bitvec();
 
         let dff = generator.net_list.add(
             ctx.module_id,
@@ -88,7 +89,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
         let dff_out = generator.from_bitvec(ctx.module_id, dff_out, sig_ty);
 
         ctx.new_closure_inputs().push(dff_out);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
         let comb_out = generator.to_bitvec(ctx.module_id, comb);
 
         generator.net_list.set_dff_data(dff, comb_out);
@@ -100,32 +101,34 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
 pub struct SignalLift;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as arg);
 
-        generator.evaluate_expr(arg, ctx)
+        generator.eval_expr(arg, ctx)
     }
 }
 
 pub struct SignalMap;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec, comb);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
         ctx.new_closure_inputs().push(rec);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -134,17 +137,18 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
 pub struct SignalAndThen;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec, comb);
 
-        let rec = generator.evaluate_expr(rec, ctx)?;
+        let rec = generator.eval_expr(rec, ctx)?;
         ctx.new_closure_inputs().push(rec);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -153,18 +157,19 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
 pub struct SignalApply2;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as arg1, arg2, comb);
 
-        let arg1 = generator.evaluate_expr(arg1, ctx)?;
-        let arg2 = generator.evaluate_expr(arg2, ctx)?;
+        let arg1 = generator.eval_expr(arg1, ctx)?;
+        let arg2 = generator.eval_expr(arg2, ctx)?;
         ctx.new_closure_inputs().push(arg1).push(arg2);
-        let comb = generator.evaluate_expr(comb, ctx)?;
+        let comb = generator.eval_expr(comb, ctx)?;
 
         Ok(comb)
     }
@@ -173,30 +178,32 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
 pub struct SignalValue;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        generator.evaluate_expr(rec, ctx)
+        generator.eval_expr(rec, ctx)
     }
 }
 
 pub struct SignalWatch;
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 
-        generator.evaluate_expr(rec, ctx)
+        generator.eval_expr(rec, ctx)
     }
 }
 
@@ -205,8 +212,9 @@ pub struct SignalOp {
 }
 
 impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
-    fn evaluate_expr(
+    fn eval_expr(
         &self,
+        _: &Blackbox<'tcx>,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
         ctx: &mut EvalContext<'tcx>,

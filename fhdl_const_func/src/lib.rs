@@ -36,6 +36,10 @@ pub const fn mask(n: u128) -> u128 {
     }
 }
 
+pub const fn max_val(n: u128) -> u128 {
+    mask(n)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

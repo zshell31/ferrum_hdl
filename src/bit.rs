@@ -8,7 +8,7 @@ use fhdl_macros::{blackbox, blackbox_ty};
 use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
-    cast::IsPrimTy,
+    cast::{Cast, CastFrom, IsPrimTy},
     signal::SignalValue,
 };
 
@@ -38,11 +38,11 @@ impl BitPack for Bit {
     type Packed = BitVec<1>;
 
     fn pack(self) -> Self::Packed {
-        bool::from(self).pack()
+        bool::cast_from(self).pack()
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
-        bool::unpack(bitvec).into()
+        bool::unpack(bitvec).cast()
     }
 }
 
@@ -58,7 +58,7 @@ impl BitPack for bool {
             true => 1_u8,
             false => 0,
         })
-        .into()
+        .cast()
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
@@ -71,14 +71,26 @@ pub const H: Bit = Bit(true);
 #[blackbox(BitL)]
 pub const L: Bit = Bit(false);
 
-impl From<bool> for Bit {
-    fn from(value: bool) -> Bit {
+impl CastFrom<Bit> for Bit {
+    fn cast_from(from: Bit) -> Self {
+        from
+    }
+}
+
+impl CastFrom<bool> for bool {
+    fn cast_from(from: bool) -> Self {
+        from
+    }
+}
+
+impl CastFrom<bool> for Bit {
+    fn cast_from(value: bool) -> Bit {
         Bit(value)
     }
 }
 
-impl From<Bit> for bool {
-    fn from(bit: Bit) -> Self {
+impl CastFrom<Bit> for bool {
+    fn cast_from(bit: Bit) -> Self {
         bit.0
     }
 }
@@ -108,7 +120,7 @@ impl Not for Bit {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        Self::from(!self.0)
+        Self::cast_from(!self.0)
     }
 }
 
@@ -116,7 +128,7 @@ impl BitAnd for Bit {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {
-        Self::from(self.0 && rhs.0)
+        Self::cast_from(self.0 && rhs.0)
     }
 }
 
@@ -124,7 +136,7 @@ impl BitAnd<bool> for Bit {
     type Output = Self;
 
     fn bitand(self, rhs: bool) -> Self::Output {
-        Self::from(self.0 && rhs)
+        Self::cast_from(self.0 && rhs)
     }
 }
 
@@ -132,7 +144,7 @@ impl BitAnd<Bit> for bool {
     type Output = Bit;
 
     fn bitand(self, rhs: Bit) -> Self::Output {
-        Bit::from(self && rhs.0)
+        Bit::cast_from(self && rhs.0)
     }
 }
 
@@ -140,7 +152,7 @@ impl BitOr for Bit {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        Self::from(self.0 || rhs.0)
+        Self::cast_from(self.0 || rhs.0)
     }
 }
 
@@ -148,7 +160,7 @@ impl BitOr<bool> for Bit {
     type Output = Self;
 
     fn bitor(self, rhs: bool) -> Self::Output {
-        Self::from(self.0 || rhs)
+        Self::cast_from(self.0 || rhs)
     }
 }
 
@@ -156,6 +168,6 @@ impl BitOr<Bit> for bool {
     type Output = Bit;
 
     fn bitor(self, rhs: Bit) -> Self::Output {
-        Bit::from(self || rhs.0)
+        Bit::cast_from(self || rhs.0)
     }
 }

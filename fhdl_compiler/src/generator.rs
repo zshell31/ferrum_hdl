@@ -1,6 +1,7 @@
 pub mod adt;
 pub mod arg_matcher;
 pub mod bitvec;
+pub mod closure;
 pub mod expr;
 pub mod func;
 pub mod generic;
@@ -9,7 +10,7 @@ pub mod ty_or_def_id;
 
 use std::{env, fs, path::Path as StdPath};
 
-use fhdl_blackbox::Blackbox;
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
@@ -145,15 +146,15 @@ impl Crates {
 }
 
 pub struct Generator<'tcx> {
-    tcx: TyCtxt<'tcx>,
+    pub tcx: TyCtxt<'tcx>,
+    pub net_list: NetList,
+    pub idents: Scopes,
     top_module: HirItemId,
-    blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<Blackbox>>,
+    blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,
-    pub net_list: NetList,
-    pub idents: Scopes,
 }
 
 impl<'tcx> !Sync for Generator<'tcx> {}
@@ -194,7 +195,7 @@ impl<'tcx> Generator<'tcx> {
         self.collect_local_trait_impls();
 
         let item = self.tcx.hir().item(self.top_module);
-        self.evaluate_fn_item(item, true, GenericArgs::empty())?;
+        self.eval_fn_item(item, true, GenericArgs::empty())?;
 
         self.net_list.run_stages();
 
@@ -205,14 +206,15 @@ impl<'tcx> Generator<'tcx> {
 
     fn collect_local_trait_impls(&mut self) {
         for (trait_id, _) in self.tcx.all_local_trait_impls(()) {
-            let def_path = self.tcx.def_path_str(*trait_id);
-            if def_path == "std::convert::From" {
+            if self.crates.is_ferrum_hdl(*trait_id)
+                && self.find_fhdl_tool_attr("cast_from", *trait_id).is_some()
+            {
                 let fn_did = self
                     .tcx
                     .associated_items(*trait_id)
                     .find_by_name_and_kind(
                         self.tcx,
-                        Ident::from_str("from"),
+                        Ident::from_str("cast_from"),
                         AssocKind::Fn,
                         *trait_id,
                     )
@@ -278,32 +280,6 @@ impl<'tcx> Generator<'tcx> {
         astconv.ast_ty_to_ty(ty)
     }
 
-    // pub fn link_closure_inputs(
-    //     &mut self,
-    //     ctx: &mut EvalContext<'tcx>,
-    //     inputs: &[ItemId],
-    // ) {
-    //     let inputs_len = inputs.iter().map(|input| input.len()).sum::<usize>();
-    //     let closure_inputs_len = ctx
-    //         .closure_inputs
-    //         .iter()
-    //         .map(|input| input.len())
-    //         .sum::<usize>();
-    //     assert_eq!(inputs_len, closure_inputs_len);
-
-    //     let inputs = inputs.iter().flat_map(|input| input.into_iter());
-    //     let closure_inputs = ctx
-    //         .closure_inputs
-    //         .iter()
-    //         .flat_map(|input| input.into_iter());
-
-    //     for (input, closure_input) in inputs.zip(closure_inputs) {
-    //         self.net_list.reconnect_input(closure_input, input);
-    //     }
-
-    //     ctx.closure_inputs.clear()
-    // }
-
     pub fn method_call_generics(
         &mut self,
         expr: &Expr<'tcx>,
@@ -316,7 +292,7 @@ impl<'tcx> Generator<'tcx> {
             .ok_or_else(|| {
                 SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
             })?;
-        let generic_args = self.extract_generic_args_for_fn(fn_did, expr, ctx)?;
+        let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
         self.eval_generic_args(generic_args, expr.span)
     }
 
@@ -336,5 +312,17 @@ impl<'tcx> Generator<'tcx> {
             .ok()?;
 
         utils::eval_const_val(const_val)
+    }
+
+    pub fn maybe_swap_generic_args_for_conversion(
+        &self,
+        from: bool,
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> GenericArgsRef<'tcx> {
+        match from {
+            true => generic_args,
+            // Swap generic args from Into::<Self, T> -> From::<Self = T, T = Self>
+            false => self.tcx.mk_args(&[generic_args[1], generic_args[0]]),
+        }
     }
 }

@@ -14,7 +14,7 @@ type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
 pub struct Module {
     pub name: Symbol,
     pub is_skip: bool,
-    pub inject: bool,
+    pub only_inputs: bool,
     head: Option<NodeId>,
     tail: Option<NodeId>,
     len: usize,
@@ -27,7 +27,8 @@ impl Module {
         Self {
             name,
             is_skip: true,
-            inject: false,
+            // inject: false,
+            only_inputs: true,
             head: None,
             tail: None,
             len: 0,
@@ -49,9 +50,7 @@ impl Module {
             Self::link(nodes, tail, Some(node_id));
         }
 
-        if nodes[node_id].is_input() {
-            self.add_input(node_id);
-        }
+        self.add_input(nodes, node_id);
     }
 
     pub(super) fn remove(&mut self, nodes: &mut Vec<Node>, node_id: NodeId) {
@@ -72,9 +71,7 @@ impl Module {
             self.tail = prev;
         }
 
-        if nodes[node_id].is_input() {
-            self.remove_input(node_id);
-        }
+        self.remove_input(node_id);
     }
 
     pub(super) fn insert(
@@ -104,9 +101,7 @@ impl Module {
             }
         }
 
-        if nodes[node_id].is_input() {
-            self.add_input(node_id);
-        }
+        self.add_input(nodes, node_id);
     }
 
     pub(super) fn replace(&mut self, nodes: &mut Vec<Node>, node: &mut Node) {
@@ -117,13 +112,8 @@ impl Module {
         node.set_next(old_node.next());
 
         if !(old_node.is_input() && node.is_input()) {
-            if old_node.is_input() {
-                self.remove_input(node_id);
-            }
-
-            if node.is_input() {
-                self.add_input(node_id);
-            }
+            self.remove_input(node_id);
+            self.add_input(nodes, node_id);
         }
     }
 
@@ -134,11 +124,15 @@ impl Module {
         }
     }
 
-    pub(super) fn add_input(&mut self, node_id: NodeId) {
-        self.inputs.insert(node_id);
+    fn add_input(&mut self, nodes: &Vec<Node>, node_id: NodeId) {
+        if nodes[node_id].is_input() {
+            self.inputs.insert(node_id);
+        } else {
+            self.only_inputs = false;
+        }
     }
 
-    pub(super) fn remove_input(&mut self, node_id: NodeId) {
+    fn remove_input(&mut self, node_id: NodeId) {
         self.inputs.shift_remove(&node_id);
     }
 
@@ -200,11 +194,10 @@ impl Module {
 
     pub(crate) fn dump(&self, module_id: ModuleId) {
         println!(
-            "{} {} (is_skip {}, inject {}, head {:?}, tail {:?})",
+            "{} {} (is_skip {}, head {:?}, tail {:?})",
             module_id.idx(),
             self.name,
             self.is_skip,
-            self.inject,
             self.head.map(|head| head.idx()),
             self.tail.map(|tail| tail.idx())
         );

@@ -4,12 +4,13 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
+use fhdl_const_func::max_val;
 use fhdl_macros::{blackbox, blackbox_ty};
 
 use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
-    cast::IsPrimTy,
+    cast::{Cast, CastFrom, IsPrimTy},
     const_functions::bit,
     const_helpers::{Assert, IsTrue},
     signal::SignalValue,
@@ -36,23 +37,78 @@ pub struct u<const N: usize>(pub u128)
 where
     Assert<{ N <= 128 }>: IsTrue;
 
-macro_rules! impl_is_prim_ty {
-    ($( $prim:ty => $prim_ty:ident ),+) => {
+impl<const N: usize> u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    pub const MAX: Self = Self(max_val(N as u128));
+}
+
+macro_rules! impl_for_unsigned_prim_ty {
+    ($( $prim:ty ),+) => {
         $(
             impl IsPrimTy for $prim {}
+
+            impl SignalValue for $prim {}
+
+            impl <const N: usize> CastFrom<$prim> for Unsigned<N> {
+                #[inline(always)]
+                fn cast_from(val: $prim) -> Self {
+                    Self(val.cast())
+                }
+            }
+
+            impl <const N: usize> CastFrom<Unsigned<N>> for $prim {
+                #[inline(always)]
+                fn cast_from(val: Unsigned<N>) -> Self {
+                    val.0.cast()
+                }
+            }
+
+            impl BitSize for $prim {
+                const BITS: usize = <$prim>::BITS as usize;
+            }
+
+            impl BitPack for $prim {
+                type Packed = BitVec<{ <$prim as BitSize>::BITS }>;
+
+                fn pack(self) -> Self::Packed {
+                    self.cast()
+                }
+
+                fn unpack(bitvec: Self::Packed) -> Self {
+                    bitvec.cast()
+                }
+            }
         )+
     };
 }
 
-impl_is_prim_ty!(
-    u8 => U8,
-    u16 => U16,
-    u32 => U32,
-    u64 => U64,
-    u128 => U128
-);
+impl_for_unsigned_prim_ty!(u8, u16, u32, u64, u128, usize);
 
 impl<const N: usize> IsPrimTy for u<N> where Assert<{ N <= 128 }>: IsTrue {}
+
+impl<const N: usize> BitSize for u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    const BITS: usize = N;
+}
+
+impl<const N: usize> BitPack for u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    type Packed = BitVec<N>;
+
+    fn pack(self) -> Self::Packed {
+        self.cast::<Unsigned<N>>().pack()
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        Unsigned::<N>::unpack(bitvec).cast()
+    }
+}
 
 impl<const N: usize> Unsigned<N> {
     #[blackbox(UnsignedIndex)]
@@ -102,65 +158,39 @@ impl<const N: usize> LowerHex for Unsigned<N> {
     }
 }
 
-macro_rules! impl_from {
-    ($( $prim:ty => $prim_bits:literal ),+) => {
-        $(
-            impl <const N: usize> From<$prim> for Unsigned<N> {
-                #[inline(always)]
-                fn from(val: $prim) -> Self {
-                    Self(val.into())
-                }
-            }
-
-            impl <const N: usize> From<Unsigned<N>> for $prim
-            where
-                Assert<{ N <= $prim_bits }>: IsTrue
-            {
-                #[inline(always)]
-                fn from(val: Unsigned<N>) -> Self {
-                    val.0.into()
-                }
-            }
-        )+
-    };
-}
-
-impl_from!(
-    u8 => 8,
-    u16 => 16,
-    u32 => 32,
-    u64 => 64,
-    u128 => 128,
-    usize => 64
-);
-
-impl<const N: usize> From<u<N>> for Unsigned<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    fn from(value: u<N>) -> Self {
-        Self(value.0.into())
+impl<const N: usize, const M: usize> CastFrom<Unsigned<M>> for Unsigned<N> {
+    fn cast_from(from: Unsigned<M>) -> Unsigned<N> {
+        Self(from.0.cast())
     }
 }
 
-impl<const N: usize> From<Unsigned<N>> for u<N>
+impl<const N: usize> CastFrom<u<N>> for Unsigned<N>
 where
     Assert<{ N <= 128 }>: IsTrue,
 {
-    fn from(value: Unsigned<N>) -> Self {
-        Self(value.0.into())
+    fn cast_from(value: u<N>) -> Self {
+        Self(value.0.cast())
+    }
+}
+
+impl<const N: usize> CastFrom<Unsigned<N>> for u<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    fn cast_from(value: Unsigned<N>) -> Self {
+        Self(value.0.cast())
     }
 }
 
 impl<const N: usize> PartialEq<u128> for Unsigned<N> {
     fn eq(&self, other: &u128) -> bool {
-        self.eq(&Self::from(*other))
+        self.eq(&Self::cast_from(*other))
     }
 }
 
 impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
     fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
-        Some(self.cmp(&Self::from(*other)))
+        Some(self.cmp(&Self::cast_from(*other)))
     }
 }
 

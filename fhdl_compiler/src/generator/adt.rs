@@ -52,7 +52,7 @@ impl<'tcx> Generator<'tcx> {
         ))
     }
 
-    pub fn evaluate_adt_ty(
+    pub fn eval_adt_ty(
         &mut self,
         ty: &Ty<'tcx>,
         generics: GenericArgsRef<'tcx>,

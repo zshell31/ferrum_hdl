@@ -43,14 +43,12 @@ impl<T: SignalValue> SignalFn<T> {
 mod tests {
     use super::*;
 
-    impl SignalValue for u8 {}
-
     #[test]
     fn signal_fn() {
         let mut ctx = SimCtx::default();
         let mut value = 0;
         let mut signal_fn = SignalFn::new(move |_| {
-            value += 1;
+            value += 1_u8;
             value
         });
 

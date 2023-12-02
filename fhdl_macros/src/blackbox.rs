@@ -1,16 +1,16 @@
-use fhdl_blackbox::{Blackbox, BlackboxTy};
+use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream};
 
-pub struct BlackboxAttr(Blackbox);
+pub struct BlackboxAttr(BlackboxKind);
 
 impl Parse for BlackboxAttr {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let attr = input.parse::<Ident>()?;
 
         let value = attr.to_string();
-        let kind = Blackbox::try_from(value.as_str()).map_err(|_| {
+        let kind = BlackboxKind::try_from(value.as_str()).map_err(|_| {
             syn::Error::new(attr.span(), format!("Invalid blackbox '{}'", value))
         })?;
 

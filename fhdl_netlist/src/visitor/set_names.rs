@@ -128,10 +128,6 @@ impl<'n> SetNames<'n> {
 impl<'n> Visitor for SetNames<'n> {
     fn visit_modules(&mut self) {
         for module_id in self.net_list.modules() {
-            let module = &self.net_list[module_id];
-            if module.is_skip {
-                continue;
-            }
             self.visit_module(module_id);
         }
     }

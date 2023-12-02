@@ -1,5 +1,6 @@
+use smallvec::SmallVec;
+
 use crate::{
-    arena::Vec,
     const_val::ConstVal,
     net_list::{ModuleId, NetList, NodeCursor, NodeId},
     node::{
@@ -55,24 +56,29 @@ impl<'n> Transform<'n> {
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id;
 
-                let values = self.net_list.mod_outputs(module_id).map(|node_out_id| {
-                    self.net_list
-                        .to_const(node_out_id)
-                        .map(|const_val| const_val.val)
-                });
-                let values = Vec::collect_from_opt(values);
+                let values = self
+                    .net_list
+                    .mod_outputs(module_id)
+                    .map(|node_out_id| {
+                        self.net_list
+                            .to_const(node_out_id)
+                            .map(|const_val| const_val.val)
+                    })
+                    .collect::<Option<SmallVec<[_; 8]>>>();
 
                 match values {
                     Some(values) => {
-                        let outputs = Vec::collect_from(
-                            self.net_list
-                                .mod_outputs(module_id)
-                                .map(|node_out_id| self.net_list[node_out_id]),
-                        );
+                        let outputs = self
+                            .net_list
+                            .mod_outputs(module_id)
+                            .map(|node_out_id| self.net_list[node_out_id]);
+
                         Some(MultiConst::new(values, outputs).into())
                     }
                     None => {
                         *should_be_inlined = mod_inst.inlined
+                            || node.inputs_len() == 0
+                            || self.net_list[module_id].only_inputs
                             || node
                                 .inputs()
                                 .all(|input| self.net_list[input.node_id()].is_const());

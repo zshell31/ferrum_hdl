@@ -222,7 +222,7 @@ impl BitPackDerive {
 
                     let discr_expr = quote! {
                         bitvec = bitvec << #discr_width;
-                        bitvec = bitvec | Self::Packed::from(#idx);
+                        bitvec = bitvec | Self::Packed::cast_from(#idx);
                     };
 
                     let offset_expr = quote! {
@@ -323,7 +323,7 @@ impl BitPackDerive {
                 let discr_width = clog2_len(variants.len());
                 let variant_expr = quote! {
                     let mut offset = <Self as BitSize>::BITS - #discr_width;
-                    let variant: usize = usize::from((packed.clone() >> offset).cast::<BitVec<#discr_width>>());
+                    let variant: usize = usize::cast_from((packed.clone() >> offset).cast::<BitVec<#discr_width>>());
                 };
 
                 let branches = variants.iter().enumerate().map(|(idx, variant)| {
@@ -434,7 +434,7 @@ impl BitPackDerive {
 
                 fn pack(self) -> Self::Packed {
                     use ::ferrum_hdl::bitpack::{BitSize, IsPacked};
-                    use ::ferrum_hdl::cast::Cast;
+                    use ::ferrum_hdl::cast::{Cast, CastFrom};
 
                     let mut bitvec = Self::Packed::zero();
 
@@ -446,7 +446,7 @@ impl BitPackDerive {
                 fn unpack(mut packed: Self::Packed) -> Self {
                     use ::ferrum_hdl::bitpack::{BitPack, BitSize, IsPacked};
                     use ::ferrum_hdl::bitvec::BitVec;
-                    use ::ferrum_hdl::cast::Cast;
+                    use ::ferrum_hdl::cast::{Cast, CastFrom};
 
                     #unpack
                 }

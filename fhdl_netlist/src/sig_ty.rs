@@ -32,6 +32,7 @@ pub enum NodeTy {
     U32,
     U64,
     U128,
+    Usize,
     Unsigned(u128),
     BitVec(u128),
     Enum(EnumTy),
@@ -49,6 +50,7 @@ impl Debug for NodeTy {
             Self::U32 => "u32".into(),
             Self::U64 => "u64".into(),
             Self::U128 => "u128".into(),
+            Self::Usize => "usize".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
             Self::BitVec(n) => format!("bitvec[{n}]").into(),
             Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
@@ -65,8 +67,17 @@ impl NodeTy {
         matches!(self, NodeTy::Bool)
     }
 
-    pub fn is_unsigned(&self, n: u128) -> bool {
-        matches!(self, NodeTy::Unsigned(_n) if *_n == n)
+    pub fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Self::U8
+                | Self::U16
+                | Self::U32
+                | Self::U64
+                | Self::U128
+                | Self::Usize
+                | Self::Unsigned(_)
+        )
     }
 
     pub fn width(&self) -> u128 {
@@ -78,6 +89,7 @@ impl NodeTy {
             Self::U32 => 32,
             Self::U64 => 64,
             Self::U128 => 128,
+            Self::Usize => 64,
             Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,
             Self::Enum(enum_ty) => enum_ty.width(),
@@ -356,12 +368,6 @@ impl SignalTy {
         self.opt_prim_ty().expect("expected Prim type")
     }
 
-    pub fn is_unsigned(&self, n: u128) -> bool {
-        self.opt_prim_ty()
-            .map(|prim| prim.is_unsigned(n))
-            .unwrap_or_default()
-    }
-
     pub fn opt_array_ty(&self) -> Option<ArrayTy> {
         match self.kind {
             SignalTyKind::Array(array_ty) => Some(array_ty),
@@ -408,7 +414,7 @@ impl SignalTy {
         }
     }
 
-    pub fn maybe_to_bitvec(&self) -> NodeTy {
+    pub fn to_bitvec(&self) -> NodeTy {
         match self.kind {
             SignalTyKind::Node(prim_ty) => prim_ty,
             _ => {

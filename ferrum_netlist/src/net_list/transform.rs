@@ -153,6 +153,28 @@ impl NetList {
                 }
             }
             NodeKind::Merger(Merger { ref inputs, .. }) if inputs.len() > 1 => {
+                // let sym = output.sym;
+
+                // if !*rev {
+                //     // for case:
+                //     // ```verilog
+                //     // wire [3:0] in;
+                //     // wire [3:0] out;
+                //     // assing out = {in[3], in[2], in[1], in[0]};
+                //     // ```
+                //     //
+                //     // after transform:
+                //     // ```verilog
+                //     // wire [3:0] in;
+                //     // wire [3:0] out;
+                //     // assign out = in;
+                //     // ```
+                //     if let Some(node_out_id) = self.is_merger_eq_input(inputs) {
+                //         let out = &self[node_out_id];
+                //         return Pass::new(out.ty, node_out_id, sym).into();
+                //     }
+                // }
+
                 if inputs.iter().all(|input| self[input.node_id()].from_const) {
                     node.from_const = true;
                 }
@@ -161,4 +183,32 @@ impl NetList {
             _ => node,
         }
     }
+
+    // fn is_merger_eq_input(&self, inputs: &[NodeOutId]) -> Option<NodeOutId> {
+    //     let mut uniq = None;
+    //     inputs
+    //         .iter()
+    //         .map(|input| {
+    //             input
+    //         })
+    //         .for_each(|&input| match uniq {
+    //             None => {
+    //                 uniq = Some(input);
+    //             }
+    //             Some(inner) => {
+    //                 if inner != input {
+    //                     uniq = None
+    //                 }
+    //             }
+    //         });
+
+    //     if let Some(uniq) = uniq {
+    //         let width = self[uniq].width();
+    //         if width == inputs.len() as u128 {
+    //             return Some(uniq);
+    //         }
+    //     }
+
+    //     None
+    // }
 }

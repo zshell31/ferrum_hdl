@@ -24,6 +24,8 @@ pub struct Array<const N: usize, T>([T; N]);
 
 impl<const N: usize, T: SignalValue> SignalValue for Array<N, T> {}
 
+impl<const N: usize, T: SignalValue> SignalValue for [T; N] {}
+
 impl<const N: usize, T: SignalValue + Display> Display for Array<N, T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
@@ -52,7 +54,11 @@ impl<const N: usize, T: BitSize> BitSize for Array<N, T> {
     const BITS: usize = N * T::BITS;
 }
 
-impl<const N: usize, T: SignalValue> BitPack for Array<N, T>
+impl<const N: usize, T: BitSize> BitSize for [T; N] {
+    const BITS: usize = N * T::BITS;
+}
+
+impl<const N: usize, T: SignalValue> BitPack for [T; N]
 where
     BitVec<{ N * T::BITS }>:,
     BitVec<{ T::BITS }>:,
@@ -66,7 +72,7 @@ where
 
         let mut bitvec: BitVecInner = 0;
 
-        for item in &self.0 {
+        for item in self {
             bitvec <<= width;
             bitvec |= item.pack().inner();
         }
@@ -90,9 +96,26 @@ where
             .collect::<SmallVec<[T; 8]>>();
 
         match <[T; N]>::try_from(vec.as_slice()) {
-            Ok(res) => Array(res),
+            Ok(res) => res,
             Err(_) => unreachable!(),
         }
+    }
+}
+
+impl<const N: usize, T: SignalValue> BitPack for Array<N, T>
+where
+    BitVec<{ N * T::BITS }>:,
+    BitVec<{ T::BITS }>:,
+    T: BitPack<Packed = BitVec<{ T::BITS }>>,
+{
+    type Packed = BitVec<{ N * T::BITS }>;
+
+    fn pack(&self) -> Self::Packed {
+        self.0.pack()
+    }
+
+    fn unpack(bitvec: Self::Packed) -> Self {
+        Self(<[T; N]>::unpack(bitvec))
     }
 }
 

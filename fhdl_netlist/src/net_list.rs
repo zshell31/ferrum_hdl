@@ -3,22 +3,17 @@ mod in_out;
 mod module;
 mod with_id;
 
-use std::ops::{Index, IndexMut};
+use std::ops::{Deref, Index, IndexMut};
 
 use fnv::{FnvHashMap, FnvHashSet};
-pub use ident::{ModuleId, NodeId, NodeOutId};
+pub use ident::{ModuleId, NodeId, NodeInId, NodeOutId};
 pub(crate) use in_out::InOut;
-use smallvec::SmallVec;
 pub use with_id::WithId;
 
 pub use self::module::Module;
 use crate::{
     const_val::ConstVal,
-    group::ItemId,
-    node::{
-        Const, Input, IsNode, ModInst, MultiConst, MultiPass, Node, NodeKind, NodeOutput,
-        Pass, Splitter, ZeroExtend,
-    },
+    node::{Const, IsNode, ModInst, MultiConst, Node, NodeKind, NodeOutput},
     symbol::Symbol,
 };
 
@@ -29,8 +24,7 @@ pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,
     nodes: Vec<Node>,
-    dummy_inputs: FnvHashMap<ItemId, SmallVec<[NodeId; 8]>>,
-    links: FnvHashMap<NodeOutId, Links>,
+    links: FnvHashMap<NodeOutId, FnvHashSet<NodeInId>>,
 }
 
 impl !Sync for NetList {}
@@ -68,13 +62,13 @@ impl Index<NodeId> for Vec<Node> {
     type Output = Node;
 
     fn index(&self, index: NodeId) -> &Self::Output {
-        &self[index.idx().unwrap()]
+        &self[index.idx()]
     }
 }
 
 impl IndexMut<NodeId> for Vec<Node> {
     fn index_mut(&mut self, index: NodeId) -> &mut Self::Output {
-        &mut self[index.idx().unwrap()]
+        &mut self[index.idx()]
     }
 }
 
@@ -144,7 +138,6 @@ impl NetList {
     }
 
     pub fn mod_cursor(&self, mod_id: ModuleId) -> NodeCursor {
-        // let head = self.modules[mod_id].head();
         NodeCursor {
             mod_id,
             node_id: None,
@@ -184,218 +177,137 @@ impl NetList {
     }
 
     pub fn add<N: IsNode>(&mut self, mod_id: ModuleId, node: N) -> NodeId {
+        node.validate(self);
         let node_id = self.next_node_id(mod_id);
-        let node: NodeKind = node.into();
-        let node: Node = Node::new(node_id, node);
-        self.add_node(mod_id, node)
-    }
+        let node: Node = Node::new(node_id, node.into());
 
-    pub(crate) fn add_node(&mut self, mod_id: ModuleId, node: Node) -> NodeId {
-        let node_id = node.node_id();
-        self.validate_node(&node);
-        let is_input = node.is_input();
         self.nodes.push(node);
 
         let module = &mut self.modules[mod_id];
-        let old_node_id = module.add(node_id);
-        if is_input {
-            module.add_input(node_id);
-        }
-
-        if let Some(old_node_id) = old_node_id {
-            self.nodes[old_node_id].set_next(node_id);
-            self.nodes[node_id].set_prev(old_node_id);
-        }
+        module.add(&mut self.nodes, node_id);
 
         self.add_links(node_id);
 
         node_id
     }
 
-    pub fn replace<N: IsNode>(&mut self, _node_id: NodeId, _node: N) {
-        todo!()
-        // let node: NodeKind = node.into();
-        // let node: Node = node.into();
-        // self.replace_node(node_id, node);
-    }
-
-    pub(crate) fn replace_node(&mut self, _node_id: NodeId, _node: Node) {
-        todo!()
-        // self.validate_node(&node);
-        // let mod_id = node_id.module_id();
-        // let is_new_input = node.kind.is_input();
-        // assert_eq!(
-        //     self[node_id].kind.outputs().len(),
-        //     node.kind.outputs().len()
-        // );
-
-        // self.remove_links(node_id);
-
-        // let old_node = &self.nodes[node_id];
-        // let next_id = old_node.next();
-        // let prev_id = old_node.prev();
-        // let is_old_input = old_node.kind.is_input();
-        // self.nodes[node_id] = node;
-
-        // let module = &mut self.modules[mod_id];
-        // if !(is_new_input & is_old_input) {
-        //     if is_old_input {
-        //         module.remove_input(node_id);
-        //     }
-        //     if is_new_input {
-        //         module.add_input(node_id);
-        //     }
-        // }
-
-        // if let Some(prev_id) = prev_id {
-        //     self.nodes[node_id].set_prev(prev_id);
-        // }
-        // if let Some(next_id) = next_id {
-        //     self.nodes[node_id].set_next(next_id);
-        // }
-
-        // self.add_links(node_id);
-    }
-
-    pub(crate) fn validate_node(&self, node: &Node) {
-        match &*node.kind {
-            NodeKind::Splitter(Splitter { input, outputs, .. }) => {
-                let input_width = self[*input].width();
-                let output_width =
-                    outputs.iter().map(|output| output.width()).sum::<u128>();
-                if output_width > input_width {
-                    panic!(
-                        "Splitter: output width {} > input width {}",
-                        output_width, input_width
-                    );
-                }
-            }
-            NodeKind::ZeroExtend(ZeroExtend { input, output }) => {
-                let input_width = self[*input].width();
-                if input_width > output.width() {
-                    panic!(
-                        "ZeroExtend: output width {} < input width {}",
-                        output.width(),
-                        input_width
-                    );
-                }
-            }
-            _ => {}
+    fn remove(&mut self, node_id: NodeId) {
+        self.remove_links(node_id);
+        for node_out_id in self.nodes[node_id].node_out_ids() {
+            self.links.remove(&node_out_id);
         }
+
+        let module = &mut self.modules[node_id.module_id()];
+        module.remove(&mut self.nodes, node_id);
+    }
+
+    pub fn add_and_get_out<N: IsNode>(&mut self, mod_id: ModuleId, node: N) -> NodeOutId {
+        let node_id = self.add(mod_id, node);
+        self.nodes[node_id].only_one_out().node_out_id()
+    }
+
+    pub fn insert<N: IsNode>(
+        &mut self,
+        mod_id: ModuleId,
+        prev_node_id: Option<NodeId>,
+        node: N,
+    ) -> NodeId {
+        node.validate(self);
+        let node_id = self.next_node_id(mod_id);
+        let node = Node::new(node_id, node.into());
+
+        self.nodes.push(node);
+
+        let module = &mut self.modules[mod_id];
+        module.insert(&mut self.nodes, prev_node_id, node_id);
+
+        self.add_links(node_id);
+
+        node_id
+    }
+
+    pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
+        node.validate(self);
+        let mod_id = node_id.module_id();
+        let mut node: Node = Node::new(node_id, node.into());
+        assert_eq!(self[node_id].outputs_len(), node.outputs_len());
+
+        self.remove_links(node_id);
+
+        let module = &mut self.modules[mod_id];
+        module.replace(&mut self.nodes, &mut node);
+
+        self.nodes[node_id] = node;
+
+        self.add_links(node_id);
     }
 
     fn add_links(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
         for input in node.inputs() {
-            let links = self.links.entry(input).or_default();
-            links.insert(node_id);
+            let links = self.links.entry(*input).or_default();
+            links.insert(input.node_in_id());
         }
     }
 
-    // fn remove_links(&mut self, node_id: NodeId) {
-    //     let node = &self.nodes[node_id];
-    //     for input in node.inputs() {
-    //         if let Some(links) = self.links.get_mut(&input) {
-    //             links.remove(&node_id);
-    //         }
-    //     }
-    // }
-
-    // fn reconnect(&mut self, node_id: NodeId) {
-    //     let node = &self.nodes[node_id];
-    //     assert_eq!(node.kind.inputs().len(), node.kind.outputs().len());
-
-    //     self.remove_links(node_id);
-    //     for (input, output) in node.kind.inputs().items().zip(node.kind.outputs().items())
-    //     {
-    //         let output = output.node_out_id(node_id);
-    //         for link in self.links.get(&output) {
-
-    //             }
-    //     }
-    // }
-
-    pub(crate) fn exclude_pass_nodes(&mut self, node_id: NodeId) {
+    fn remove_links(&mut self, node_id: NodeId) {
         let node = &self.nodes[node_id];
-        let mut prev_inputs = SmallVec::<[Option<NodeOutId>; 8]>::new();
-        let mut syms = SmallVec::<[_; 8]>::new();
-
         for input in node.inputs() {
-            let input_node = &self.nodes[input.node_id()];
-
-            let prev_input = match &*input_node.kind {
-                NodeKind::Pass(Pass { input, .. }) => Some(*input),
-                NodeKind::MultiPass(MultiPass { inputs, .. }) => {
-                    Some(inputs[input.out_id()])
-                }
-                _ => None,
-            };
-
-            prev_inputs.push(prev_input);
-
-            if let Some(prev_input) = prev_input {
-                let sym = self[input].sym;
-                if self[prev_input].sym.is_none() && sym.is_some() {
-                    syms.push((prev_input, sym));
-                }
+            if let Some(links) = self.links.get_mut(&input) {
+                links.remove(&input.node_in_id());
             }
-        }
-
-        let node = &mut self.nodes[node_id];
-        for (input, prev_input) in node.inputs_mut().zip(prev_inputs) {
-            if let Some(prev_input) = prev_input {
-                if let Some(links) = self.links.get_mut(input) {
-                    links.remove(&node_id);
-                }
-                if let Some(links) = self.links.get_mut(&prev_input) {
-                    links.remove(&input.node_id());
-                    links.insert(node_id);
-                }
-                *input = prev_input;
-            }
-        }
-
-        for (prev_input, sym) in syms {
-            self[prev_input].sym = sym;
         }
     }
 
-    pub fn links(
-        &self,
-        node_out_id: NodeOutId,
-    ) -> impl Iterator<Item = (NodeId, &Node)> + '_ {
+    pub(crate) fn reconnect(&mut self, node_id: NodeId) {
+        let node = &self.nodes[node_id];
+        assert_eq!(node.inputs_len(), node.outputs_len());
+        let len = node.inputs_len();
+
+        self.remove_links(node_id);
+        for ind in 0 .. len {
+            let input = self.nodes[node_id].input_by_ind(ind);
+            self.reconnect_input_by_ind(node_id, ind, *input);
+        }
+    }
+
+    pub(crate) fn reconnect_input_by_ind(
+        &mut self,
+        node_id: NodeId,
+        ind: usize,
+        new_input: NodeOutId,
+    ) {
+        let output = self.nodes[node_id].output_by_ind(ind).node_out_id();
+        self.reconnect_input(output, new_input);
+    }
+
+    fn reconnect_input(&mut self, input: NodeOutId, new_input: NodeOutId) {
+        self.links.entry(new_input).or_default();
+        for link in self
+            .links
+            .remove(&input)
+            .iter()
+            .flat_map(|links| links.iter())
+        {
+            **self.nodes[link.node_id()].input_by_ind_mut(link.out_id()) = new_input;
+            self.links.get_mut(&new_input).unwrap().insert(*link);
+        }
+
+        self.modules[input.node_id().module_id()].replace_output(input, new_input);
+    }
+
+    pub fn links(&self, node_out_id: NodeOutId) -> impl Iterator<Item = &Node> + '_ {
         self.links
             .get(&node_out_id)
             .into_iter()
             .flat_map(|links| links.iter())
-            .map(move |link| (*link, &self[*link]))
+            .map(move |link| &self[link.node_id()])
     }
 
-    pub fn add_dummy_node(&mut self, module_id: ModuleId, node: Input) -> NodeId {
-        let node = NodeKind::DummyInput(node);
-        self.add(module_id, node)
-    }
-
-    pub fn add_output(&mut self, node_id: NodeId, out: usize) {
-        let mod_id = node_id.module_id();
+    pub fn add_output(&mut self, node_out_id: NodeOutId) {
+        let mod_id = node_out_id.node_id().module_id();
         let module = &mut self.modules[mod_id];
-        module.add_output(NodeOutId::new(node_id, out));
-    }
-
-    pub fn replace_output(&mut self, old_id: NodeOutId, new_id: NodeOutId) {
-        let mod_id = old_id.node_id().module_id();
-        let module = &mut self.modules[mod_id];
-        module.replace_output(old_id, new_id);
-    }
-
-    pub fn add_all_outputs(&mut self, node_id: NodeId) {
-        let mod_id = node_id.module_id();
-        let node = &self.nodes[node_id];
-        let module = &mut self.modules[mod_id];
-
-        for out in node.node_out_ids() {
-            module.add_output(out);
-        }
+        module.add_output(node_out_id);
     }
 
     pub fn is_input(&self, node_id: NodeId) -> bool {
@@ -423,33 +335,6 @@ impl NetList {
         self.top_module
     }
 
-    pub fn add_dummy_inputs(
-        &mut self,
-        item_id: ItemId,
-        dummy_inputs: impl IntoIterator<Item = NodeId>,
-    ) {
-        self.dummy_inputs.insert(
-            item_id,
-            dummy_inputs
-                .into_iter()
-                .filter(|node_id| self[*node_id].is_dummy_input())
-                .collect(),
-        );
-    }
-
-    pub fn dummy_inputs_len(&self, item_id: ItemId) -> Option<usize> {
-        self.dummy_inputs
-            .get(&item_id)
-            .map(|dummy_inputs| dummy_inputs.len())
-    }
-
-    pub fn dummy_input(&mut self, item_id: ItemId, ind: usize) -> Option<NodeId> {
-        self.dummy_inputs
-            .get(&item_id)
-            .and_then(|dummy_inputs| dummy_inputs.get(ind))
-            .copied()
-    }
-
     pub fn module_len(&self, mod_id: ModuleId) -> usize {
         self.modules[mod_id].len()
     }
@@ -467,80 +352,78 @@ impl NetList {
         }
     }
 
-    pub(crate) fn inline_mod(&mut self, mod_inst_node_id: NodeId) -> bool {
+    pub(crate) fn inline_mod(&mut self, mod_inst_node_id: NodeId) -> Option<NodeId> {
         let target = mod_inst_node_id.module_id();
-        let (source, inputs) = match &*self.nodes[mod_inst_node_id].kind {
-            NodeKind::ModInst(ModInst {
-                module_id, inputs, ..
-            }) => (
-                *module_id,
-                inputs.iter().copied().collect::<SmallVec<[_; 8]>>(),
-            ),
+        let source = match &*self.nodes[mod_inst_node_id].kind {
+            NodeKind::ModInst(ModInst { module_id, .. }) => *module_id,
             _ => {
-                return false;
+                return None;
             }
         };
 
         if source == target || self.modules[source].is_empty() {
-            return false;
+            return None;
         }
 
-        let mut last_node = None;
-        let prev_id = self.nodes[mod_inst_node_id].prev();
-        let old_tail_id = self.modules[target].truncate(prev_id);
+        let mut prev_id = self.nodes[mod_inst_node_id].prev();
+        let res = prev_id;
 
-        // Add new nodes:
-        // Pass
-        // nodes of modules except of inputs
-        // MultiPass
-        let mut node_id_map = FnvHashMap::default();
+        #[derive(Clone, Copy)]
+        enum Item {
+            NodeId(NodeId),
+            NodeOutId(NodeOutId),
+        }
+
+        let mut map = FnvHashMap::default();
+        fn get_node_out_id(
+            map: &FnvHashMap<NodeId, Item>,
+            input: NodeOutId,
+        ) -> NodeOutId {
+            match map.get(&input.node_id()).unwrap() {
+                Item::NodeId(node_id) => NodeOutId::new(*node_id, input.out_id()),
+                Item::NodeOutId(node_out_id) => *node_out_id,
+            }
+        }
+
         let mut cursor = self.mod_cursor(source);
         while let Some(node_id) = self.next(&mut cursor) {
-            let new_node = self.nodes[node_id].clone();
-            let mut new_node = match &*new_node.kind {
-                NodeKind::Input(input) => {
-                    let input_idx = self.modules[source].input_idx(node_id);
-                    let pass_input = inputs[input_idx];
-                    let pass_output = input.output;
-                    Node::new(
-                        self.next_node_id(target),
-                        Pass::new(pass_output.ty, pass_input, pass_output.sym).into(),
-                    )
-                }
-                _ => new_node,
-            };
-
-            for input in new_node.inputs_mut() {
-                if let Some(new_node_id) = node_id_map.get(&input.node_id()) {
-                    let out_id = input.out_id();
-                    *input = NodeOutId::new(*new_node_id, out_id);
-                }
+            if self.nodes[node_id].is_input() {
+                let idx = self.modules[source].input_idx(node_id);
+                let node_out_id = *self.nodes[mod_inst_node_id].input_by_ind(idx);
+                map.insert(node_id, Item::NodeOutId(node_out_id));
+                continue;
             }
 
-            let new_node_id = self.add_node(target, new_node);
-            node_id_map.insert(node_id, new_node_id);
-            last_node = Some(new_node_id);
+            let mut new_node = self.nodes[node_id].kind.deref().clone();
+            for (_, input) in InOut::<NodeOutId>::items_mut(new_node.inputs_mut()) {
+                *input = get_node_out_id(&map, *input);
+            }
+            let new_node_id = self.insert(target, prev_id, new_node);
+            prev_id = Some(new_node_id);
+            map.insert(node_id, Item::NodeId(new_node_id));
         }
 
-        let pass = MultiPass::new(
-            self.modules[source].outputs().filter_map(|output| {
-                let new_node_id = node_id_map.get(&output.node_id())?;
-                Some(NodeOutId::new(*new_node_id, output.out_id()))
-            }),
-            self.nodes[mod_inst_node_id]
-                .outputs()
-                .map(|output| (output.ty, output.sym)),
-        );
+        let len = self.nodes[mod_inst_node_id].outputs_len();
+        for ind in 0 .. len {
+            let input = self.modules[source].output_by_ind(ind);
+            let new_input = get_node_out_id(&map, input);
 
-        self.replace(mod_inst_node_id, pass);
-        if let Some(last_node) = last_node {
-            self.nodes[mod_inst_node_id].set_prev(last_node);
-            self.nodes[last_node].set_next(mod_inst_node_id);
+            self.reconnect_input_by_ind(mod_inst_node_id, ind, new_input);
         }
 
-        // Restore tail of module
-        self.modules[target].set_tail(old_tail_id);
+        self.remove(mod_inst_node_id);
 
-        true
+        res
+    }
+
+    pub fn set_dff_data(&mut self, node_id: NodeId, data: NodeOutId) {
+        let node = &mut self.nodes[node_id];
+        if let NodeKind::DFF(dff) = node.kind.as_mut() {
+            let idx = dff.set_data(data);
+            self.links
+                .entry(data)
+                .or_default()
+                .insert(NodeInId::new(node_id, idx));
+        }
     }
 }

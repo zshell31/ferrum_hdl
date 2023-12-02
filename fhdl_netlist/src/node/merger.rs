@@ -1,11 +1,13 @@
 use std::fmt::Debug;
 
+use smallvec::SmallVec;
+
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{arena::Vec, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone)]
 pub struct Merger {
-    pub inputs: Vec<NodeOutId>,
+    pub inputs: SmallVec<[NodeOutId; 8]>,
     pub output: NodeOutput,
     pub rev: bool,
 }
@@ -18,7 +20,7 @@ impl Merger {
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
-            inputs: Vec::collect_from(inputs),
+            inputs: inputs.into_iter().collect(),
             output: NodeOutput::wire(NodeTy::BitVec(width), sym.into()),
             rev,
         }

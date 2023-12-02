@@ -10,8 +10,8 @@ use crate::{
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
     node::{
         BinOpNode, BitNot, Case, CaseInputs, Const, DFFInputs, Merger, ModInst,
-        MultiConst, MultiPass, Mux2, Mux2Inputs, NetKind, NodeKind, NodeOutput, Not,
-        Pass, Splitter, ZeroExtend, DFF,
+        MultiConst, Mux2, Mux2Inputs, NetKind, NodeKind, NodeOutput, Not, Splitter,
+        ZeroExtend, DFF,
     },
     symbol::Symbol,
     visitor::{ParamKind, Visitor},
@@ -42,7 +42,7 @@ impl<'n> Verilog<'n> {
 
     fn write_locals(&mut self, node_id: NodeId) {
         for out in self.net_list[node_id].outputs() {
-            if out.is_skip {
+            if out.is_skip || out.inject {
                 continue;
             }
             let is_input = self.net_list.is_input(node_id);
@@ -128,13 +128,6 @@ impl<'n> Verilog<'n> {
         }
 
         match &*node.kind {
-            NodeKind::Pass(Pass { input, .. }) => {
-                self.inject_node(module_id, *input, expr, false);
-            }
-            NodeKind::MultiPass(MultiPass { inputs, .. }) => {
-                let input = inputs[node_out_id.out_id()];
-                self.inject_node(module_id, input, expr, false);
-            }
             NodeKind::BitNot(BitNot { input, .. }) => {
                 expr.write_str("~");
                 self.inject_node(module_id, *input, expr, true);
@@ -219,11 +212,19 @@ fn write_param(
     kind: ParamKind,
 ) {
     let out = &net_list[param];
+    let is_mod_output = net_list.is_output(param);
+    let is_input = net_list[param.node_id()].is_input();
 
-    buffer.write_str(match kind {
-        ParamKind::Input => "input ",
-        ParamKind::Output => "output ",
-    });
+    let kind = match kind {
+        ParamKind::Input if !is_mod_output => "input ",
+        ParamKind::Input if is_mod_output => "inout ",
+        ParamKind::Output if !is_input => "output ",
+        _ => {
+            return;
+        }
+    };
+
+    buffer.write_str(kind);
     write_out(buffer, out);
     buffer.write_fmt(format_args!(" {}", out.sym.unwrap()));
 }
@@ -319,7 +320,7 @@ impl<'n> Visitor for Verilog<'n> {
 
         let node = &self.net_list[node_id];
         match &*node.kind {
-            NodeKind::DummyInput(_) | NodeKind::Input(_) => {}
+            NodeKind::Input(_) => {}
             NodeKind::ModInst(ModInst {
                 name,
                 module_id,
@@ -408,22 +409,6 @@ impl<'n> Visitor for Verilog<'n> {
 
             //     expr(&mut self.buffer, input, output);
             // }
-            NodeKind::Pass(Pass { input, output }) => {
-                let input = self.inject_input(*input);
-                let output = output.sym.unwrap();
-
-                self.buffer
-                    .write_template(format_args!("assign {output} = {input};"));
-            }
-            NodeKind::MultiPass(MultiPass { inputs, outputs }) => {
-                for (input, output) in inputs.iter().zip(outputs.iter()) {
-                    let input = self.inject_input(*input);
-                    let output = output.sym.unwrap();
-
-                    self.buffer
-                        .write_template(format_args!("assign {output} = {input};"));
-                }
-            }
             NodeKind::Const(Const { value, output }) => {
                 let output = output.sym.unwrap();
 
@@ -455,43 +440,43 @@ impl<'n> Visitor for Verilog<'n> {
                 let input = self.inject_input(*input);
 
                 for output in outputs.iter() {
-                    if output.is_skip || output.inject {
-                        continue;
-                    }
-
                     let width = output.ty.width();
-                    let output = output.sym.unwrap();
 
-                    self.buffer.write_tab();
-                    if width == 1 {
-                        let start = if !*rev { start } else { start - 1 };
+                    if !(output.is_skip || output.inject) {
+                        let output = output.sym.unwrap();
 
-                        self.buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start}];\n\n"
-                        ));
-                    } else {
-                        #[allow(clippy::collapsible_else_if)]
-                        let (start, width) = if !*rev {
-                            if start <= input_width.saturating_sub(width) {
-                                (start, width)
-                            } else {
-                                (start, input_width.saturating_sub(start))
-                            }
+                        self.buffer.write_tab();
+                        if width == 1 {
+                            let start = if !*rev { start } else { start - 1 };
+
+                            self.buffer.write_fmt(format_args!(
+                                "assign {output} = {input}[{start}];\n\n"
+                            ));
                         } else {
-                            if start >= width {
-                                (start - width, width)
+                            #[allow(clippy::collapsible_else_if)]
+                            let (start, width) = if !*rev {
+                                if start <= input_width.saturating_sub(width) {
+                                    (start, width)
+                                } else {
+                                    (start, input_width.saturating_sub(start))
+                                }
                             } else {
-                                (0, start)
+                                if start >= width {
+                                    (start - width, width)
+                                } else {
+                                    (0, start)
+                                }
+                            };
+                            if width == 0 {
+                                continue;
                             }
-                        };
-                        if width == 0 {
-                            continue;
-                        }
 
-                        self.buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start} +: {width}];\n\n"
-                        ));
+                            self.buffer.write_fmt(format_args!(
+                                "assign {output} = {input}[{start} +: {width}];\n\n"
+                            ));
+                        }
                     }
+
                     if !*rev {
                         start = cmp::min(start + width, input_width);
                     } else {
@@ -539,18 +524,7 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer
                     .write_template(format_args!("assign {output} = {{ 0, {input} }};"));
             }
-            NodeKind::Case(
-                node @ Case {
-                    // inputs:
-                    //     CaseInputs {
-                    //         sel,
-                    //         variants,
-                    //         default,
-                    //     },
-                    output,
-                    ..
-                },
-            ) => {
+            NodeKind::Case(node @ Case { output, .. }) => {
                 if !node.is_empty() {
                     let CaseInputs {
                         sel,

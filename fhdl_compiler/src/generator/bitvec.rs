@@ -2,97 +2,69 @@ use either::Either;
 use fhdl_netlist::{
     group::ItemId,
     net_list::{ModuleId, NodeId, NodeOutId},
-    node::{Const, Merger, Pass, Splitter},
+    node::{Const, Merger, Splitter},
     sig_ty::{EnumTy, NodeTy, SignalTy, SignalTyKind},
 };
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::generator::Generator;
 
 impl<'tcx> Generator<'tcx> {
     pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
         match item_id {
-            ItemId::Node(node_id) => {
-                SignalTy::new(None, self.net_list[node_id].only_one_out().ty.into())
+            ItemId::Node(node_out_id) => {
+                SignalTy::new(None, self.net_list[node_out_id].ty.into())
             }
             ItemId::Group(group) => group.sig_ty,
         }
     }
 
     pub fn combine_outputs(&mut self, node_id: NodeId) -> ItemId {
-        let module_id = node_id.module_id();
         let outputs_len = self.net_list[node_id].outputs_len();
 
         if outputs_len > 1 {
-            let nodes = self.net_list[node_id]
+            // TODO: refactor
+            let outputs = self.net_list[node_id]
                 .outputs()
-                .map(|out| (out.ty, Pass::new(out.ty, out.node_out_id(), None)))
+                .map(|out| (out.ty, out.node_out_id().into()))
                 .collect::<SmallVec<[_; 8]>>();
 
             let ty = self
-                .make_tuple_ty(nodes.iter(), |_, (ty, _)| {
+                .make_tuple_ty(outputs.iter(), |_, (ty, _)| {
                     Ok(SignalTy::new(None, (*ty).into()))
                 })
                 .unwrap();
 
-            self.make_struct_group(ty, nodes, |generator, (_, node)| {
-                Ok(generator.net_list.add(module_id, node).into())
-            })
-            .unwrap()
+            self.make_struct_group(ty, outputs, |_, (_, output)| Ok(output))
+                .unwrap()
         } else {
-            node_id.into()
+            self.net_list[node_id].only_one_out().node_out_id().into()
         }
     }
 
     #[allow(clippy::wrong_self_convention)]
     pub fn to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
         match item_id {
-            ItemId::Node(node_id) => {
-                let len = self.net_list[node_id].outputs_len();
-                if len > 1 {
-                    let item_id = self.combine_outputs(node_id);
-                    self.to_bitvec(module_id, item_id)
-                } else {
-                    let node_out = self.net_list[node_id].only_one_out();
-                    let width = node_out.ty.width();
-                    let node_out_id = node_out.node_out_id();
-
-                    let pass = Pass::new(NodeTy::BitVec(width), node_out_id, None);
-                    let node_id = self.net_list.add(module_id, pass);
-
-                    self.net_list[node_id].only_one_out().node_out_id()
-                }
-            }
+            ItemId::Node(node_out_id) => node_out_id,
             ItemId::Group(group) => {
-                let width = group.width();
-
-                let merger = Merger::new(
-                    width,
-                    group
-                        .item_ids()
-                        .iter()
-                        .map(|item_id| self.to_bitvec(module_id, *item_id)),
-                    false,
-                    None,
-                );
-
-                let node_id = self.net_list.add(module_id, merger);
-                self.net_list[node_id].only_one_out().node_out_id()
-            }
-        }
-    }
-
-    pub fn maybe_to_bitvec(&mut self, module_id: ModuleId, item_id: ItemId) -> NodeOutId {
-        match item_id {
-            ItemId::Node(node_id) => {
-                let len = self.net_list[node_id].outputs_len();
-                if len == 1 {
-                    self.net_list[node_id].only_one_out().node_out_id()
+                if group.item_ids().len() == 1 {
+                    self.to_bitvec(module_id, group.item_ids()[0])
                 } else {
-                    self.to_bitvec(module_id, item_id)
+                    let width = group.width();
+
+                    let merger = Merger::new(
+                        width,
+                        group
+                            .item_ids()
+                            .iter()
+                            .map(|item_id| self.to_bitvec(module_id, *item_id)),
+                        false,
+                        None,
+                    );
+
+                    self.net_list.add_and_get_out(module_id, merger)
                 }
             }
-            ItemId::Group(_) => self.to_bitvec(module_id, item_id),
         }
     }
 
@@ -107,31 +79,33 @@ impl<'tcx> Generator<'tcx> {
         assert_eq!(node_width, sig_ty.width());
 
         match sig_ty.kind {
-            SignalTyKind::Node(ty) => {
-                let pass = Pass::new(ty, node_out_id, None);
-                self.net_list.add(module_id, pass).into()
-            }
+            SignalTyKind::Node(_) | SignalTyKind::Enum(_) => node_out_id.into(),
             SignalTyKind::Array(ty) => {
-                let item_width = ty.item_width();
+                let outputs = if ty.count() == 1 {
+                    smallvec![node_out_id]
+                } else {
+                    let item_width = ty.item_width();
 
-                let mut n = 0;
-                let splitter = Splitter::new(
-                    node_out_id,
-                    ty.tys().map(|_| {
-                        n += 1;
-                        (NodeTy::BitVec(item_width), None)
-                    }),
-                    None,
-                    true,
-                );
+                    let mut n = 0;
+                    let splitter = Splitter::new(
+                        node_out_id,
+                        ty.tys().map(|_| {
+                            n += 1;
+                            (NodeTy::BitVec(item_width), None)
+                        }),
+                        None,
+                        true,
+                    );
 
-                let node_id = self.net_list.add(module_id, splitter);
-                let outputs = self.net_list[node_id]
-                    .outputs()
-                    .map(|out| out.node_out_id())
-                    .collect::<SmallVec<[_; 8]>>();
+                    let node_id = self.net_list.add(module_id, splitter);
+                    let outputs = self.net_list[node_id]
+                        .node_out_ids()
+                        .collect::<SmallVec<[_; 8]>>();
 
-                assert_eq!(outputs.len(), n);
+                    assert_eq!(outputs.len(), n);
+
+                    outputs
+                };
 
                 self.make_array_group(
                     ty,
@@ -143,24 +117,30 @@ impl<'tcx> Generator<'tcx> {
                 .unwrap()
             }
             SignalTyKind::Struct(ty) => {
-                let mut n = 0;
-                let splitter = Splitter::new(
-                    node_out_id,
-                    ty.tys().iter().map(|ty| {
-                        n += 1;
-                        (NodeTy::BitVec(ty.inner.width()), None)
-                    }),
-                    None,
-                    true,
-                );
+                let outputs = if ty.len() == 1 {
+                    smallvec![node_out_id]
+                } else {
+                    let mut n = 0;
+                    let splitter = Splitter::new(
+                        node_out_id,
+                        ty.tys().iter().map(|ty| {
+                            n += 1;
+                            (NodeTy::BitVec(ty.inner.width()), None)
+                        }),
+                        None,
+                        true,
+                    );
 
-                let node_id = self.net_list.add(module_id, splitter);
-                let outputs = self.net_list[node_id]
-                    .outputs()
-                    .map(|out| out.node_out_id())
-                    .collect::<SmallVec<[_; 8]>>();
+                    let node_id = self.net_list.add(module_id, splitter);
+                    let outputs = self.net_list[node_id]
+                        .outputs()
+                        .map(|out| out.node_out_id())
+                        .collect::<SmallVec<[_; 8]>>();
 
-                assert_eq!(outputs.len(), n);
+                    assert_eq!(outputs.len(), n);
+
+                    outputs
+                };
 
                 self.make_struct_group(
                     ty,
@@ -174,39 +154,17 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap()
             }
-            SignalTyKind::Enum(ty) => {
-                let pass = Pass::new(ty.prim_ty(), node_out_id, None);
-                self.net_list.add(module_id, pass).into()
-            }
         }
-    }
-
-    pub fn maybe_from_bitvec(
-        &mut self,
-        module_id: ModuleId,
-        node_out_id: NodeOutId,
-        sig_ty: SignalTy,
-    ) -> ItemId {
-        self.from_bitvec(module_id, node_out_id, sig_ty)
     }
 
     pub fn enum_variant_from_bitvec(
         &mut self,
         module_id: ModuleId,
-        scrutinee: NodeId,
+        scrutinee: NodeOutId,
         enum_ty: EnumTy,
         variant_idx: usize,
     ) -> ItemId {
         let sig_ty = enum_ty.variant(variant_idx).inner;
-
-        if let Some(struct_ty) = sig_ty.opt_struct_ty() {
-            if struct_ty.is_empty() {
-                return scrutinee.into();
-            }
-        }
-
-        let scrutinee_out = self.net_list[scrutinee].only_one_out();
-        let scrutinee = scrutinee_out.node_out_id();
 
         let data_part = self.net_list.add(
             module_id,
@@ -244,7 +202,7 @@ impl<'tcx> Generator<'tcx> {
         };
 
         self.net_list
-            .add(module_id, Merger::new(enum_ty.width(), inputs, false, None))
+            .add_and_get_out(module_id, Merger::new(enum_ty.width(), inputs, false, None))
             .into()
     }
 }

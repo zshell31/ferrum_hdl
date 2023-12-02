@@ -56,8 +56,6 @@ pub enum SpanErrorKind {
     ExpectedCall,
     #[error("expected method call")]
     ExpectedMethodCall,
-    #[error("expected closure")]
-    ExpectedClosure,
     #[error("expected identifier")]
     ExpectedIdentifier,
     #[error("expected expression")]

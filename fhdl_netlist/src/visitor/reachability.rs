@@ -61,7 +61,8 @@ impl<'n> Visitor for Reachability<'n> {
                 self.modules.insert(*module_id);
             }
 
-            self.node_out_ids.extend(node.inputs());
+            self.node_out_ids
+                .extend(node.inputs().map(|input| input.into_inner()));
         }
     }
 

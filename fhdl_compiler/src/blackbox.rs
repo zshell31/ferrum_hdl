@@ -13,17 +13,14 @@ use fhdl_blackbox::Blackbox;
 use fhdl_netlist::{group::ItemId, node::BinOp};
 use rustc_hir::Expr;
 
-use crate::{
-    error::Error,
-    generator::{EvalContext, Generator},
-};
+use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub trait EvaluateExpr<'tcx> {
     fn evaluate_expr(
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error>;
 }
 
@@ -36,7 +33,7 @@ macro_rules! evaluate_expr {
                 &self,
                 generator: &mut Generator<'tcx>,
                 expr: &'tcx Expr<'tcx>,
-                ctx: &EvalContext<'tcx>
+                ctx: &mut EvalContext<'tcx>
             ) -> Result<ItemId, Error> {
                 match self {
                     $(

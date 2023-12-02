@@ -2,8 +2,8 @@ use std::borrow::Cow;
 
 use fhdl_netlist::{
     group::ItemId,
-    net_list::{ModuleId, NetList, NodeId},
-    node::{Input, Pass},
+    net_list::ModuleId,
+    node::Input,
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
@@ -15,9 +15,10 @@ use rustc_hir::{
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::symbol::Ident;
 
-use super::{EvalContext, Generator};
+use super::Generator;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
+    eval_context::EvalContext,
     scopes::SymIdent,
 };
 
@@ -87,10 +88,10 @@ impl<'tcx> Generator<'tcx> {
 
         self.idents.for_module(module_id).push_scope();
 
-        let ctx = EvalContext::new(generic_args, module_id);
+        let mut ctx = EvalContext::new(generic_args, module_id);
 
-        self.evaluate_inputs(inputs, &ctx, false, &mut |_| {})?;
-        let item_id = self.evaluate_expr(body.value, &ctx)?;
+        self.evaluate_inputs(inputs, &mut ctx, false)?;
+        let item_id = self.evaluate_expr(body.value, &mut ctx)?;
         self.evaluate_outputs(item_id);
 
         self.idents.for_module(module_id).pop_scope();
@@ -98,12 +99,11 @@ impl<'tcx> Generator<'tcx> {
         Ok(module_id)
     }
 
-    pub fn evaluate_inputs<'a, F: FnMut(ItemId)>(
+    pub fn evaluate_inputs<'a>(
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
-        ctx: &EvalContext<'tcx>,
-        is_dummy: bool,
-        f: &mut F,
+        ctx: &mut EvalContext<'tcx>,
+        is_closure: bool,
     ) -> Result<(), Error>
     where
         'tcx: 'a,
@@ -116,10 +116,8 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
 
-            let item_id = self.make_input(input, ctx, is_dummy)?;
+            let item_id = self.make_input(input, ctx, is_closure)?;
             self.pattern_match(param.pat, item_id, ctx.module_id)?;
-
-            f(item_id);
         }
 
         Ok(())
@@ -128,8 +126,8 @@ impl<'tcx> Generator<'tcx> {
     fn make_input(
         &mut self,
         input: &HirTy<'tcx>,
-        ctx: &EvalContext<'tcx>,
-        is_dummy: bool,
+        ctx: &mut EvalContext<'tcx>,
+        is_closure: bool,
     ) -> Result<ItemId, Error> {
         match input.kind {
             HirTyKind::Infer => {
@@ -139,7 +137,7 @@ impl<'tcx> Generator<'tcx> {
                     input.span,
                 )?;
 
-                Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy))
+                Ok(self.make_input_with_sig_ty(sig_ty, ctx, is_closure))
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
@@ -178,7 +176,7 @@ impl<'tcx> Generator<'tcx> {
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
 
-                let input = self.make_input_with_sig_ty(sig_ty, ctx.module_id, is_dummy);
+                let input = self.make_input_with_sig_ty(sig_ty, ctx, is_closure);
 
                 if is_self_param {
                     self.idents
@@ -194,7 +192,7 @@ impl<'tcx> Generator<'tcx> {
                     ty,
                     mutbl: Mutability::Not,
                 },
-            ) => self.make_input(ty, ctx, is_dummy),
+            ) => self.make_input(ty, ctx, is_closure),
             HirTyKind::Tup(ty) => {
                 let tuple_ty = self
                     .find_sig_ty(
@@ -205,7 +203,7 @@ impl<'tcx> Generator<'tcx> {
                     .struct_ty();
 
                 self.make_struct_group(tuple_ty, ty.iter(), |generator, ty| {
-                    generator.make_input(ty, ctx, is_dummy)
+                    generator.make_input(ty, ctx, is_closure)
                 })
             }
             _ => {
@@ -218,22 +216,22 @@ impl<'tcx> Generator<'tcx> {
     fn make_input_with_sig_ty(
         &mut self,
         sig_ty: SignalTy,
-        module_id: ModuleId,
-        is_dummy: bool,
+        ctx: &mut EvalContext<'tcx>,
+        is_closure: bool,
     ) -> ItemId {
+        let module_id = ctx.module_id;
+
         match sig_ty.kind {
-            SignalTyKind::Node(prim_ty) => {
+            SignalTyKind::Node(prim_ty) => (if is_closure {
+                ctx.next_closure_input()
+            } else {
                 let input = Input::new(prim_ty, None);
-                (if is_dummy {
-                    self.net_list.add_dummy_node(module_id, input)
-                } else {
-                    self.net_list.add(module_id, input)
-                })
-                .into()
-            }
+                self.net_list.add_and_get_out(module_id, input)
+            })
+            .into(),
             SignalTyKind::Array(ty) => self
                 .make_array_group(ty, ty.tys(), |generator, ty| {
-                    Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
+                    Ok(generator.make_input_with_sig_ty(ty, ctx, is_closure))
                 })
                 .unwrap(),
             SignalTyKind::Struct(ty) => self
@@ -241,46 +239,27 @@ impl<'tcx> Generator<'tcx> {
                     ty,
                     ty.tys().iter().map(|ty| ty.inner),
                     |generator, ty| {
-                        Ok(generator.make_input_with_sig_ty(ty, module_id, is_dummy))
+                        Ok(generator.make_input_with_sig_ty(ty, ctx, is_closure))
                     },
                 )
                 .unwrap(),
-            SignalTyKind::Enum(ty) => {
+            SignalTyKind::Enum(ty) => (if is_closure {
+                ctx.next_closure_input()
+            } else {
                 let input = Input::new(ty.prim_ty(), None);
-                (if is_dummy {
-                    self.net_list.add_dummy_node(module_id, input)
-                } else {
-                    self.net_list.add(module_id, input)
-                })
-                .into()
-            }
+                self.net_list.add_and_get_out(module_id, input)
+            })
+            .into(),
         }
     }
 
     fn evaluate_outputs(&mut self, item_id: ItemId) {
-        for node_id in item_id.into_iter() {
-            Self::make_output(&mut self.net_list, node_id);
-        }
-    }
-
-    fn make_output(net_list: &mut NetList, node_id: NodeId) {
-        let node = &net_list[node_id];
-        let node_id = if node.is_input() {
-            let out = node.only_one_out();
-            let pass = Pass::new(out.ty, out.node_out_id(), SymIdent::Out);
-
-            net_list.add(node_id.module_id(), pass)
-        } else {
-            let node = &mut net_list[node_id];
-            for mut out in node.outputs_mut() {
-                if out.sym.is_none() {
-                    out.sym = SymIdent::Out.into();
-                }
+        for node_out_id in item_id.into_iter() {
+            let out = &mut self.net_list[node_out_id];
+            if out.sym.is_none() {
+                out.sym = SymIdent::Out.into();
             }
-
-            node_id
-        };
-
-        net_list.add_all_outputs(node_id);
+            self.net_list.add_output(node_out_id);
+        }
     }
 }

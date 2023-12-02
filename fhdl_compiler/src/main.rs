@@ -4,6 +4,7 @@
 
 mod blackbox;
 mod error;
+mod eval_context;
 mod generator;
 mod scopes;
 mod utils;

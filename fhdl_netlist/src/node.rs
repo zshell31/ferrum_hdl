@@ -8,7 +8,6 @@ mod merger;
 mod mod_inst;
 mod mux2;
 mod not;
-mod pass;
 mod splitter;
 mod zero_extend;
 
@@ -28,13 +27,12 @@ pub use self::{
     mod_inst::ModInst,
     mux2::{Mux2, Mux2Inputs},
     not::Not,
-    pass::{MultiPass, Pass},
     splitter::Splitter,
     zero_extend::ZeroExtend,
 };
 use crate::{
     const_val::ConstVal,
-    net_list::{InOut, NodeId, NodeOutId, WithId},
+    net_list::{InOut, NetList, NodeId, NodeInId, NodeOutId, WithId},
     sig_ty::NodeTy,
     symbol::Symbol,
 };
@@ -88,8 +86,8 @@ pub struct Node {
     pub is_skip: bool,
     pub inject: bool,
     node_id: NodeId,
-    next: NodeId,
-    prev: NodeId,
+    next: Option<NodeId>,
+    prev: Option<NodeId>,
 }
 
 impl Node {
@@ -99,24 +97,24 @@ impl Node {
             is_skip: true,
             inject: false,
             node_id,
-            next: NodeId::none(),
-            prev: NodeId::none(),
+            next: None,
+            prev: None,
         }
     }
 
     pub fn next(&self) -> Option<NodeId> {
-        self.next.into_opt()
+        self.next
     }
 
-    pub fn set_next(&mut self, node_id: NodeId) {
+    pub fn set_next(&mut self, node_id: Option<NodeId>) {
         self.next = node_id;
     }
 
     pub fn prev(&self) -> Option<NodeId> {
-        self.prev.into_opt()
+        self.prev
     }
 
-    pub fn set_prev(&mut self, node_id: NodeId) {
+    pub fn set_prev(&mut self, node_id: Option<NodeId>) {
         self.prev = node_id;
     }
 
@@ -124,13 +122,36 @@ impl Node {
         self.node_id
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        InOut::<NodeOutId>::items(self.kind.inputs()).map(|(_, node_out_id)| *node_out_id)
+    pub fn inputs(&self) -> impl Iterator<Item = WithId<NodeInId, NodeOutId>> + '_ {
+        let node_id = self.node_id;
+        InOut::<NodeOutId>::items(self.kind.inputs()).map(move |(ind, node_out_id)| {
+            WithId::new(NodeInId::new(node_id, ind), *node_out_id)
+        })
     }
 
-    pub fn inputs_mut(&mut self) -> impl Iterator<Item = &mut NodeOutId> + '_ {
-        InOut::<NodeOutId>::items_mut(self.kind.inputs_mut())
-            .map(|(_, node_out_id)| node_out_id)
+    pub fn inputs_mut(
+        &mut self,
+    ) -> impl Iterator<Item = WithId<NodeInId, &mut NodeOutId>> + '_ {
+        let node_id = self.node_id;
+        InOut::<NodeOutId>::items_mut(self.kind.inputs_mut()).map(
+            move |(ind, node_out_id)| {
+                WithId::new(NodeInId::new(node_id, ind), node_out_id)
+            },
+        )
+    }
+
+    pub fn input_by_ind(&self, ind: usize) -> WithId<NodeInId, NodeOutId> {
+        WithId::new(
+            NodeInId::new(self.node_id, ind),
+            *InOut::<NodeOutId>::by_ind(self.kind.inputs(), ind),
+        )
+    }
+
+    pub fn input_by_ind_mut(&mut self, ind: usize) -> WithId<NodeInId, &mut NodeOutId> {
+        WithId::new(
+            NodeInId::new(self.node_id, ind),
+            InOut::<NodeOutId>::by_ind_mut(self.kind.inputs_mut(), ind),
+        )
     }
 
     pub fn inputs_len(&self) -> usize {
@@ -188,20 +209,33 @@ impl Node {
         self.output_by_ind_mut(0)
     }
 
-    pub(crate) fn dump(&self, prefix: &str, tab: &str) {
+    pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
         println!(
             "{}{} (is_skip: {}, inject: {}, prev: {:?}, next: {:?})",
             prefix,
             self.kind.dump(),
             self.is_skip,
             self.inject,
-            self.prev.idx(),
-            self.next.idx()
+            self.prev.map(|node_id| node_id.idx()),
+            self.next.map(|node_id| node_id.idx())
         );
 
         match &*self.kind {
             NodeKind::ModInst(mod_inst) => {
-                println!("{}mod_id = {}", tab, mod_inst.module_id.idx());
+                println!(
+                    "{}mod_id = {} ({})",
+                    tab,
+                    mod_inst.module_id.idx(),
+                    net_list[mod_inst.module_id].name
+                );
+            }
+            NodeKind::Splitter(splitter) => {
+                println!(
+                    "{}start = {} rev = {}",
+                    tab,
+                    splitter.start(net_list),
+                    splitter.rev
+                );
             }
             NodeKind::Const(cons) => {
                 println!(
@@ -217,7 +251,7 @@ impl Node {
             "{}inputs: {}",
             tab,
             self.inputs()
-                .map(|inp| format!("{} ({})", inp.node_id().idx().unwrap(), inp.out_id()))
+                .map(|inp| format!("{} ({})", inp.node_id().idx(), inp.out_id()))
                 .intersperse(", ".to_string())
                 .collect::<String>()
         );
@@ -238,14 +272,6 @@ impl Node {
 
     pub fn is_input(&self) -> bool {
         matches!(&*self.kind, NodeKind::Input(_))
-    }
-
-    pub fn is_dummy_input(&self) -> bool {
-        matches!(&*self.kind, NodeKind::DummyInput(_))
-    }
-
-    pub fn is_pass(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Pass(_) | NodeKind::MultiPass(_))
     }
 
     pub fn is_expr(&self) -> bool {
@@ -291,6 +317,8 @@ pub trait IsNode: Into<NodeKind> {
     fn outputs(&self) -> &Self::Outputs;
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs;
+
+    fn validate(&self, _net_list: &NetList) {}
 }
 
 macro_rules! define_nodes {
@@ -448,14 +476,8 @@ impl !Sync for NodeKind {}
 impl !Send for NodeKind {}
 
 define_nodes!(
-    DummyInput => Input,
     Input => Input,
     ModInst => ModInst,
-    // LoopStart => LoopStart,
-    // LoopEnd => LoopEnd,
-    // Expr => Expr,
-    Pass => Pass,
-    MultiPass => MultiPass,
     Const => Const,
     MultiConst => MultiConst,
     Splitter => Splitter,

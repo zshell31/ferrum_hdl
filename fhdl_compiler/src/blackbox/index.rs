@@ -2,11 +2,7 @@ use fhdl_netlist::group::ItemId;
 use rustc_hir::Expr;
 
 use super::EvaluateExpr;
-use crate::{
-    error::Error,
-    generator::{EvalContext, Generator},
-    utils,
-};
+use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
 pub struct UnsignedIndex;
 
@@ -15,7 +11,7 @@ impl<'tcx> EvaluateExpr<'tcx> for UnsignedIndex {
         &self,
         generator: &mut Generator<'tcx>,
         expr: &'tcx Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         utils::args!(expr as rec);
 

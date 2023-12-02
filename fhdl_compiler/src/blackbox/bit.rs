@@ -2,10 +2,7 @@ use fhdl_netlist::{group::ItemId, node::Const, sig_ty::NodeTy};
 use rustc_hir::Expr;
 
 use super::EvaluateExpr;
-use crate::{
-    error::Error,
-    generator::{EvalContext, Generator},
-};
+use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub struct BitVal(pub bool);
 
@@ -28,7 +25,10 @@ impl BitVal {
         };
 
         let cons = Const::new(NodeTy::Bit, value, None);
-        Ok(generator.net_list.add(ctx.module_id, cons).into())
+        Ok(generator
+            .net_list
+            .add_and_get_out(ctx.module_id, cons)
+            .into())
     }
 }
 
@@ -37,7 +37,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitVal {
         &self,
         generator: &mut Generator<'tcx>,
         _: &Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         self.add_const(generator, ctx)
     }

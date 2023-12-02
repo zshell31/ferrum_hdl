@@ -6,21 +6,25 @@ use std::{
 use either::Either;
 use smallvec::SmallVec;
 
-use crate::{arena::with_arena, net_list::NodeId, sig_ty::SignalTy};
+use crate::{
+    arena::with_arena,
+    net_list::{NodeId, NodeOutId},
+    sig_ty::SignalTy,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemId {
-    Node(NodeId),
+    Node(NodeOutId),
     Group(&'static Group),
 }
 
 impl IntoIterator for ItemId {
-    type Item = NodeId;
-    type IntoIter = Either<Once<NodeId>, GroupIter>;
+    type Item = NodeOutId;
+    type IntoIter = Either<Once<NodeOutId>, GroupIter>;
 
     fn into_iter(self) -> Self::IntoIter {
         match self {
-            Self::Node(node_id) => Either::Left(iter::once(node_id)),
+            Self::Node(node_out_id) => Either::Left(iter::once(node_out_id)),
             Self::Group(group) => Either::Right(group.into_iter()),
         }
     }
@@ -29,9 +33,9 @@ impl IntoIterator for ItemId {
 pub struct ItemIdIter(Either<Once<NodeId>, GroupIter>);
 
 impl ItemId {
-    pub fn node_id(self) -> NodeId {
+    pub fn node_out_id(self) -> NodeOutId {
         match self {
-            Self::Node(node_id) => node_id,
+            Self::Node(node_out_id) => node_out_id,
             _ => panic!("expected node_id"),
         }
     }
@@ -55,9 +59,9 @@ impl ItemId {
     }
 }
 
-impl From<NodeId> for ItemId {
-    fn from(node_id: NodeId) -> Self {
-        Self::Node(node_id)
+impl From<NodeOutId> for ItemId {
+    fn from(node_out_id: NodeOutId) -> Self {
+        Self::Node(node_out_id)
     }
 }
 
@@ -116,7 +120,7 @@ impl Group {
 }
 
 impl<'a> IntoIterator for &'a Group {
-    type Item = NodeId;
+    type Item = NodeOutId;
 
     type IntoIter = GroupIter;
 
@@ -142,14 +146,14 @@ impl GroupIter {
 }
 
 impl Iterator for GroupIter {
-    type Item = NodeId;
+    type Item = NodeOutId;
 
     fn next(&mut self) -> Option<Self::Item> {
         let last = self.stack.last_mut();
         match last {
             Some(last) => match last.next() {
                 Some(res) => match res {
-                    ItemId::Node(node_id) => Some(*node_id),
+                    ItemId::Node(node_out_id) => Some(*node_out_id),
                     ItemId::Group(group) => {
                         let iter = group.item_ids.iter();
                         self.stack.push(iter);

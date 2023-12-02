@@ -1,14 +1,14 @@
 use std::fmt::Debug;
 
-use smallvec::SmallVec;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{bvm::BitVecMask, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Case {
-    inputs: SmallVec<[NodeOutId; 8]>,
-    variants: SmallVec<[BitVecMask; 8]>,
+    inputs: Vec<NodeOutId>,
+    variants: Vec<BitVecMask>,
     is_default: bool,
     pub output: NodeOutput,
 }
@@ -29,8 +29,10 @@ impl Case {
         default: Option<NodeOutId>,
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
-        let mut mask = SmallVec::new();
-        let mut inputs = SmallVec::new();
+        let variants = variants.into_iter();
+        let (size_hint, _) = variants.size_hint();
+        let mut mask = Vec::with_capacity(size_hint);
+        let mut inputs = Vec::with_capacity(size_hint + 2);
 
         inputs.push(sel);
         let is_default = default.is_some();

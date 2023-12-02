@@ -1,5 +1,5 @@
 use ferrum_hdl::{bit::bit_value, unsigned::unsigned_value};
-use fhdl_netlist::sig_ty::NodeTy;
+use fhdl_netlist::sig_ty::{ConstParam, NodeTy};
 use rustc_ast::LitKind;
 use rustc_hir::Lit;
 
@@ -34,9 +34,9 @@ fn eval_bit_lit(lit: &Lit) -> Result<u128, Error> {
     }
 }
 
-fn eval_unsigned_lit(lit: &Lit, width: u128) -> Result<u128, Error> {
+fn eval_unsigned_lit(lit: &Lit, width: ConstParam) -> Result<u128, Error> {
     match lit.node {
-        LitKind::Int(n, _) => Ok(unsigned_value(n, width)),
+        LitKind::Int(n, _) if width.is_value() => Ok(unsigned_value(n, width.value())),
         _ => Err(SpanError::new(
             SpanErrorKind::UnexpectedLitValue(NodeTy::Unsigned(width)),
             lit.span,

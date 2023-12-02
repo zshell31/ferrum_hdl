@@ -7,7 +7,7 @@ use ferrum_hdl::{
 };
 use fhdl_netlist::{
     group::ItemId,
-    node::{Splitter, ZeroExtend},
+    node::{NodeOutput, Splitter, ZeroExtend},
     sig_ty::{ArrayTy, NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_hir::{Expr, HirId};
@@ -233,19 +233,36 @@ impl Conversion {
     fn to_unsigned(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
         let node_out_id = from.node_out_id();
         let module_id = node_out_id.node_id().module_id();
+        let from_ty = generator.item_ty(from);
 
-        if generator.item_ty(from).width() >= ty.width() {
-            generator
-                .net_list
-                .add_and_get_out(
-                    module_id,
-                    Splitter::new(node_out_id, [(ty, None)], None, false),
-                )
-                .into()
+        if let (Some(from_width), Some(to_width)) =
+            (from_ty.width().opt_value(), ty.width().opt_value())
+        {
+            if from_width >= to_width {
+                generator
+                    .net_list
+                    .add_and_get_out(
+                        module_id,
+                        Splitter::new(node_out_id, [(ty, None)], None, false),
+                    )
+                    .into()
+            } else {
+                generator
+                    .net_list
+                    .add_and_get_out(module_id, ZeroExtend::new(ty, node_out_id, None))
+                    .into()
+            }
         } else {
-            generator
-                .net_list
-                .add_and_get_out(module_id, ZeroExtend::new(ty, node_out_id, None))
+            let node_id = generator.add_gen_node(
+                module_id,
+                [node_out_id],
+                [NodeOutput::wire(ty, None)],
+                |generator, node| {},
+            );
+
+            generator.net_list[node_id]
+                .only_one_out()
+                .node_out_id()
                 .into()
         }
     }
@@ -268,7 +285,7 @@ impl<'tcx> EvalExpr<'tcx> for Conversion {
             None => {
                 let to_ty = generator.find_sig_ty(
                     generator.node_type(expr.hir_id, ctx),
-                    ctx.generic_args,
+                    ctx,
                     expr.span,
                 )?;
 

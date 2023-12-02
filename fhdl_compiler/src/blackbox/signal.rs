@@ -46,7 +46,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         let ty = generator.node_type(expr.hir_id, ctx);
         let value_ty =
             utils::subst_type(ty, 1).ok_or_else(|| self.make_err(expr.span))?;
-        let sig_ty = generator.find_sig_ty(value_ty, ctx.generic_args, expr.span)?;
+        let sig_ty = generator.find_sig_ty(value_ty, ctx, expr.span)?;
 
         let (clk, rst, en, rst_val, comb) = match self.has_en {
             true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),

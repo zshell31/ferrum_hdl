@@ -76,6 +76,8 @@ pub enum SpanErrorKind {
     ExpectedConst,
     #[error("non-indexable expression")]
     NonIndexableExpr,
+    #[error("expected type")]
+    ExpectedTy,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(NodeTy),
@@ -102,4 +104,6 @@ pub enum SpanErrorKind {
     NotSynthInput,
     #[error("not synthesizable expression for blackbox '{0:?}'")]
     NotSynthBlackboxExpr(BlackboxKind),
+    #[error("not synthesizable item")]
+    NotSynthItem,
 }

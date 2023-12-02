@@ -1,20 +1,24 @@
 use std::fmt::Debug;
 
-use smallvec::SmallVec;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::NodeOutId,
+    sig_ty::{ConstParam, NodeTy},
+    symbol::Symbol,
+};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Merger {
-    pub inputs: SmallVec<[NodeOutId; 8]>,
+    pub inputs: Vec<NodeOutId>,
     pub output: NodeOutput,
     pub rev: bool,
 }
 
 impl Merger {
     pub fn new(
-        width: u128,
+        width: ConstParam,
         inputs: impl IntoIterator<Item = NodeOutId>,
         rev: bool,
         sym: impl Into<Option<Symbol>>,

@@ -26,18 +26,9 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
-    pub fn fn_sig(
-        &self,
-        def_id: DefId,
-        subst: Option<GenericArgsRef<'tcx>>,
-    ) -> FnSig<'tcx> {
+    pub fn fn_sig(&self, def_id: DefId, ctx: &EvalContext<'tcx>) -> FnSig<'tcx> {
         let fn_sig = self.tcx.fn_sig(def_id);
-
-        (match subst {
-            Some(subst) => fn_sig.instantiate(self.tcx, subst),
-            None => fn_sig.instantiate_identity(),
-        })
-        .skip_binder()
+        ctx.instantiate_early_binder(self.tcx, fn_sig).skip_binder()
     }
 
     pub fn eval_fn_item(
@@ -45,21 +36,25 @@ impl<'tcx> Generator<'tcx> {
         item: &Item<'tcx>,
         top_module: bool,
         generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<Option<ModuleId>, Error> {
+    ) -> Result<ModuleId, Error> {
         if let ItemKind::Fn(HirFnSig { decl, .. }, _, body_id) = item.kind {
-            return self
-                .eval_fn(item.ident.as_str(), decl, body_id, top_module, generic_args)
-                .map(Some);
+            return self.eval_fn(
+                item.ident.as_str(),
+                decl,
+                body_id,
+                top_module,
+                generic_args,
+            );
         }
 
-        Ok(None)
+        Err(SpanError::new(SpanErrorKind::NotSynthItem, item.span).into())
     }
 
     pub fn eval_impl_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<Option<ModuleId>, Error> {
+    ) -> Result<ModuleId, Error> {
         let self_ty = self
             .tcx
             .hir()
@@ -81,12 +76,10 @@ impl<'tcx> Generator<'tcx> {
             _ => impl_item.ident.as_str().into(),
         };
         if let ImplItemKind::Fn(HirFnSig { decl, .. }, body_id) = impl_item.kind {
-            return self
-                .eval_fn(ident.as_ref(), decl, body_id, false, generic_args)
-                .map(Some);
+            return self.eval_fn(ident.as_ref(), decl, body_id, false, generic_args);
         }
 
-        Ok(None)
+        Err(SpanError::new(SpanErrorKind::NotSynthItem, impl_item.span).into())
     }
 
     pub fn eval_fn(
@@ -105,7 +98,7 @@ impl<'tcx> Generator<'tcx> {
 
         self.idents.for_module(module_id).push_scope();
 
-        let mut ctx = EvalContext::new(generic_args, module_id);
+        let mut ctx = EvalContext::new(self.mode, generic_args, module_id);
 
         self.eval_inputs(inputs, &mut ctx, false)?;
         let item_id = self.eval_expr(body.value, &mut ctx)?;
@@ -148,26 +141,17 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         match input.kind {
             HirTyKind::Infer => {
-                let sig_ty = self.find_sig_ty(
-                    self.node_type(input.hir_id, ctx),
-                    ctx.generic_args,
-                    input.span,
-                )?;
+                let sig_ty =
+                    self.find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?;
 
                 Ok(self.make_input_with_sig_ty(sig_ty, ctx, is_closure))
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
                 let mut find_sig_ty = |def_id| {
-                    self.find_sig_ty(def_id, ctx.generic_args, input.span)
-                        .or_else(|_| {
-                            self.find_sig_ty_for_hir_ty(
-                                fn_id,
-                                input,
-                                ctx.generic_args,
-                                input.span,
-                            )
-                        })
+                    self.find_sig_ty(def_id, ctx, input.span).or_else(|_| {
+                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)
+                    })
                 };
                 let (is_self_param, sig_ty) = match path.res {
                     Res::Def(_, def_id) => (false, find_sig_ty(def_id)?),
@@ -215,11 +199,7 @@ impl<'tcx> Generator<'tcx> {
             ) => self.make_input(ty, ctx, is_closure),
             HirTyKind::Tup(ty) => {
                 let tuple_ty = self
-                    .find_sig_ty(
-                        self.node_type(input.hir_id, ctx),
-                        ctx.generic_args,
-                        input.span,
-                    )?
+                    .find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?
                     .struct_ty();
 
                 self.make_struct_group(tuple_ty, ty.iter(), |generator, ty| {
@@ -293,7 +273,8 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         let item = self.tcx.hir().expect_item(fn_did);
 
-        let output_ty = self.fn_output(fn_did.into(), generic_args, span)?;
+        let output_ty =
+            self.fn_output(fn_did.into(), &ctx.with_generic_args(generic_args), span)?;
         let args = self.eval_fn_args(None, args, ctx)?;
         let inlined = self.is_inlined(fn_did);
 
@@ -302,7 +283,7 @@ impl<'tcx> Generator<'tcx> {
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_fn_item(item, false, generic_args)?.unwrap();
+                let module_id = self.eval_fn_item(item, false, generic_args)?;
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
@@ -324,7 +305,8 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         let impl_item = self.tcx.hir().expect_impl_item(impl_id);
 
-        let output_ty = self.fn_output(impl_id.into(), generic_args, span)?;
+        let output_ty =
+            self.fn_output(impl_id.into(), &ctx.with_generic_args(generic_args), span)?;
         let args = self.eval_fn_args(self_arg, args, ctx)?;
         let inlined = self.is_inlined(impl_id);
 
@@ -333,7 +315,7 @@ impl<'tcx> Generator<'tcx> {
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_impl_item(impl_item, generic_args)?.unwrap();
+                let module_id = self.eval_impl_item(impl_item, generic_args)?;
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
@@ -375,11 +357,11 @@ impl<'tcx> Generator<'tcx> {
     fn fn_output(
         &mut self,
         fn_did: DefId,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
-        let fn_sig = self.fn_sig(fn_did, Some(generic_args));
-        self.find_sig_ty(fn_sig.output(), generic_args, span)
+        let fn_sig = self.fn_sig(fn_did, ctx);
+        self.find_sig_ty(fn_sig.output(), ctx, span)
     }
 
     fn instantiate_module(

@@ -1,19 +1,19 @@
 use std::{fmt::Debug, ops::Index};
 
-use smallvec::SmallVec;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{NetList, NodeOutId},
-    sig_ty::NodeTy,
+    sig_ty::{ConstParam, NodeTy},
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Splitter {
     pub input: NodeOutId,
-    pub outputs: SmallVec<[NodeOutput; 8]>,
-    pub start: Option<u128>,
+    pub outputs: Vec<NodeOutput>,
+    pub start: Option<ConstParam>,
     pub rev: bool,
 }
 
@@ -21,7 +21,7 @@ impl Splitter {
     pub fn new(
         input: NodeOutId,
         outputs: impl IntoIterator<Item = (NodeTy, impl Into<Option<Symbol>>)>,
-        start: Option<u128>,
+        start: Option<ConstParam>,
         rev: bool,
     ) -> Self {
         Self {
@@ -35,11 +35,17 @@ impl Splitter {
         }
     }
 
-    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(&self, net_list: &T) -> u128 {
+    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(
+        &self,
+        net_list: &T,
+    ) -> ConstParam {
         let input = net_list[self.input];
         let input_width = input.ty.width();
-        self.start
-            .unwrap_or(if !self.rev { 0 } else { input_width })
+        self.start.map(Into::into).unwrap_or(if !self.rev {
+            0.into()
+        } else {
+            input_width
+        })
     }
 
     pub fn pass_all_bits(&self, net_list: &NetList) -> bool {
@@ -86,12 +92,17 @@ impl IsNode for Splitter {
             .outputs
             .iter()
             .map(|output| output.width())
-            .sum::<u128>();
-        if output_width > input_width {
-            panic!(
-                "Splitter: output width {} > input width {}",
-                output_width, input_width
-            );
+            .sum::<ConstParam>();
+
+        if let (Some(input_width), Some(output_width)) =
+            (input_width.opt_value(), output_width.opt_value())
+        {
+            if output_width > input_width {
+                panic!(
+                    "Splitter: output width {} > input width {}",
+                    output_width, input_width
+                );
+            }
         }
     }
 }

@@ -1,3 +1,12 @@
+#![cfg_attr(feature = "encoding", feature(rustc_private))]
+
+#[cfg(feature = "encoding")]
+extern crate rustc_macros;
+#[cfg(feature = "encoding")]
+extern crate rustc_serialize;
+
+#[cfg(feature = "encoding")]
+use rustc_macros::{Decodable, Encodable};
 use strum::{Display, EnumString};
 
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
@@ -37,13 +46,6 @@ pub enum BlackboxKind {
 
     UnsignedIndex,
 
-    IdxDefault,
-    IdxVal,
-    IdxSucc,
-    IdxPred,
-    IdxIsMax,
-    IdxIsMin,
-
     StdClone,
 }
 
@@ -58,9 +60,9 @@ impl BlackboxKind {
 }
 
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "encoding", derive(Encodable, Decodable))]
 pub enum BlackboxTy {
     Signal,
-    Index,
     Wrapped,
     BitVec,
     Bit,

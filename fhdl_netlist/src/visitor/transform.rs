@@ -91,7 +91,7 @@ impl<'n> Transform<'n> {
             | NodeKind::BitNot(BitNot { input, output }) => {
                 self.net_list.to_const(*input).map(|const_val| {
                     let const_val = !const_val;
-                    Const::new(output.ty, const_val.val, output.sym).into()
+                    Const::new(output.ty, const_val.val.into(), output.sym).into()
                 })
             }
 
@@ -125,32 +125,36 @@ impl<'n> Transform<'n> {
                         BinOp::Lt => (left < right).into(),
                     };
 
-                    Some(Const::new(output.ty, const_val.val, output.sym).into())
+                    Some(Const::new(output.ty, const_val.val.into(), output.sym).into())
                 }
                 _ => None,
             },
             NodeKind::Splitter(splitter) => {
-                let mut start = splitter.start(self.net_list);
-                match self.net_list.to_const(splitter.input) {
-                    Some(input) => {
+                let start = splitter.start(self.net_list);
+                match (start.opt_value(), self.net_list.to_const(splitter.input)) {
+                    (Some(mut start), Some(input)) => {
                         let rev = splitter.rev;
-                        let values = splitter.outputs.iter().map(|output| {
-                            let width = output.width();
-                            let val = input.slice(start, width, rev).val;
-                            if !rev {
-                                start += width;
-                            } else {
-                                start -= width;
-                            };
-                            val
-                        });
+                        let values = splitter
+                            .outputs
+                            .iter()
+                            .map(|output| {
+                                let width = output.width().opt_value()?;
+                                let val = input.slice(start, width, rev).val;
+                                if !rev {
+                                    start += width;
+                                } else {
+                                    start -= width;
+                                };
+                                Some(val)
+                            })
+                            .collect::<Option<Vec<_>>>();
 
-                        Some(
+                        values.map(|values| {
                             MultiConst::new(values, splitter.outputs.iter().copied())
-                                .into(),
-                        )
+                                .into()
+                        })
                     }
-                    None => {
+                    _ => {
                         if splitter.pass_all_bits(self.net_list) {
                             self.net_list.reconnect(node_id);
                         }
@@ -159,10 +163,11 @@ impl<'n> Transform<'n> {
                     }
                 }
             }
-            NodeKind::Merger(Merger { inputs, output, .. }) if inputs.len() == 1 => self
-                .net_list
-                .to_const(inputs[0])
-                .map(|const_val| Const::new(output.ty, const_val.val, output.sym).into()),
+            NodeKind::Merger(Merger { inputs, output, .. }) if inputs.len() == 1 => {
+                self.net_list.to_const(inputs[0]).map(|const_val| {
+                    Const::new(output.ty, const_val.val.into(), output.sym).into()
+                })
+            }
             NodeKind::Merger(Merger {
                 ref inputs, output, ..
             }) if inputs.len() > 1 => {
@@ -203,15 +208,15 @@ impl<'n> Transform<'n> {
                     });
 
                 val.map(|const_val| {
-                    Const::new(output.ty, const_val.val, output.sym).into()
+                    Const::new(output.ty, const_val.val.into(), output.sym).into()
                 })
             }
 
             NodeKind::ZeroExtend(ZeroExtend { input, output }) => {
                 match self.net_list.to_const(*input) {
-                    Some(const_val) => {
-                        Some(Const::new(output.ty, const_val.val, output.sym).into())
-                    }
+                    Some(const_val) => Some(
+                        Const::new(output.ty, const_val.val.into(), output.sym).into(),
+                    ),
                     None => {
                         if self.net_list[*input].width() == output.width() {
                             self.net_list.reconnect(node_id);

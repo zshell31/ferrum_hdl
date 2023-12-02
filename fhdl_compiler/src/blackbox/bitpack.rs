@@ -44,7 +44,7 @@ impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
         let to = generator.to_bitvec(ctx.module_id, rec);
 
         let ty = generator.node_type(expr.hir_id, ctx);
-        let sig_ty = generator.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+        let sig_ty = generator.find_sig_ty(ty, ctx, expr.span)?;
 
         Ok(generator.from_bitvec(ctx.module_id, to, sig_ty))
     }

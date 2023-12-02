@@ -24,7 +24,7 @@ impl BitVal {
             false => 0,
         };
 
-        let cons = Const::new(NodeTy::Bit, value, None);
+        let cons = Const::new(NodeTy::Bit, value.into(), None);
         Ok(generator
             .net_list
             .add_and_get_out(ctx.module_id, cons)

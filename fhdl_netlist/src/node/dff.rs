@@ -1,11 +1,12 @@
+use rustc_macros::{Decodable, Encodable};
 use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{encoding::Wrap, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct DFF {
-    inputs: SmallVec<[NodeOutId; 5]>,
+    inputs: Wrap<SmallVec<[NodeOutId; 5]>>,
     en_idx: u8,
     data_idx: u8,
     pub output: NodeOutput,
@@ -43,7 +44,7 @@ impl DFF {
         }
 
         Self {
-            inputs,
+            inputs: inputs.into(),
             en_idx,
             data_idx,
             output: NodeOutput::reg(ty, sym.into(), 2),

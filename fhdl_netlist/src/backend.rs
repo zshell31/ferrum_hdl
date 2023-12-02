@@ -1,7 +1,7 @@
 use std::{borrow::Cow, cmp};
 
 use either::Either;
-use fnv::FnvHashSet;
+use rustc_data_structures::fx::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::{
@@ -21,7 +21,7 @@ pub trait Backend {}
 
 pub struct Verilog<'n> {
     pub buffer: Buffer,
-    pub locals: FnvHashSet<Symbol>,
+    pub locals: FxHashSet<Symbol>,
     pub net_list: &'n NetList,
 }
 
@@ -185,19 +185,19 @@ impl<'n> Verilog<'n> {
                 },
             ) => {
                 let out_id = node_out_id.out_id();
-                let mut start = splitter.start(self.net_list);
+                let mut start = splitter.start(self.net_list).value();
                 if !rev {
                     for output in outputs.iter().take(out_id) {
-                        start += output.width();
+                        start += output.width().value();
                     }
                 } else {
                     for output in outputs.iter().take(out_id) {
-                        start -= output.width();
+                        start -= output.width().value();
                     }
                 }
 
                 self.inject_node(module_id, *input, expr, false);
-                let width = outputs[out_id].width();
+                let width = outputs[out_id].width().value();
 
                 if *rev {
                     start -= width;
@@ -258,8 +258,8 @@ fn write_out(buffer: &mut Buffer, out: &NodeOutput) {
         NetKind::Reg(_) => buffer.write_str("reg"),
     };
 
-    if out.ty.width() > 1 {
-        buffer.write_fmt(format_args!(" [{}:0]", out.ty.width() - 1));
+    if out.ty.width().value() > 1 {
+        buffer.write_fmt(format_args!(" [{}:0]", out.ty.width().value() - 1));
     }
 }
 
@@ -343,6 +343,9 @@ impl<'n> Visitor for Verilog<'n> {
 
         let node = &self.net_list[node_id];
         match &*node.kind {
+            NodeKind::GenNode(_) => {
+                panic!("Cannot generate verilog for GenNode");
+            }
             NodeKind::Input(_) => {}
             NodeKind::ModInst(ModInst {
                 name,
@@ -458,12 +461,12 @@ impl<'n> Visitor for Verilog<'n> {
                     ..
                 },
             ) => {
-                let input_width = self.net_list[*input].ty.width();
-                let mut start = splitter.start(self.net_list);
+                let input_width = self.net_list[*input].ty.width().value();
+                let mut start = splitter.start(self.net_list).value();
                 let input = self.inject_input(*input, false);
 
                 for output in outputs.iter() {
-                    let width = output.ty.width();
+                    let width = output.ty.width().value();
 
                     if !(output.is_skip || output.inject) {
                         let output = output.sym.unwrap();
@@ -559,7 +562,7 @@ impl<'n> Visitor for Verilog<'n> {
                     let output = output.sym.unwrap();
 
                     let sel_sym = self.inject_input(sel, false);
-                    let sel_width = self.net_list[sel].ty.width();
+                    let sel_width = self.net_list[sel].ty.width().value();
 
                     let has_mask = variants.iter().any(|mask| mask.mask != 0);
 

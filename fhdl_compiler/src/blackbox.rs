@@ -92,13 +92,6 @@ eval_expr!(
 
     UnsignedIndex => index::UnsignedIndex,
 
-    IdxDefault => index::IdxDefault,
-    IdxVal => index::IdxVal,
-    IdxSucc => index::IdxSucc,
-    IdxPred => index::IdxPred,
-    IdxIsMin => index::IdxIsMin,
-    IdxIsMax => index::IdxIsMax,
-
     StdClone => std::StdClone
 
 );

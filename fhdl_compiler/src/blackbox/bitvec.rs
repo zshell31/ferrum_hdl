@@ -90,9 +90,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
         let rec = generator.eval_expr(rec, ctx)?;
 
         let ty = generator.node_type(expr.hir_id, ctx);
-        let width = generator
-            .find_sig_ty(ty, ctx.generic_args, expr.span)?
-            .width();
+        let width = generator.find_sig_ty(ty, ctx, expr.span)?.width();
 
         let rec = generator.to_bitvec(ctx.module_id, rec);
 
@@ -154,7 +152,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
         let rec = generator.eval_expr(rec, ctx)?.node_out_id();
 
         let ty = generator.node_type(expr.hir_id, ctx);
-        let sig_ty = generator.find_sig_ty(ty, ctx.generic_args, expr.span)?;
+        let sig_ty = generator.find_sig_ty(ty, ctx, expr.span)?;
 
         Ok(generator.from_bitvec(ctx.module_id, rec, sig_ty))
     }

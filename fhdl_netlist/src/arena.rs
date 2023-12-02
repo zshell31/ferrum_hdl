@@ -1,83 +1,42 @@
-use std::{
-    cell::OnceCell,
-    fmt::{self, Arguments, Debug},
-    mem,
-    ops::{Deref, DerefMut},
-};
+use std::{cell::OnceCell, fmt::Arguments, mem};
 
 use bumpalo::{
     collections::{vec::Vec as BumpVec, CollectIn},
     Bump,
 };
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use smallvec::SmallVec;
 
-pub struct Vec<T: 'static>(BumpVec<'static, T>);
+use crate::encoding::Wrap;
 
-impl<T: 'static> Vec<T> {
-    pub fn collect_from(iter: impl IntoIterator<Item = T>) -> Self {
-        Self(unsafe { with_arena().alloc_vec(iter) })
-    }
+pub type ArenaValue<T> = Wrap<&'static T>;
 
-    pub fn collect_from_opt(iter: impl IntoIterator<Item = Option<T>>) -> Option<Self> {
-        unsafe { with_arena().alloc_vec_opt(iter) }.map(Self)
+impl<E: Encoder, T: 'static + Encodable<E>> Encodable<E> for ArenaValue<T> {
+    fn encode(&self, s: &mut E) {
+        self.0.encode(s)
     }
 }
 
-impl<T: 'static> IntoIterator for Vec<T> {
-    type Item = T;
-
-    type IntoIter = <BumpVec<'static, T> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+impl<D: Decoder, T: 'static + Decodable<D> + Copy> Decodable<D> for ArenaValue<T> {
+    fn decode(d: &mut D) -> Self {
+        Wrap(unsafe { with_arena().alloc(Decodable::decode(d)) })
     }
 }
 
-impl<'a, T: 'static> IntoIterator for &'a Vec<T> {
-    type Item = &'a T;
+pub type ArenaSlice<T> = Wrap<&'static [T]>;
 
-    type IntoIter = <&'a BumpVec<'static, T> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        (&self.0).into_iter()
+impl<E: Encoder, T: 'static + Encodable<E>> Encodable<E> for ArenaSlice<T> {
+    fn encode(&self, s: &mut E) {
+        self.0.encode(s)
     }
 }
 
-impl<'a, T: 'static> IntoIterator for &'a mut Vec<T> {
-    type Item = &'a mut T;
-
-    type IntoIter = <&'a mut BumpVec<'static, T> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        (&mut self.0).into_iter()
-    }
-}
-
-impl<T: Debug> Debug for Vec<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl<T: Clone> Clone for Vec<T> {
-    fn clone(&self) -> Self {
-        Self(unsafe { with_arena().alloc_vec(self.0.iter().map(Clone::clone)) })
-    }
-}
-
-impl<T> Deref for Vec<T> {
-    type Target = BumpVec<'static, T>;
-
-    #[inline(always)]
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl<T> DerefMut for Vec<T> {
-    #[inline(always)]
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
+impl<D: Decoder, T: 'static + Decodable<D> + Copy> Decodable<D> for ArenaSlice<T> {
+    fn decode(d: &mut D) -> Self {
+        let len = d.read_usize();
+        Wrap(unsafe {
+            with_arena().alloc_from_iter((0 .. len).map(|_| Decodable::decode(d)))
+        })
     }
 }
 

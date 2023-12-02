@@ -1,9 +1,11 @@
 use std::fmt::{self, Display};
 
+use rustc_macros::{Decodable, Encodable};
+
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub enum BinOp {
     Add,
     And,
@@ -50,7 +52,7 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct BinOpNode {
     pub bin_op: BinOp,
     pub inputs: (NodeOutId, NodeOutId),

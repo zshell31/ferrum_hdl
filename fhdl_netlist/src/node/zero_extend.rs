@@ -1,3 +1,5 @@
+use rustc_macros::{Decodable, Encodable};
+
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{NetList, NodeOutId},
@@ -5,7 +7,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct ZeroExtend {
     pub input: NodeOutId,
     pub output: NodeOutput,
@@ -47,13 +49,16 @@ impl IsNode for ZeroExtend {
     }
 
     fn validate(&self, net_list: &NetList) {
-        let input_width = net_list[self.input].width();
-        if input_width > self.output.width() {
-            panic!(
-                "ZeroExtend: output width {} < input width {}",
-                self.output.width(),
-                input_width
-            );
+        if let (Some(input_width), Some(output_width)) = (
+            net_list[self.input].width().opt_value(),
+            self.output.width().opt_value(),
+        ) {
+            if input_width > output_width {
+                panic!(
+                    "ZeroExtend: output width {} < input width {}",
+                    output_width, input_width
+                );
+            }
         }
     }
 }

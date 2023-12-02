@@ -1,4 +1,4 @@
-use smallvec::SmallVec;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
@@ -7,13 +7,13 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct ModInst {
     pub name: Option<Symbol>,
     pub inlined: bool,
     pub module_id: ModuleId,
-    pub inputs: SmallVec<[NodeOutId; 8]>,
-    pub outputs: SmallVec<[NodeOutput; 8]>,
+    pub inputs: Vec<NodeOutId>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl ModInst {

@@ -34,12 +34,13 @@ impl<'tcx> Generator<'tcx> {
             let span = arg.span;
             let ty = self.node_type(arg.hir_id, ctx);
             let generic_args = ctx.instantiate(self.tcx, utils::subst(ty).unwrap());
+            let new_ctx = ctx.with_generic_args(generic_args);
 
-            let fn_sig = self.fn_sig(fn_id, Some(generic_args));
-            let input_ty = self.find_sig_ty(fn_sig.inputs()[0], generic_args, span)?;
-            let output_ty = self.find_sig_ty(fn_sig.output(), generic_args, span)?;
+            let fn_sig = self.fn_sig(fn_id, &new_ctx);
+            let input_ty = self.find_sig_ty(fn_sig.inputs()[0], &new_ctx, span)?;
+            let output_ty = self.find_sig_ty(fn_sig.output(), &new_ctx, span)?;
 
-            if fn_id.is_local() {
+            if self.is_local_def_id(fn_id) {
                 let input = self.get_closure_inputs_for_sig_ty(input_ty, ctx);
 
                 let closure = match self.find_local_impl_id(fn_id, generic_args) {
@@ -62,7 +63,7 @@ impl<'tcx> Generator<'tcx> {
 
                 return Ok(closure);
             } else {
-                let blackbox = self.find_blackbox(fn_id, ctx.generic_args, span)?;
+                let blackbox = self.find_blackbox(fn_id, ctx, span)?;
                 if let Some(from) = blackbox.kind.is_cast() {
                     let conversion = Conversion::new(from);
                     let from = self.get_closure_inputs_for_sig_ty(input_ty, ctx);

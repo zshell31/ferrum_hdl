@@ -1,9 +1,23 @@
 use std::fmt::{self, Arguments, Debug, Display};
 
+use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
+
 use crate::arena::with_arena;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol(&'static str);
+
+impl<E: Encoder> Encodable<E> for Symbol {
+    fn encode(&self, e: &mut E) {
+        self.as_str().encode(e);
+    }
+}
+
+impl<D: Decoder> Decodable<D> for Symbol {
+    fn decode(d: &mut D) -> Self {
+        Self::new(d.read_str())
+    }
+}
 
 impl !Sync for Symbol {}
 impl !Send for Symbol {}

@@ -5,9 +5,10 @@ mod with_id;
 
 use std::ops::{Deref, Index, IndexMut};
 
-use fnv::{FnvHashMap, FnvHashSet};
 pub use ident::{ModuleId, NodeId, NodeInId, NodeOutId};
 pub(crate) use in_out::InOut;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_macros::{Decodable, Encodable};
 pub use with_id::WithId;
 
 pub use self::module::Module;
@@ -18,14 +19,14 @@ use crate::{
     symbol::Symbol,
 };
 
-pub type Links = FnvHashSet<NodeId>;
+pub type Links = FxHashSet<NodeId>;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Encodable, Decodable)]
 pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,
     nodes: Vec<Node>,
-    links: FnvHashMap<NodeOutId, FnvHashSet<NodeInId>>,
+    links: FxHashMap<NodeOutId, FxHashSet<NodeInId>>,
 }
 
 impl !Sync for NetList {}
@@ -225,7 +226,7 @@ impl NetList {
     }
 
     pub fn const_val(&mut self, mod_id: ModuleId, ty: NodeTy, val: u128) -> NodeOutId {
-        self.add_and_get_out(mod_id, Const::new(ty, val, None))
+        self.add_and_get_out(mod_id, Const::new(ty, val.into(), None))
     }
 
     pub fn const_zero(&mut self, mod_id: ModuleId, ty: NodeTy) -> NodeOutId {
@@ -375,12 +376,16 @@ impl NetList {
 
     pub(crate) fn to_const(&self, node_out_id: NodeOutId) -> Option<ConstVal> {
         match &*self[node_out_id.node_id()].kind {
-            NodeKind::Const(Const { value, output }) => {
-                Some(ConstVal::new(*value, output.width()))
-            }
+            NodeKind::Const(Const { value, output }) => Some(ConstVal::new(
+                value.opt_value()?,
+                output.width().opt_value()?,
+            )),
             NodeKind::MultiConst(MultiConst { values, outputs }) => {
                 let out_id = node_out_id.out_id();
-                Some(ConstVal::new(values[out_id], outputs[out_id].width()))
+                Some(ConstVal::new(
+                    values[out_id],
+                    outputs[out_id].width().opt_value()?,
+                ))
             }
             _ => None,
         }
@@ -408,11 +413,8 @@ impl NetList {
             NodeOutId(NodeOutId),
         }
 
-        let mut map = FnvHashMap::default();
-        fn get_node_out_id(
-            map: &FnvHashMap<NodeId, Item>,
-            input: NodeOutId,
-        ) -> NodeOutId {
+        let mut map = FxHashMap::default();
+        fn get_node_out_id(map: &FxHashMap<NodeId, Item>, input: NodeOutId) -> NodeOutId {
             match map.get(&input.node_id()).unwrap() {
                 Item::NodeId(node_id) => NodeOutId::new(*node_id, input.out_id()),
                 Item::NodeOutId(node_out_id) => *node_out_id,

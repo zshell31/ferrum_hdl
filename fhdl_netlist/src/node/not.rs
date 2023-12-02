@@ -1,7 +1,9 @@
+use rustc_macros::{Decodable, Encodable};
+
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Not {
     pub input: NodeOutId,
     pub output: NodeOutput,

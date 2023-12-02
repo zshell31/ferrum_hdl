@@ -1,8 +1,9 @@
 use fhdl_const_func::mask;
+use rustc_macros::{Decodable, Encodable};
 
 use crate::const_val::ConstVal;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, Encodable, Decodable)]
 pub struct BitVecMask {
     pub val: u128,
     pub mask: u128,

@@ -1,14 +1,19 @@
 use std::{
     borrow::Cow,
-    fmt::{self, Debug},
+    fmt::{self, Debug, Display},
+    iter::Sum,
 };
 
 use fhdl_blackbox::BlackboxTy;
 use fhdl_const_func::clog2_len;
+use rustc_macros::{Decodable, Encodable};
 
-use crate::{arena::with_arena, symbol::Symbol};
+use crate::{
+    arena::{with_arena, ArenaSlice, ArenaValue},
+    symbol::Symbol,
+};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct Named<T> {
     pub inner: T,
     pub name: Symbol,
@@ -23,7 +28,70 @@ impl<T> Named<T> {
         self.name.as_str() == s
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+pub enum Param<T> {
+    Value(T),
+    Generic,
+}
+
+impl<T: Display> Display for Param<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Value(val) => val.fmt(f),
+            Self::Generic => write!(f, "Generic"),
+        }
+    }
+}
+
+impl<T> From<T> for Param<T> {
+    fn from(value: T) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl<T> Param<T> {
+    pub fn opt_value(self) -> Option<T> {
+        match self {
+            Self::Value(value) => Some(value),
+            _ => None,
+        }
+    }
+    pub fn value(self) -> T {
+        self.opt_value().expect("expected value, got param")
+    }
+
+    pub fn is_value(self) -> bool {
+        matches!(self, Self::Value(_))
+    }
+
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Param<U> {
+        match self {
+            Self::Value(val) => Param::Value(f(val)),
+            Self::Generic => Param::Generic,
+        }
+    }
+}
+
+pub type ConstParam = Param<u128>;
+
+impl Sum for ConstParam {
+    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
+        let mut sum = 0;
+        for item in iter {
+            match item.opt_value() {
+                Some(val) => {
+                    sum += val;
+                }
+                None => return Self::Generic,
+            }
+        }
+
+        Self::Value(sum)
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum NodeTy {
     Bool,
     Bit,
@@ -33,11 +101,12 @@ pub enum NodeTy {
     U64,
     U128,
     Usize,
-    Unsigned(u128),
-    BitVec(u128),
+    Unsigned(ConstParam),
+    BitVec(ConstParam),
     Enum(EnumTy),
     Clock,
     ClockDomain,
+    Unknown,
 }
 
 impl Debug for NodeTy {
@@ -56,6 +125,7 @@ impl Debug for NodeTy {
             Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
+            Self::Unknown => "Unknown".into(),
         };
 
         f.write_str(s.as_ref())
@@ -80,21 +150,22 @@ impl NodeTy {
         )
     }
 
-    pub fn width(&self) -> u128 {
+    pub fn width(&self) -> ConstParam {
         match self {
-            Self::Bool => 1,
-            Self::Bit => 1,
-            Self::U8 => 8,
-            Self::U16 => 16,
-            Self::U32 => 32,
-            Self::U64 => 64,
-            Self::U128 => 128,
-            Self::Usize => usize::BITS as u128,
+            Self::Bool => 1.into(),
+            Self::Bit => 1.into(),
+            Self::U8 => 8.into(),
+            Self::U16 => 16.into(),
+            Self::U32 => 32.into(),
+            Self::U64 => 64.into(),
+            Self::U128 => 128.into(),
+            Self::Usize => (usize::BITS as u128).into(),
             Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,
             Self::Enum(enum_ty) => enum_ty.width(),
-            Self::Clock => 1,
-            Self::ClockDomain => 1,
+            Self::Clock => 1.into(),
+            Self::ClockDomain => 1.into(),
+            Self::Unknown => ConstParam::Generic,
         }
     }
 
@@ -117,20 +188,23 @@ impl NodeTy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct ArrayTy {
     count: u128,
-    ty: &'static SignalTy,
+    ty: ArenaValue<SignalTy>,
 }
 
 impl ArrayTy {
     pub fn new(count: u128, ty: &'static SignalTy) -> Self {
-        Self { count, ty }
+        Self {
+            count,
+            ty: ty.into(),
+        }
     }
 
     #[inline(always)]
-    pub fn width(&self) -> u128 {
-        self.count * self.ty.width()
+    pub fn width(&self) -> ConstParam {
+        self.ty.width().map(|width| self.count * width)
     }
 
     #[inline(always)]
@@ -139,7 +213,7 @@ impl ArrayTy {
     }
 
     #[inline(always)]
-    pub fn item_width(&self) -> u128 {
+    pub fn item_width(&self) -> ConstParam {
         self.ty.width()
     }
 
@@ -149,8 +223,8 @@ impl ArrayTy {
     }
 
     #[inline(always)]
-    pub fn item_ty(&self) -> &'static SignalTy {
-        self.ty
+    pub fn item_ty(&self) -> &SignalTy {
+        self.ty.0
     }
 }
 
@@ -166,7 +240,7 @@ impl<'a> Iterator for ArrayTyIter<'a> {
     fn next(&mut self) -> Option<Self::Item> {
         if self.ind < self.ty.count {
             self.ind += 1;
-            Some(*self.ty.ty)
+            Some(*self.ty.ty.0)
         } else {
             None
         }
@@ -180,20 +254,23 @@ impl<'a> Iterator for ArrayTyIter<'a> {
 
 impl<'a> ExactSizeIterator for ArrayTyIter<'a> {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct StructTy {
-    width: u128,
-    tys: &'static [Named<SignalTy>],
+    width: ConstParam,
+    tys: ArenaSlice<Named<SignalTy>>,
 }
 
 impl StructTy {
     pub fn new(tys: &'static [Named<SignalTy>]) -> Self {
         let width = tys.iter().map(|ty| ty.inner.width()).sum();
-        Self { width, tys }
+        Self {
+            width,
+            tys: tys.into(),
+        }
     }
 
     #[inline(always)]
-    pub fn width(&self) -> u128 {
+    pub fn width(&self) -> ConstParam {
         self.width
     }
 
@@ -209,7 +286,7 @@ impl StructTy {
 
     #[inline(always)]
     pub fn tys(&self) -> &[Named<SignalTy>] {
-        self.tys
+        self.tys.0
     }
 
     #[inline(always)]
@@ -229,19 +306,31 @@ impl StructTy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct EnumTy {
-    data_width: u128,
+    data_width: ConstParam,
     discr_width: u128,
-    variants: &'static [Named<SignalTy>],
+    variants: ArenaSlice<Named<SignalTy>>,
 }
 
-fn data_width(variants: &'static [Named<SignalTy>]) -> u128 {
-    variants
-        .iter()
-        .map(|ty| ty.inner.width())
-        .max()
-        .unwrap_or(0)
+// impl<D: Decoder> Decodable<D> for
+
+fn data_width(variants: &'static [Named<SignalTy>]) -> ConstParam {
+    let mut max = 0;
+    for variant in variants {
+        match variant.inner.width().opt_value() {
+            Some(width) => {
+                if width > max {
+                    max = width;
+                }
+            }
+            None => {
+                return ConstParam::Generic;
+            }
+        }
+    }
+
+    ConstParam::Value(max)
 }
 
 fn discr_width(variants: &'static [Named<SignalTy>]) -> u128 {
@@ -253,13 +342,14 @@ impl EnumTy {
         Self {
             data_width: data_width(variants),
             discr_width: discr_width(variants),
-            variants,
+            variants: variants.into(),
         }
     }
 
     #[inline(always)]
-    pub fn width(&self) -> u128 {
-        self.discr_width() + self.data_width()
+    pub fn width(&self) -> ConstParam {
+        self.data_width()
+            .map(|data_width| self.discr_width() + data_width)
     }
 
     #[inline(always)]
@@ -268,7 +358,7 @@ impl EnumTy {
     }
 
     #[inline(always)]
-    pub fn data_width(&self) -> u128 {
+    pub fn data_width(&self) -> ConstParam {
         self.data_width
     }
 
@@ -282,7 +372,7 @@ impl EnumTy {
     }
 
     pub fn variants(&self) -> &[Named<SignalTy>] {
-        self.variants
+        self.variants.0
     }
 
     pub fn variant(&self, idx: usize) -> Named<SignalTy> {
@@ -290,7 +380,7 @@ impl EnumTy {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum SignalTyKind {
     Node(NodeTy),
     Array(ArrayTy),
@@ -325,7 +415,7 @@ impl From<EnumTy> for SignalTyKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct SignalTy {
     pub blackbox: Option<BlackboxTy>,
     pub kind: SignalTyKind,
@@ -405,7 +495,7 @@ impl SignalTy {
         matches!(self.kind, SignalTyKind::Enum(_))
     }
 
-    pub fn width(&self) -> u128 {
+    pub fn width(&self) -> ConstParam {
         match self.kind {
             SignalTyKind::Node(ty) => ty.width(),
             SignalTyKind::Array(ty) => ty.width(),

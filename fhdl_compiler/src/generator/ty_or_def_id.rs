@@ -1,11 +1,10 @@
 use std::{fmt::Debug, iter};
 
-use ferrum_hdl::const_functions::clog2;
 use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
     group::ItemId,
-    sig_ty::{NodeTy, SignalTy, SignalTyKind},
+    sig_ty::{ConstParam, NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
@@ -16,17 +15,18 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
     Ty as HirTy,
 };
-use rustc_middle::ty::{EarlyBinder, GenericArgsRef, Ty, TyCtxt};
+use rustc_middle::ty::{Ty, TyCtxt};
 use rustc_span::Span;
 use rustc_type_ir::{
     TyKind::{self},
     UintTy,
 };
 
-use super::{generic::Generics, Generator, SigTyInfo};
+use super::{generic::Generics, GenMode, Generator, SigTyInfo};
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
+    eval_context::EvalContext,
     utils,
 };
 
@@ -39,18 +39,18 @@ pub enum TyOrDefId<'tcx> {
 }
 
 pub trait IsTyOrDefId<'tcx> {
-    fn make(self, tcx: TyCtxt<'tcx>, generics: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx>;
+    fn make(self, tcx: TyCtxt<'tcx>, ctx: &EvalContext<'tcx>) -> TyOrDefId<'tcx>;
 }
 
 impl<'tcx> IsTyOrDefId<'tcx> for DefId {
-    fn make(self, _: TyCtxt<'tcx>, _: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx> {
+    fn make(self, _: TyCtxt<'tcx>, _: &EvalContext<'tcx>) -> TyOrDefId<'tcx> {
         TyOrDefId::DefId(self)
     }
 }
 
 impl<'tcx> IsTyOrDefId<'tcx> for Ty<'tcx> {
-    fn make(self, tcx: TyCtxt<'tcx>, generics: GenericArgsRef<'tcx>) -> TyOrDefId<'tcx> {
-        let ty = EarlyBinder::bind(self).instantiate(tcx, generics);
+    fn make(self, tcx: TyCtxt<'tcx>, ctx: &EvalContext<'tcx>) -> TyOrDefId<'tcx> {
+        let ty = ctx.instantiate(tcx, self);
 
         TyOrDefId::Ty(ty)
     }
@@ -71,7 +71,7 @@ impl<'tcx> TyOrDefId<'tcx> {
         }
     }
 
-    pub fn is_local(&self) -> bool {
+    fn is_local(&self) -> bool {
         matches!(self.def_id(), Some(did) if did.is_local())
     }
 
@@ -105,19 +105,29 @@ impl<'tcx> TyOrDefIdWithGen<'tcx> {
         self.ty_or_def_id.as_string(tcx)
     }
 
-    pub fn generic_ty(&self, ind: usize) -> Option<SignalTy> {
+    pub fn opt_generic_ty(&self, ind: usize) -> Option<SignalTy> {
         self.generics
             .as_ref()
             .and_then(|generics| generics.as_ty(ind))
     }
 
-    pub fn generic_const<T: TryFrom<u128>>(&self, ind: usize) -> Option<T> {
+    pub fn generic_ty(&self, ind: usize, span: Span) -> Result<SignalTy, Error> {
+        self.opt_generic_ty(ind)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedTy, span).into())
+    }
+
+    pub fn opt_generic_const(&self, ind: usize) -> Option<ConstParam> {
         self.generics
             .as_ref()
             .and_then(|generics| generics.as_const(ind))
     }
 
-    pub fn is_local(&self) -> bool {
+    pub fn generic_const(&self, ind: usize, span: Span) -> Result<ConstParam, Error> {
+        self.opt_generic_const(ind)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, span).into())
+    }
+
+    fn is_local(&self) -> bool {
         self.ty_or_def_id.is_local()
     }
 }
@@ -126,11 +136,11 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_blackbox<T: IsTyOrDefId<'tcx>>(
         &mut self,
         key: T,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<Blackbox<'tcx>, Error> {
-        let key = key.make(self.tcx, generics);
-        let key = self.eval_generics(key, generics, span)?;
+        let key = key.make(self.tcx, ctx);
+        let key = self.eval_generics(key, ctx, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -178,21 +188,39 @@ impl<'tcx> Generator<'tcx> {
     pub fn find_sig_ty<T: IsTyOrDefId<'tcx>>(
         &mut self,
         key: T,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
-        self.find_sig_ty_info(key, generics, span)
-            .map(|res| res.sig_ty)
+        self.find_sig_ty_info(key, ctx, span).map(|res| res.sig_ty)
+    }
+
+    fn is_local_key(&self, key: TyOrDefIdWithGen<'tcx>) -> bool {
+        match self.mode {
+            GenMode::Crate(_) => {
+                key.is_local()
+                    || key
+                        .def_id()
+                        .map(|def_id| self.is_synth_ty(def_id))
+                        .unwrap_or_default()
+            }
+            GenMode::Fhdl => {
+                key.is_local()
+                    && key
+                        .def_id()
+                        .map(|def_id| self.is_synth_ty(def_id))
+                        .unwrap_or_default()
+            }
+        }
     }
 
     pub fn find_sig_ty_info<T: IsTyOrDefId<'tcx>>(
         &mut self,
         key: T,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SigTyInfo<'tcx>, Error> {
-        let key = key.make(self.tcx, generics);
-        let key = self.eval_generics(key, generics, span)?;
+        let key = key.make(self.tcx, ctx);
+        let key = self.eval_generics(key, ctx, span)?;
 
         // TODO: check crate
         #[allow(clippy::map_entry)]
@@ -200,16 +228,17 @@ impl<'tcx> Generator<'tcx> {
             let mut sig_ty = None;
 
             if let Some(ty) = &key.ty() {
-                if key.is_local() {
-                    sig_ty = Some(self.eval_adt_ty(ty, generics, span)?);
+                if self.is_local_key(key) {
+                    sig_ty = Some(self.eval_adt_ty(ty, ctx, span)?);
                 } else {
                     match ty.kind() {
                         TyKind::Array(..) => {
-                            let ty =
-                                unsafe { with_arena().alloc(key.generic_ty(0).unwrap()) };
-                            let cons = key.generic_const(1).unwrap();
+                            let ty = unsafe {
+                                with_arena().alloc(key.opt_generic_ty(0).unwrap())
+                            };
+                            let cons = key.opt_generic_const(1).unwrap();
 
-                            sig_ty = Some(SignalTy::mk_array(None, cons, *ty));
+                            sig_ty = Some(SignalTy::mk_array(None, cons.value(), *ty));
                         }
                         TyKind::Bool => {
                             sig_ty = Some(SignalTy::new(None, NodeTy::Bool.into()));
@@ -235,12 +264,11 @@ impl<'tcx> Generator<'tcx> {
                         TyKind::Tuple(ty) => {
                             sig_ty = Some(SignalTy::new(
                                 None,
-                                SignalTyKind::Struct(self.make_tuple_ty(
-                                    ty.iter(),
-                                    |generator, ty| {
-                                        generator.find_sig_ty(ty, generics, span)
-                                    },
-                                )?),
+                                SignalTyKind::Struct(
+                                    self.make_tuple_ty(ty.iter(), |generator, ty| {
+                                        generator.find_sig_ty(ty, ctx, span)
+                                    })?,
+                                ),
                             ));
                         }
                         _ => {}
@@ -250,7 +278,7 @@ impl<'tcx> Generator<'tcx> {
 
             if sig_ty.is_none() {
                 if let Some(def_id) = key.def_id() {
-                    sig_ty = self.find_sig_ty_(&key, def_id);
+                    sig_ty = self.find_sig_ty_(&key, def_id, span)?;
                 }
             }
 
@@ -273,21 +301,45 @@ impl<'tcx> Generator<'tcx> {
                     span,
                 )
             })
+            .map(|sig_ty| {
+                println!("key {:?} => sig_ty {:?}", key, sig_ty);
+                sig_ty
+            })
             .map_err(Into::into)
     }
+
+    // pub fn generic_const(
+    //     &self,
+    //     key: &TyOrDefIdWithGen<'tcx>,
+    //     ind: usize,
+    //     span: Span,
+    // ) -> Result<ConstParam, Error> {
+    //     let param = key.generic_const(ind);
+    //     (match self.mode {
+    //         GenMode::Crate(_) => param.filter(|param| param.is_value()),
+    //         GenMode::Fhdl => param,
+    //     })
+    //     .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, span).into())
+    // }
 
     fn find_sig_ty_(
         &mut self,
         key: &TyOrDefIdWithGen<'tcx>,
         def_id: DefId,
-    ) -> Option<SignalTy> {
+        span: Span,
+    ) -> Result<Option<SignalTy>, Error> {
         if self.crates.is_ferrum_hdl(def_id) {
-            let blackbox_ty = self.find_blackbox_ty(def_id)?;
+            let blackbox_ty = match self.find_blackbox_ty(def_id) {
+                Some(blackbox_ty) => blackbox_ty,
+                None => {
+                    return Ok(None);
+                }
+            };
 
-            return match blackbox_ty {
-                BlackboxTy::Signal => key.generic_ty(1),
-                BlackboxTy::Wrapped => key.generic_ty(1),
-                BlackboxTy::BitVec => key.generic_const(0).map(|val| {
+            return Ok(match blackbox_ty {
+                BlackboxTy::Signal => key.opt_generic_ty(1),
+                BlackboxTy::Wrapped => key.opt_generic_ty(1),
+                BlackboxTy::BitVec => key.opt_generic_const(0).map(|val| {
                     SignalTy::new(Some(blackbox_ty), NodeTy::BitVec(val).into())
                 }),
                 BlackboxTy::Bit => {
@@ -296,11 +348,15 @@ impl<'tcx> Generator<'tcx> {
                 BlackboxTy::Clock => {
                     Some(SignalTy::new(Some(blackbox_ty), NodeTy::Clock.into()))
                 }
-                BlackboxTy::Unsigned => key.generic_const(0).map(|val| {
-                    SignalTy::new(Some(blackbox_ty), NodeTy::Unsigned(val).into())
-                }),
+                BlackboxTy::Unsigned => {
+                    let param = key.generic_const(0, span)?;
+                    Some(SignalTy::new(
+                        Some(blackbox_ty),
+                        NodeTy::Unsigned(param).into(),
+                    ))
+                }
                 BlackboxTy::UnsignedShort => {
-                    let n = key.generic_const(0).unwrap();
+                    let n = key.opt_generic_const(0).unwrap();
                     self.make_tuple_ty(iter::once(NodeTy::Unsigned(n)), |_, prim_ty| {
                         Ok(SignalTy::new(None, prim_ty.into()))
                     })
@@ -308,22 +364,15 @@ impl<'tcx> Generator<'tcx> {
                     .map(|ty| SignalTy::new(Some(blackbox_ty), ty.into()))
                 }
                 BlackboxTy::Array => {
-                    let n = key.generic_const(0)?;
-                    let ty = key.generic_ty(1)?;
+                    let n = key.opt_generic_const(0).unwrap();
+                    let ty = key.opt_generic_ty(1).unwrap();
 
-                    Some(SignalTy::mk_array(Some(blackbox_ty), n, ty))
+                    Some(SignalTy::mk_array(Some(blackbox_ty), n.value(), ty))
                 }
-                BlackboxTy::Index => {
-                    let n = key.generic_const(0)?;
-                    Some(SignalTy::new(
-                        Some(blackbox_ty),
-                        NodeTy::Unsigned(clog2(n) as u128).into(),
-                    ))
-                }
-            };
+            });
         }
 
-        None
+        Ok(None)
     }
 
     pub fn find_blackbox_ty(&mut self, def_id: DefId) -> Option<BlackboxTy> {
@@ -337,23 +386,21 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         fn_id: LocalDefId,
         ty: &HirTy<'tcx>,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
         let ty = self.ast_ty_to_ty(fn_id, ty);
-        self.find_sig_ty(ty, generics, span)
+        self.find_sig_ty(ty, ctx, span)
     }
 
     pub fn eval_generics(
         &mut self,
         ty_or_def_id: TyOrDefId<'tcx>,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<TyOrDefIdWithGen<'tcx>, Error> {
         let generics = match ty_or_def_id {
-            TyOrDefId::Ty(ty) if !ty_or_def_id.is_local() => {
-                Generics::from_ty(&ty, self, generics, span)?
-            }
+            TyOrDefId::Ty(ty) => Generics::from_ty(&ty, self, ctx, span)?,
             _ => None,
         };
 
@@ -365,10 +412,10 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn eval_generic_args(
         &mut self,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<Generics, Error> {
-        Generics::from_args(self, generic_args.into_iter().map(Some), span)
+        Generics::from_args(self, ctx.generic_args.into_iter().map(Some), ctx, span)
     }
 
     pub fn find_fhdl_tool_attr(
@@ -414,6 +461,14 @@ impl<'tcx> Generator<'tcx> {
         }
 
         None
+    }
+
+    pub fn is_synth(&self, def_id: DefId) -> bool {
+        self.find_fhdl_tool_attr("synth", def_id).is_some()
+    }
+
+    pub fn is_synth_ty(&self, def_id: DefId) -> bool {
+        self.find_fhdl_tool_attr("synth_ty", def_id).is_some()
     }
 
     pub fn ignore_ty(&self, def_id: DefId) -> bool {

@@ -191,7 +191,11 @@ impl<'tcx> Generator<'tcx> {
         let discr_val = enum_ty.discr_val(variant_idx);
         let discr_val = self.net_list.add(
             module_id,
-            Const::new(NodeTy::BitVec(enum_ty.discr_width()), discr_val, None),
+            Const::new(
+                NodeTy::BitVec(enum_ty.discr_width().into()),
+                discr_val.into(),
+                None,
+            ),
         );
         let discr_val = self.net_list[discr_val].only_one_out().node_out_id();
 

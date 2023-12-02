@@ -9,6 +9,7 @@ use rustc_span::Span;
 
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
+    eval_context::EvalContext,
     generator::Generator,
 };
 
@@ -17,7 +18,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         fields: impl IntoIterator<Item = &'tcx FieldDef>,
         adt_generics: GenericArgsRef<'tcx>,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
         let tcx = self.tcx;
@@ -36,7 +37,7 @@ impl<'tcx> Generator<'tcx> {
                 };
                 if check_ty {
                     Some(
-                        self.find_sig_ty(ty, generics, span)
+                        self.find_sig_ty(ty, ctx, span)
                             .map(|sig_ty| Named::new(sig_ty, sym)),
                     )
                 } else {
@@ -55,17 +56,13 @@ impl<'tcx> Generator<'tcx> {
     pub fn eval_adt_ty(
         &mut self,
         ty: &Ty<'tcx>,
-        generics: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
         match ty.kind() {
-            TyKind::Adt(adt, adt_generics) if adt.is_struct() => self
-                .make_struct_ty_from_fields(
-                    adt.all_fields(),
-                    adt_generics,
-                    generics,
-                    span,
-                ),
+            TyKind::Adt(adt, adt_generics) if adt.is_struct() => {
+                self.make_struct_ty_from_fields(adt.all_fields(), adt_generics, ctx, span)
+            }
             TyKind::Adt(adt, adt_generics) if adt.is_enum() => {
                 let variants = unsafe {
                     with_arena().alloc_from_res_iter(adt.variants().iter().map(
@@ -73,7 +70,7 @@ impl<'tcx> Generator<'tcx> {
                             self.make_struct_ty_from_fields(
                                 variant.fields.iter(),
                                 adt_generics,
-                                generics,
+                                ctx,
                                 span,
                             )
                             .map(|ty| Named::new(ty, Symbol::new(variant.name.as_str())))

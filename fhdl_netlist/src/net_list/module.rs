@@ -1,6 +1,8 @@
 #![allow(clippy::ptr_arg)]
-use fnv::FnvBuildHasher;
-use indexmap::IndexSet;
+use std::fmt::Debug;
+
+use rustc_data_structures::fx::FxIndexSet;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{
     ident::{NodeId, NodeOutId},
@@ -8,9 +10,7 @@ use super::{
 };
 use crate::{node::Node, symbol::Symbol};
 
-type FnvIndexSet<T> = IndexSet<T, FnvBuildHasher>;
-
-#[derive(Debug)]
+#[derive(Debug, Encodable, Decodable)]
 pub struct Module {
     pub name: Symbol,
     pub is_skip: bool,
@@ -18,8 +18,8 @@ pub struct Module {
     head: Option<NodeId>,
     tail: Option<NodeId>,
     len: usize,
-    inputs: FnvIndexSet<NodeId>,
-    outputs: FnvIndexSet<NodeOutId>,
+    inputs: FxIndexSet<NodeId>,
+    outputs: FxIndexSet<NodeOutId>,
 }
 
 impl Module {

@@ -3,6 +3,7 @@ mod bit_not;
 mod case;
 mod cons;
 mod dff;
+mod gen_node;
 mod input;
 mod merger;
 mod mod_inst;
@@ -14,6 +15,7 @@ mod zero_extend;
 use std::mem;
 
 use auto_enums::auto_enum;
+use rustc_macros::{Decodable, Encodable};
 
 pub(crate) use self::cons::MultiConst;
 pub use self::{
@@ -22,6 +24,7 @@ pub use self::{
     case::{Case, CaseInputs},
     cons::Const,
     dff::{DFFInputs, DFF},
+    gen_node::GenNode,
     input::Input,
     merger::Merger,
     mod_inst::ModInst,
@@ -33,17 +36,17 @@ pub use self::{
 use crate::{
     const_val::ConstVal,
     net_list::{InOut, NetList, NodeId, NodeInId, NodeOutId, WithId},
-    sig_ty::NodeTy,
+    sig_ty::{ConstParam, NodeTy},
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub enum NetKind {
     Wire,
     Reg(usize),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct NodeOutput {
     pub ty: NodeTy,
     pub kind: NetKind,
@@ -75,12 +78,12 @@ impl NodeOutput {
 
 impl NodeOutput {
     #[inline(always)]
-    pub fn width(&self) -> u128 {
+    pub fn width(&self) -> ConstParam {
         self.ty.width()
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Node {
     pub kind: Box<NodeKind>,
     pub is_skip: bool,
@@ -238,11 +241,18 @@ impl Node {
                 );
             }
             NodeKind::Const(cons) => {
-                println!(
-                    "{}const = {}",
-                    tab,
-                    ConstVal::new(cons.value, cons.output.width())
-                );
+                if let (Some(value), Some(width)) =
+                    (cons.value.opt_value(), cons.output.width().opt_value())
+                {
+                    println!("{}const = {}", tab, ConstVal::new(value, width));
+                } else {
+                    println!(
+                        "{}const = {} (width = {})",
+                        tab,
+                        cons.value,
+                        cons.output.width()
+                    );
+                }
             }
             _ => {}
         }
@@ -325,7 +335,7 @@ macro_rules! define_nodes {
     (
         $( $kind:ident => $node:ident ),+ $(,)?
     ) => {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Encodable, Decodable)]
         pub enum NodeKind {
             $(
                 $kind($node),
@@ -489,6 +499,7 @@ define_nodes!(
     Not => Not,
     Mux2 => Mux2,
     DFF => DFF,
+    GenNode => GenNode,
 );
 
 impl NodeKind {}

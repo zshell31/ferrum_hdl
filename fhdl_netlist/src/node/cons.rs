@@ -1,16 +1,20 @@
-use smallvec::SmallVec;
+use rustc_macros::{Decodable, Encodable};
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use crate::{
+    net_list::NodeOutId,
+    sig_ty::{ConstParam, NodeTy},
+    symbol::Symbol,
+};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Const {
-    pub value: u128,
+    pub value: ConstParam,
     pub output: NodeOutput,
 }
 
 impl Const {
-    pub fn new(ty: NodeTy, value: u128, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, value: ConstParam, sym: Option<Symbol>) -> Self {
         Self {
             value,
             output: NodeOutput::wire(ty, sym),
@@ -45,10 +49,10 @@ impl IsNode for Const {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Encodable, Decodable)]
 pub struct MultiConst {
-    pub values: SmallVec<[u128; 8]>,
-    pub outputs: SmallVec<[NodeOutput; 8]>,
+    pub values: Vec<u128>,
+    pub outputs: Vec<NodeOutput>,
 }
 
 impl MultiConst {

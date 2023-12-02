@@ -1,4 +1,4 @@
-use fnv::FnvHashSet;
+use rustc_data_structures::fx::FxHashSet;
 
 use super::Visitor;
 use crate::{
@@ -9,12 +9,12 @@ use crate::{
 pub struct Reachability<'n> {
     net_list: &'n mut NetList,
     node_out_ids: Vec<NodeOutId>,
-    modules: FnvHashSet<ModuleId>,
+    modules: FxHashSet<ModuleId>,
 }
 
 impl<'n> Reachability<'n> {
     pub fn new(net_list: &'n mut NetList) -> Self {
-        let mut modules = FnvHashSet::default();
+        let mut modules = FxHashSet::default();
         if let Some(top) = net_list.top_module() {
             modules.insert(top);
         }

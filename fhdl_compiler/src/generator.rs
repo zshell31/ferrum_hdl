@@ -1,9 +1,12 @@
 pub mod adt;
 pub mod arg_matcher;
 pub mod bitvec;
+pub mod cache_encoder;
 pub mod closure;
+pub mod encoder;
 pub mod expr;
 pub mod func;
+pub mod gen_nodes;
 pub mod generic;
 pub mod pattern_match;
 pub mod ty_or_def_id;
@@ -14,14 +17,15 @@ use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
-    net_list::{ModuleId, NetList},
+    net_list::{ModuleId, NetList, NodeId, NodeOutId},
+    node::{GenNode, NodeOutput},
     sig_ty::SignalTy,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
-    def_id::{DefId, LocalDefId},
-    Expr, HirId, ItemId as HirItemId, ItemKind, Ty as HirTy,
+    def_id::{DefId, LocalDefId, LOCAL_CRATE},
+    Expr, HirId, ItemId as HirItemId, ItemKind, Node as HirNode, Ty as HirTy,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
@@ -31,7 +35,7 @@ use rustc_middle::{
 };
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 
-use self::{generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
+use self::{gen_nodes::GenNodes, generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -64,10 +68,15 @@ impl Callbacks for CompilerCallbacks {
 }
 
 fn init_generator(tcx: TyCtxt<'_>) -> Result<Generator, Error> {
-    let crates = Crates::find_crates(tcx)?;
-    let top_module = find_top_module(tcx)?;
+    let mode = if env::var_os("FHDL_SYNTH").is_some() {
+        GenMode::Fhdl
+    } else {
+        let top_module = find_top_module(tcx)?;
+        GenMode::Crate(top_module)
+    };
+    let crates = Crates::find_crates(tcx, mode)?;
 
-    Ok(Generator::new(tcx, top_module, crates))
+    Ok(Generator::new(tcx, crates, mode))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -105,7 +114,7 @@ struct Crates {
 }
 
 impl Crates {
-    fn find_crates(tcx: TyCtxt<'_>) -> Result<Self, Error> {
+    fn find_crates(tcx: TyCtxt<'_>, mode: GenMode) -> Result<Self, Error> {
         let mut core = None;
         let mut std = None;
         let mut ferrum_hdl = None;
@@ -120,14 +129,20 @@ impl Crates {
             if crate_name == "std" {
                 std = Some(*krate);
             }
-            if crate_name == "ferrum_hdl" {
+
+            if mode.is_crate() && crate_name == "ferrum_hdl" {
                 ferrum_hdl = Some(*krate);
             }
         }
 
         let core = core.ok_or_else(|| Error::MissingCrate("core"))?;
         let std = std.ok_or_else(|| Error::MissingCrate("std"))?;
-        let ferrum_hdl = ferrum_hdl.ok_or_else(|| Error::MissingCrate("ferrum_hdl"))?;
+        let ferrum_hdl = match mode {
+            GenMode::Crate(_) => {
+                ferrum_hdl.ok_or_else(|| Error::MissingCrate("ferrum_hdl"))?
+            }
+            GenMode::Fhdl => LOCAL_CRATE,
+        };
 
         Ok(Self {
             core,
@@ -151,11 +166,24 @@ pub struct SigTyInfo<'tcx> {
     pub ty_or_def_id: TyOrDefIdWithGen<'tcx>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenMode {
+    Fhdl,
+    Crate(HirItemId),
+}
+
+impl GenMode {
+    pub fn is_crate(&self) -> bool {
+        matches!(self, Self::Crate(_))
+    }
+}
+
 pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub net_list: NetList,
     pub idents: Scopes,
-    top_module: HirItemId,
+    gen_nodes: GenNodes<'tcx>,
+    mode: GenMode,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
@@ -163,21 +191,19 @@ pub struct Generator<'tcx> {
     crates: Crates,
 }
 
-impl<'tcx> !Sync for Generator<'tcx> {}
-impl<'tcx> !Send for Generator<'tcx> {}
-
 impl<'tcx> Generator<'tcx> {
-    fn new(tcx: TyCtxt<'tcx>, top_module: HirItemId, crates: Crates) -> Self {
+    fn new(tcx: TyCtxt<'tcx>, crates: Crates, mode: GenMode) -> Self {
         Self {
             tcx,
-            top_module,
+            net_list: NetList::new(),
+            idents: Scopes::new(),
+            gen_nodes: GenNodes::new(),
+            mode,
             blackbox: FxHashMap::default(),
             sig_ty: FxHashMap::default(),
             local_trait_impls: FxHashMap::default(),
             evaluated_modules: FxHashMap::default(),
             crates,
-            net_list: NetList::default(),
-            idents: Scopes::new(),
         }
     }
 
@@ -200,14 +226,46 @@ impl<'tcx> Generator<'tcx> {
 
         self.collect_local_trait_impls();
 
-        let item = self.tcx.hir().item(self.top_module);
-        self.eval_fn_item(item, true, GenericArgs::empty())?;
+        let generic_args = GenericArgs::empty();
+        match self.mode {
+            GenMode::Fhdl => {
+                for body_id in self.tcx.hir().body_owners() {
+                    if self.is_synth(body_id.into()) {
+                        match self.tcx.hir().get_by_def_id(body_id) {
+                            HirNode::Item(item) => {
+                                self.eval_fn_item(item, false, generic_args)?;
+                            }
+                            HirNode::ImplItem(impl_item) => {
+                                self.eval_impl_item(impl_item, generic_args)?;
+                            }
+                            _ => {
+                                return Err(SpanError::new(
+                                    SpanErrorKind::NotSynthItem,
+                                    self.tcx
+                                        .def_ident_span(body_id)
+                                        .unwrap_or_else(|| self.tcx.def_span(body_id)),
+                                )
+                                .into());
+                            }
+                        };
+                    }
+                }
 
-        self.net_list.run_stages();
+                self.net_list.dump(false);
 
-        let verilog = Verilog::new(&self.net_list).generate();
+                Ok(())
+            }
+            GenMode::Crate(top_module) => {
+                let item = self.tcx.hir().item(top_module);
+                self.eval_fn_item(item, true, GenericArgs::empty())?;
 
-        Ok(fs::write(path, verilog)?)
+                self.net_list.run_stages();
+
+                let verilog = Verilog::new(&self.net_list).generate();
+
+                Ok(fs::write(path, verilog)?)
+            }
+        }
     }
 
     fn collect_local_trait_impls(&mut self) {
@@ -299,20 +357,20 @@ impl<'tcx> Generator<'tcx> {
                 SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
             })?;
         let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
-        self.eval_generic_args(generic_args, expr.span)
+        self.eval_generic_args(&ctx.with_generic_args(generic_args), expr.span)
     }
 
     pub fn eval_const_val(
         &self,
         def_id: DefId,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         span: Option<Span>,
     ) -> Option<u128> {
         let const_val = self
             .tcx
             .const_eval_resolve(
                 ParamEnv::reveal_all(),
-                UnevaluatedConst::new(def_id, generic_args),
+                UnevaluatedConst::new(def_id, ctx.generic_args),
                 span,
             )
             .ok()?;
@@ -330,5 +388,35 @@ impl<'tcx> Generator<'tcx> {
             // Swap generic args from Into::<Self, T> -> From::<Self = T, T = Self>
             false => self.tcx.mk_args(&[generic_args[1], generic_args[0]]),
         }
+    }
+
+    pub fn type_of(&self, def_id: DefId, ctx: &EvalContext<'tcx>) -> Ty<'tcx> {
+        ctx.instantiate_early_binder(self.tcx, self.tcx.type_of(def_id))
+    }
+
+    pub fn add_gen_node(
+        &mut self,
+        module_id: ModuleId,
+        inputs: impl IntoIterator<Item = NodeOutId>,
+        outputs: impl IntoIterator<Item = NodeOutput>,
+        gen_fn: impl FnMut(&mut Generator<'tcx>, GenNode) + 'static,
+    ) -> NodeId {
+        let gen_fn_idx = self.gen_nodes.add_fn(gen_fn);
+        self.net_list
+            .add(module_id, GenNode::new(gen_fn_idx, inputs, outputs))
+    }
+
+    pub fn local_def_id<T: Into<DefId>>(&self, def_id: T) -> Option<LocalDefId> {
+        let def_id = def_id.into();
+        let local_def_id = def_id.as_local()?;
+        match self.mode {
+            GenMode::Crate(_) => Some(local_def_id),
+            GenMode::Fhdl if self.is_synth(def_id) => Some(local_def_id),
+            _ => None,
+        }
+    }
+
+    pub fn is_local_def_id<T: Into<DefId>>(&self, def_id: T) -> bool {
+        self.local_def_id(def_id).is_some()
     }
 }

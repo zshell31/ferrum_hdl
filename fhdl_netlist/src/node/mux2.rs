@@ -1,9 +1,11 @@
-use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+use rustc_macros::{Decodable, Encodable};
 
-#[derive(Debug, Clone, Copy)]
+use super::{IsNode, NodeKind, NodeOutput};
+use crate::{encoding::Wrap, net_list::NodeOutId, sig_ty::NodeTy, symbol::Symbol};
+
+#[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Mux2 {
-    inputs: [NodeOutId; 3],
+    inputs: Wrap<[NodeOutId; 3]>,
     pub output: NodeOutput,
 }
 
@@ -23,7 +25,7 @@ impl Mux2 {
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
-            inputs: [sel, input1, input2],
+            inputs: [sel, input1, input2].into(),
             output: NodeOutput::wire(ty, sym.into()),
         }
     }
@@ -48,11 +50,11 @@ impl IsNode for Mux2 {
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
+        &*self.inputs
     }
 
     fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
+        &mut *self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {

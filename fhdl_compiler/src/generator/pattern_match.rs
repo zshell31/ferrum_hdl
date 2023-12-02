@@ -16,13 +16,14 @@ use rustc_hir::{
     TyKind as HirTyKind,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
-use rustc_middle::ty::{GenericArgsRef, VariantDef};
+use rustc_middle::ty::VariantDef;
 use rustc_span::source_map::Spanned;
 
 use super::Generator;
 use crate::{
     blackbox::bit::BitVal,
     error::{Error, SpanError, SpanErrorKind},
+    eval_context::EvalContext,
     utils,
 };
 
@@ -173,10 +174,10 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         pat: &Pat<'tcx>,
         sig_ty: SignalTy,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<BitVecMask, Error> {
         let mut bvm = BitVecMask::default();
-        self.pattern_to_bitvec_(pat, sig_ty, generic_args, &mut bvm)?;
+        self.pattern_to_bitvec_(pat, sig_ty, ctx, &mut bvm)?;
 
         Ok(bvm)
     }
@@ -185,27 +186,26 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         pat: &Pat<'tcx>,
         sig_ty: SignalTy,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
         bvm: &mut BitVecMask,
     ) -> Result<(), Error> {
         let is_enum_ty = sig_ty.is_enum_ty();
         let (sig_ty, offset) = match sig_ty.opt_enum_ty() {
             Some(enum_ty) => match pat.kind {
                 PatKind::Wild => {
-                    let width = enum_ty.width();
+                    let width = enum_ty.width().value();
                     bvm.shiftl(width);
                     bvm.set_mask(width);
                     return Ok(());
                 }
                 _ => {
-                    let (_, variant_idx) =
-                        self.pattern_to_variant_def(pat, generic_args)?;
+                    let (_, variant_idx) = self.pattern_to_variant_def(pat, ctx)?;
                     let width = enum_ty.discr_width();
                     bvm.shiftl(width);
                     bvm.set_val(enum_ty.discr_val(variant_idx), width);
 
                     let sig_ty = enum_ty.variant(variant_idx).inner;
-                    let offset = enum_ty.data_width() - sig_ty.width();
+                    let offset = enum_ty.data_width().value() - sig_ty.width().value();
 
                     (sig_ty, Some(offset))
                 }
@@ -216,8 +216,8 @@ impl<'tcx> Generator<'tcx> {
         let res = match pat.kind {
             PatKind::Binding(..) | PatKind::Wild => {
                 let width = sig_ty.width();
-                bvm.shiftl(width);
-                bvm.set_mask(width);
+                bvm.shiftl(width.value());
+                bvm.set_mask(width.value());
 
                 Ok(())
             }
@@ -230,8 +230,8 @@ impl<'tcx> Generator<'tcx> {
                 ..
             }) => {
                 let width = sig_ty.width();
-                bvm.shiftl(width);
-                bvm.set_val(*lit, width);
+                bvm.shiftl(width.value());
+                bvm.set_val(*lit, width.value());
 
                 Ok(())
             }
@@ -243,11 +243,11 @@ impl<'tcx> Generator<'tcx> {
                     ..
                 },
             )) => {
-                if def_id.is_local() {
+                if self.is_local_def_id(*def_id) {
                     if let Some(const_val) =
-                        self.eval_const_val(*def_id, generic_args, Some(pat.span))
+                        self.eval_const_val(*def_id, ctx, Some(pat.span))
                     {
-                        let width = sig_ty.width();
+                        let width = sig_ty.width().value();
                         bvm.shiftl(width);
                         bvm.set_val(const_val, width);
                         return Ok(());
@@ -255,7 +255,7 @@ impl<'tcx> Generator<'tcx> {
 
                     Err(SpanError::new(SpanErrorKind::InvalidPattern, pat.span).into())
                 } else {
-                    let blackbox = self.find_blackbox(*def_id, generic_args, pat.span)?;
+                    let blackbox = self.find_blackbox(*def_id, ctx, pat.span)?;
                     let value = match blackbox.kind {
                         BlackboxKind::BitL => BitVal(false).bit_value(),
                         BlackboxKind::BitH => BitVal(true).bit_value(),
@@ -268,7 +268,7 @@ impl<'tcx> Generator<'tcx> {
                         }
                     };
 
-                    let width = sig_ty.width();
+                    let width = sig_ty.width().value();
                     bvm.shiftl(width);
                     bvm.set_val(value, width);
 
@@ -280,12 +280,12 @@ impl<'tcx> Generator<'tcx> {
                     SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
                 })?;
                 let item_ty = *array_ty.item_ty();
-                let width = item_ty.width();
+                let width = item_ty.width().value();
 
                 let count = array_ty.count() as usize;
 
                 for pat in before {
-                    self.pattern_to_bitvec_(pat, item_ty, generic_args, bvm)?;
+                    self.pattern_to_bitvec_(pat, item_ty, ctx, bvm)?;
                 }
 
                 if wild.is_some() {
@@ -300,7 +300,7 @@ impl<'tcx> Generator<'tcx> {
                     }
 
                     for pat in after {
-                        self.pattern_to_bitvec_(pat, item_ty, generic_args, bvm)?;
+                        self.pattern_to_bitvec_(pat, item_ty, ctx, bvm)?;
                     }
                 }
 
@@ -313,14 +313,9 @@ impl<'tcx> Generator<'tcx> {
                     if let Some(field) =
                         fields.iter().find(|field| sig_ty.is(field.ident.as_str()))
                     {
-                        self.pattern_to_bitvec_(
-                            field.pat,
-                            sig_ty.inner,
-                            generic_args,
-                            bvm,
-                        )?;
+                        self.pattern_to_bitvec_(field.pat, sig_ty.inner, ctx, bvm)?;
                     } else {
-                        let width = sig_ty.inner.width();
+                        let width = sig_ty.inner.width().value();
                         bvm.shiftl(width);
                         bvm.set_mask(width);
                     }
@@ -335,11 +330,9 @@ impl<'tcx> Generator<'tcx> {
                 {
                     let sig_ty = sig_ty.inner;
                     match pat {
-                        Some(pat) => {
-                            self.pattern_to_bitvec_(pat, sig_ty, generic_args, bvm)?
-                        }
+                        Some(pat) => self.pattern_to_bitvec_(pat, sig_ty, ctx, bvm)?,
                         None => {
-                            let width = sig_ty.width();
+                            let width = sig_ty.width().value();
                             bvm.shiftl(width);
                             bvm.set_mask(width);
                         }
@@ -365,7 +358,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn pattern_to_variant_def(
         &self,
         pat: &Pat<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
+        ctx: &EvalContext<'tcx>,
     ) -> Result<(&'tcx VariantDef, usize), Error> {
         let variant_def = match pat.kind {
             PatKind::Path(QPath::Resolved(_, path))
@@ -390,10 +383,7 @@ impl<'tcx> Generator<'tcx> {
                 ),
                 ..,
             ) => {
-                let ty = self
-                    .tcx
-                    .type_of(alias_to)
-                    .instantiate(self.tcx, generic_args);
+                let ty = self.type_of(*alias_to, ctx);
                 let item_ctx = &ItemCtxt::new(self.tcx, pat.hir_id.owner.def_id);
                 let astconv = item_ctx.astconv();
                 if let Ok((_, _, variant_did)) = astconv.associated_path_to_ty(

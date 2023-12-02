@@ -1,5 +1,5 @@
-use fnv::FnvHashMap;
 use once_cell::sync::Lazy;
+use rustc_data_structures::fx::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
@@ -9,7 +9,7 @@ use crate::{
     visitor::Visitor,
 };
 
-static DEFAULT_SYMBOLS: Lazy<FnvHashMap<&'static str, &'static str>> = Lazy::new(|| {
+static DEFAULT_SYMBOLS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(|| {
     [
         ("input", "input$"),
         ("output", "output$"),
@@ -23,8 +23,8 @@ static DEFAULT_SYMBOLS: Lazy<FnvHashMap<&'static str, &'static str>> = Lazy::new
 
 pub struct SetNames<'n> {
     net_list: &'n mut NetList,
-    idents: FnvHashMap<(ModuleId, Symbol), usize>,
-    module_idents: FnvHashMap<Symbol, usize>,
+    idents: FxHashMap<(ModuleId, Symbol), usize>,
+    module_idents: FxHashMap<Symbol, usize>,
 }
 
 impl<'n> SetNames<'n> {

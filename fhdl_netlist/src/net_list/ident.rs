@@ -3,9 +3,11 @@ use std::{
     hash::Hash,
 };
 
+use rustc_macros::{Decodable, Encodable};
+
 pub trait IsId: Debug + Copy + Eq + Hash {}
 
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct ModuleId(u32);
 
 impl IsId for ModuleId {}
@@ -22,7 +24,7 @@ impl ModuleId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct NodeId(ModuleId, u32);
 
 impl Debug for NodeId {
@@ -49,7 +51,7 @@ impl NodeId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct NodeOutId(NodeId, u32);
 
 impl IsId for NodeOutId {}
@@ -76,7 +78,7 @@ impl NodeOutId {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct NodeInId(NodeId, u32);
 
 impl IsId for NodeInId {}

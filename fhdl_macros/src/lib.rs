@@ -1,3 +1,4 @@
+#![feature(rustc_private)]
 mod bitpack;
 mod blackbox;
 mod impl_tuple_traits;

@@ -1,6 +1,6 @@
 #![feature(rustc_private)]
-#![feature(negative_impls)]
 #![feature(iter_intersperse)]
+#![feature(min_specialization)]
 
 mod blackbox;
 mod error;
@@ -29,6 +29,7 @@ extern crate rustc_hir;
 extern crate rustc_hir_analysis;
 extern crate rustc_interface;
 extern crate rustc_middle;
+extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
 extern crate rustc_type_ir;

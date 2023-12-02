@@ -17,7 +17,6 @@ static DEFAULT_SYMBOLS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(
         ("self", "self$"),
     ]
     .into_iter()
-    .map(|(sym1, sym2)| (sym1, sym2))
     .collect()
 });
 

@@ -8,7 +8,6 @@ use std::ops::{Deref, Index, IndexMut};
 pub use ident::{ModuleId, NodeId, NodeInId, NodeOutId};
 pub(crate) use in_out::InOut;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_macros::{Decodable, Encodable};
 pub use with_id::WithId;
 
 pub use self::module::Module;
@@ -21,7 +20,7 @@ use crate::{
 
 pub type Links = FxHashSet<NodeId>;
 
-#[derive(Debug, Default, Encodable, Decodable)]
+#[derive(Debug, Default)]
 pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,

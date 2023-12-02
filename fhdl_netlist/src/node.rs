@@ -36,7 +36,7 @@ pub use self::{
 use crate::{
     const_val::ConstVal,
     net_list::{InOut, NetList, NodeId, NodeInId, NodeOutId, WithId},
-    sig_ty::{ConstParam, NodeTy},
+    sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
@@ -78,7 +78,7 @@ impl NodeOutput {
 
 impl NodeOutput {
     #[inline(always)]
-    pub fn width(&self) -> ConstParam {
+    pub fn width(&self) -> Width {
         self.ty.width()
     }
 }

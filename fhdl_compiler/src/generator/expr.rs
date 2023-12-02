@@ -27,10 +27,11 @@ use rustc_middle::ty::{
 use rustc_span::{source_map::Spanned, Span};
 use smallvec::SmallVec;
 
-use super::{arg_matcher::ArgMatcher, generic::Generic, EvalContext, Generator};
+use super::{arg_matcher::ArgMatcher, EvalContext, Generator};
 use crate::{
     blackbox::{cast::Conversion, lit},
     error::{Error, SpanError, SpanErrorKind},
+    generator::generic::Generics,
     scopes::SymIdent,
     utils,
 };
@@ -646,23 +647,36 @@ impl<'tcx> Generator<'tcx> {
                     }
                 }
                 Res::Def(DefKind::ConstParam, def_id) => {
-                    let prim_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.node_ty();
-
-                    let generics = self.tcx.generics_of(self.tcx.parent(*def_id));
-                    let value = generics
-                        .param_def_id_to_index(self.tcx, *def_id)
-                        .and_then(|ind| ctx.generic_args.get(ind as usize))
-                        .and_then(|arg| {
-                            Generic::from_gen_arg(self, arg, ctx, expr.span).ok()
+                    let parent = self.tcx.parent(*def_id);
+                    let generics = Generics::from_ty(
+                        self.type_of(parent, ctx),
+                        self,
+                        ctx,
+                        expr.span,
+                    )
+                    .and_then(|generics| {
+                        generics.ok_or_else(|| {
+                            SpanError::new(
+                                SpanErrorKind::CannotExtractGenericArgs,
+                                expr.span,
+                            )
+                            .into()
                         })
-                        .and_then(|gen| gen.as_const())
+                    })?;
+
+                    let value = self
+                        .tcx
+                        .generics_of(parent)
+                        .param_def_id_to_index(self.tcx, *def_id)
+                        .and_then(|ind| generics.as_const(ind as usize))
                         .ok_or_else(|| {
                             SpanError::new(SpanErrorKind::ExpectedConst, expr.span)
                         })?;
 
+                    let node_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.node_ty();
                     Ok(self
                         .net_list
-                        .add_and_get_out(ctx.module_id, Const::new(prim_ty, value, None))
+                        .add_and_get_out(ctx.module_id, Const::new(node_ty, value, None))
                         .into())
                 }
                 Res::Def(DefKind::Ctor(CtorOf::Variant, ..), variant_ctor_did)
@@ -961,9 +975,9 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn index(
         &mut self,
-        expr: &'tcx Expr<'tcx>,
-        ind: u128,
-        ctx: &mut EvalContext<'tcx>,
+        _expr: &'tcx Expr<'tcx>,
+        _ind: u128,
+        _ctx: &mut EvalContext<'tcx>,
     ) -> Result<ItemId, Error> {
         todo!()
         // let span = expr.span;

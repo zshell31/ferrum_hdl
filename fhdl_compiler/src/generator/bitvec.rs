@@ -77,7 +77,11 @@ impl<'tcx> Generator<'tcx> {
         sig_ty: SignalTy,
     ) -> ItemId {
         let node_width = self.net_list[node_out_id].ty.width();
-        assert_eq!(node_width, sig_ty.width());
+        if let (Some(node_width), Some(sig_ty_width)) =
+            (node_width.opt_value(), sig_ty.width().opt_value())
+        {
+            assert_eq!(node_width, sig_ty_width);
+        }
 
         match sig_ty.kind {
             SignalTyKind::Node(_) | SignalTyKind::Enum(_) => node_out_id.into(),

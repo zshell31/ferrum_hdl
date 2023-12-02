@@ -5,7 +5,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{NetList, NodeOutId},
-    sig_ty::{ConstParam, NodeTy},
+    sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
@@ -13,7 +13,7 @@ use crate::{
 pub struct Splitter {
     pub input: NodeOutId,
     pub outputs: Vec<NodeOutput>,
-    pub start: Option<ConstParam>,
+    pub start: Option<Width>,
     pub rev: bool,
 }
 
@@ -21,7 +21,7 @@ impl Splitter {
     pub fn new(
         input: NodeOutId,
         outputs: impl IntoIterator<Item = (NodeTy, impl Into<Option<Symbol>>)>,
-        start: Option<ConstParam>,
+        start: Option<Width>,
         rev: bool,
     ) -> Self {
         Self {
@@ -35,10 +35,7 @@ impl Splitter {
         }
     }
 
-    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(
-        &self,
-        net_list: &T,
-    ) -> ConstParam {
+    pub fn start<T: Index<NodeOutId, Output = NodeOutput>>(&self, net_list: &T) -> Width {
         let input = net_list[self.input];
         let input_width = input.ty.width();
         self.start.map(Into::into).unwrap_or(if !self.rev {
@@ -91,11 +88,11 @@ impl IsNode for Splitter {
         let output_width = self
             .outputs
             .iter()
-            .map(|output| output.width())
-            .sum::<ConstParam>();
+            .map(|output| output.width().opt_value())
+            .sum::<Option<u128>>();
 
         if let (Some(input_width), Some(output_width)) =
-            (input_width.opt_value(), output_width.opt_value())
+            (input_width.opt_value(), output_width)
         {
             if output_width > input_width {
                 panic!(

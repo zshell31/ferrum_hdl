@@ -3,18 +3,18 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::NodeOutId,
-    sig_ty::{ConstParam, NodeTy},
+    sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub struct Const {
-    pub value: ConstParam,
+    pub value: Width,
     pub output: NodeOutput,
 }
 
 impl Const {
-    pub fn new(ty: NodeTy, value: ConstParam, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, value: Width, sym: Option<Symbol>) -> Self {
         Self {
             value,
             output: NodeOutput::wire(ty, sym),

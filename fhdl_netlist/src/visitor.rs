@@ -27,10 +27,19 @@ pub trait Visitor {
 }
 
 impl NetList {
-    pub fn run_stages(&mut self) {
+    pub fn transform(&mut self) {
         Transform::new(self).run();
+    }
+
+    pub fn reachability(&mut self) {
         Reachability::new(self).run();
+    }
+
+    pub fn set_names(&mut self) {
         SetNames::new(self).run();
+    }
+
+    pub fn inject_nodes(&mut self) {
         InjectNodes::new(self).run();
     }
 

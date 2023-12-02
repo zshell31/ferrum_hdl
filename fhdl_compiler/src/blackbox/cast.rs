@@ -18,7 +18,7 @@ use super::{Blackbox, EvalExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    generator::{expr::ExprOrItemId, Generator, TraitKind},
+    generator::{expr::ExprOrItemId, metadata::GenNodeKind, Generator, TraitKind},
     utils,
 };
 
@@ -230,34 +230,37 @@ impl Conversion {
         from
     }
 
-    fn to_unsigned(from: ItemId, ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
+    fn to_unsigned(from: ItemId, to_ty: NodeTy, generator: &mut Generator<'_>) -> ItemId {
         let node_out_id = from.node_out_id();
         let module_id = node_out_id.node_id().module_id();
         let from_ty = generator.item_ty(from);
 
         if let (Some(from_width), Some(to_width)) =
-            (from_ty.width().opt_value(), ty.width().opt_value())
+            (from_ty.width().opt_value(), to_ty.width().opt_value())
         {
             if from_width >= to_width {
                 generator
                     .net_list
                     .add_and_get_out(
                         module_id,
-                        Splitter::new(node_out_id, [(ty, None)], None, false),
+                        Splitter::new(node_out_id, [(to_ty, None)], None, false),
                     )
                     .into()
             } else {
                 generator
                     .net_list
-                    .add_and_get_out(module_id, ZeroExtend::new(ty, node_out_id, None))
+                    .add_and_get_out(module_id, ZeroExtend::new(to_ty, node_out_id, None))
                     .into()
             }
         } else {
             let node_id = generator.add_gen_node(
                 module_id,
+                GenNodeKind::CastToUnsigned {
+                    from: node_out_id,
+                    to_ty,
+                },
                 [node_out_id],
-                [NodeOutput::wire(ty, None)],
-                |generator, node| {},
+                [NodeOutput::wire(to_ty, None)],
             );
 
             generator.net_list[node_id]

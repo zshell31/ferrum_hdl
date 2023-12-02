@@ -9,7 +9,7 @@ use smallvec::SmallVec;
 use crate::{
     arena::with_arena,
     net_list::{NodeId, NodeOutId},
-    sig_ty::{ConstParam, SignalTy},
+    sig_ty::{SignalTy, Width},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -114,7 +114,7 @@ impl Group {
         self.item_ids
     }
 
-    pub fn width(&self) -> ConstParam {
+    pub fn width(&self) -> Width {
         self.sig_ty.width()
     }
 }

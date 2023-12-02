@@ -4,7 +4,7 @@ use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
     group::ItemId,
-    sig_ty::{ConstParam, NodeTy, SignalTy, SignalTyKind},
+    sig_ty::{NodeTy, SignalTy, SignalTyKind, Width},
 };
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
@@ -116,13 +116,13 @@ impl<'tcx> TyOrDefIdWithGen<'tcx> {
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedTy, span).into())
     }
 
-    pub fn opt_generic_const(&self, ind: usize) -> Option<ConstParam> {
+    pub fn opt_generic_const(&self, ind: usize) -> Option<Width> {
         self.generics
             .as_ref()
             .and_then(|generics| generics.as_const(ind))
     }
 
-    pub fn generic_const(&self, ind: usize, span: Span) -> Result<ConstParam, Error> {
+    pub fn generic_const(&self, ind: usize, span: Span) -> Result<Width, Error> {
         self.opt_generic_const(ind)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, span).into())
     }
@@ -301,26 +301,8 @@ impl<'tcx> Generator<'tcx> {
                     span,
                 )
             })
-            .map(|sig_ty| {
-                println!("key {:?} => sig_ty {:?}", key, sig_ty);
-                sig_ty
-            })
             .map_err(Into::into)
     }
-
-    // pub fn generic_const(
-    //     &self,
-    //     key: &TyOrDefIdWithGen<'tcx>,
-    //     ind: usize,
-    //     span: Span,
-    // ) -> Result<ConstParam, Error> {
-    //     let param = key.generic_const(ind);
-    //     (match self.mode {
-    //         GenMode::Crate(_) => param.filter(|param| param.is_value()),
-    //         GenMode::Fhdl => param,
-    //     })
-    //     .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedConst, span).into())
-    // }
 
     fn find_sig_ty_(
         &mut self,
@@ -400,7 +382,7 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<TyOrDefIdWithGen<'tcx>, Error> {
         let generics = match ty_or_def_id {
-            TyOrDefId::Ty(ty) => Generics::from_ty(&ty, self, ctx, span)?,
+            TyOrDefId::Ty(ty) => Generics::from_ty(ty, self, ctx, span)?,
             _ => None,
         };
 
@@ -412,10 +394,11 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn eval_generic_args(
         &mut self,
+        ty: Ty<'tcx>,
         ctx: &EvalContext<'tcx>,
         span: Span,
     ) -> Result<Generics, Error> {
-        Generics::from_args(self, ctx.generic_args.into_iter().map(Some), ctx, span)
+        Generics::from_args(self, ctx.generic_args.into_iter().map(Some), ty, ctx, span)
     }
 
     pub fn find_fhdl_tool_attr(

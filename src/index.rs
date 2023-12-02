@@ -60,14 +60,18 @@ where
     ConstConstr<{ idx_constr(N) }>:,
 {
     #[fhdl_tool::synth]
+    #[inline]
     pub fn new() -> Self {
         Self(0_u8.cast())
     }
 
+    #[fhdl_tool::synth]
+    #[inline]
     pub fn val(self) -> Unsigned<{ idx_constr(N) }> {
         self.0
     }
 
+    #[fhdl_tool::synth]
     pub fn succ(self) -> Self {
         if self.is_max() {
             Self(0_u8.cast())
@@ -76,6 +80,7 @@ where
         }
     }
 
+    #[fhdl_tool::synth]
     pub fn pred(self) -> Self {
         if self.is_min() {
             Self((N - 1).cast::<Unsigned<_>>())
@@ -84,10 +89,14 @@ where
         }
     }
 
+    #[fhdl_tool::synth]
+    #[inline]
     pub fn is_max(&self) -> bool {
         self.0 == (N - 1).cast::<Unsigned<_>>()
     }
 
+    #[fhdl_tool::synth]
+    #[inline]
     pub fn is_min(&self) -> bool {
         self.0 == 0_u8.cast::<Unsigned<_>>()
     }

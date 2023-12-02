@@ -1,7 +1,8 @@
 use std::{
     borrow::Cow,
+    cmp,
     fmt::{self, Debug, Display},
-    iter::Sum,
+    ops::{Deref, DerefMut},
 };
 
 use fhdl_blackbox::BlackboxTy;
@@ -29,67 +30,168 @@ impl<T> Named<T> {
     }
 }
 
+impl<T> Deref for Named<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for Named<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
-pub enum Param<T> {
-    Value(T),
-    Generic,
+pub struct Width {
+    pub kind: WidthKind,
+    pub is_generic: bool,
 }
 
-impl<T: Display> Display for Param<T> {
+impl Display for Width {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Value(val) => val.fmt(f),
-            Self::Generic => write!(f, "Generic"),
-        }
+        write!(f, "{}", self.kind)
     }
 }
 
-impl<T> From<T> for Param<T> {
-    fn from(value: T) -> Self {
-        Self::Value(value)
+impl Width {
+    fn new(kind: WidthKind, is_generic: bool) -> Self {
+        Self { kind, is_generic }
     }
-}
 
-impl<T> Param<T> {
-    pub fn opt_value(self) -> Option<T> {
-        match self {
-            Self::Value(value) => Some(value),
+    #[inline(always)]
+    pub fn is_generic(&self) -> bool {
+        self.is_generic
+    }
+
+    pub fn opt_value(&self) -> Option<u128> {
+        match self.kind {
+            WidthKind::Value(value) => Some(value),
             _ => None,
         }
     }
-    pub fn value(self) -> T {
+    pub fn value(self) -> u128 {
         self.opt_value().expect("expected value, got param")
     }
 
     pub fn is_value(self) -> bool {
-        matches!(self, Self::Value(_))
+        matches!(self.kind, WidthKind::Value(_))
     }
 
-    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Param<U> {
-        match self {
-            Self::Value(val) => Param::Value(f(val)),
-            Self::Generic => Param::Generic,
+    pub fn mk_node(ty_idx: u32) -> Self {
+        Width::new(WidthKind::Node(ty_idx), true)
+    }
+
+    pub fn mk_param(ty_idx: u32, param_idx: u32) -> Self {
+        Width::new(WidthKind::Param { ty_idx, param_idx }, true)
+    }
+
+    fn mk_array(count: u128, ty: &SignalTy) -> Self {
+        if ty.is_generic() {
+            Width::new(
+                WidthKind::Array {
+                    count,
+                    width: ArenaValue::make_value(ty.width()),
+                },
+                true,
+            )
+        } else {
+            (ty.width().value() * count).into()
+        }
+    }
+
+    fn mk_struct(tys: &[Named<SignalTy>]) -> Self {
+        let is_generic = tys.iter().any(|ty| ty.is_generic());
+        if is_generic {
+            Width::new(
+                WidthKind::Struct {
+                    items: ArenaSlice::make_slice(tys.iter().map(|ty| ty.width())),
+                },
+                true,
+            )
+        } else {
+            tys.iter().map(|ty| ty.width().value()).sum::<u128>().into()
+        }
+    }
+
+    fn mk_enum_data(tys: &[Named<SignalTy>]) -> Self {
+        let is_generic = tys.iter().any(|ty| ty.is_generic());
+        if is_generic {
+            Width::new(
+                WidthKind::EnumData {
+                    items: ArenaSlice::make_slice(tys.iter().map(|ty| ty.width())),
+                },
+                true,
+            )
+        } else {
+            tys.iter()
+                .fold(0, |max, ty| cmp::max(ty.width().value(), max))
+                .into()
+        }
+    }
+
+    fn mk_enum(discr_width: u128, width: Width) -> Self {
+        if width.is_generic() {
+            let items = match width.kind {
+                WidthKind::EnumData { items } => items,
+                _ => unreachable!(),
+            };
+            Width::new(WidthKind::Enum { discr_width, items }, true)
+        } else {
+            (discr_width + width.value()).into()
         }
     }
 }
 
-pub type ConstParam = Param<u128>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+pub enum WidthKind {
+    Value(u128),
+    Node(u32),
+    Param {
+        ty_idx: u32,
+        param_idx: u32,
+    },
+    Array {
+        count: u128,
+        width: ArenaValue<Width>,
+    },
+    Struct {
+        items: ArenaSlice<Width>,
+    },
+    EnumData {
+        items: ArenaSlice<Width>,
+    },
+    Enum {
+        discr_width: u128,
+        items: ArenaSlice<Width>,
+    },
+}
 
-impl Sum for ConstParam {
-    fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-        let mut sum = 0;
-        for item in iter {
-            match item.opt_value() {
-                Some(val) => {
-                    sum += val;
-                }
-                None => return Self::Generic,
-            }
+impl Display for WidthKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Self::Value(val) = self {
+            write!(f, "{val}")
+        } else {
+            write!(f, "{:?}", self)
         }
-
-        Self::Value(sum)
     }
 }
+
+impl From<u128> for WidthKind {
+    fn from(value: u128) -> Self {
+        Self::Value(value)
+    }
+}
+
+impl From<u128> for Width {
+    fn from(value: u128) -> Self {
+        Width::new(value.into(), false)
+    }
+}
+
+impl Width {}
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub enum NodeTy {
@@ -101,12 +203,12 @@ pub enum NodeTy {
     U64,
     U128,
     Usize,
-    Unsigned(ConstParam),
-    BitVec(ConstParam),
+    Unsigned(Width),
+    BitVec(Width),
     Enum(EnumTy),
     Clock,
     ClockDomain,
-    Unknown,
+    Ty(u32),
 }
 
 impl Debug for NodeTy {
@@ -121,11 +223,11 @@ impl Debug for NodeTy {
             Self::U128 => "u128".into(),
             Self::Usize => "usize".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
-            Self::BitVec(n) => format!("bitvec[{n}]").into(),
-            Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
+            Self::BitVec(n) => format!("bitvec[{n:#?}]").into(),
+            Self::Enum(ty) => format!("enum[{:#?}]", ty.width()).into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
-            Self::Unknown => "Unknown".into(),
+            Self::Ty(idx) => format!("type({idx:#?})").into(),
         };
 
         f.write_str(s.as_ref())
@@ -150,7 +252,7 @@ impl NodeTy {
         )
     }
 
-    pub fn width(&self) -> ConstParam {
+    pub fn width(&self) -> Width {
         match self {
             Self::Bool => 1.into(),
             Self::Bit => 1.into(),
@@ -165,7 +267,7 @@ impl NodeTy {
             Self::Enum(enum_ty) => enum_ty.width(),
             Self::Clock => 1.into(),
             Self::ClockDomain => 1.into(),
-            Self::Unknown => ConstParam::Generic,
+            Self::Ty(idx) => Width::mk_node(*idx),
         }
     }
 
@@ -186,11 +288,31 @@ impl NodeTy {
             }
         }
     }
+
+    pub fn is_generic(&self) -> bool {
+        match self {
+            Self::Bool
+            | Self::Bit
+            | Self::U8
+            | Self::U16
+            | Self::U32
+            | Self::U64
+            | Self::U128
+            | Self::Usize
+            | Self::Clock
+            | Self::ClockDomain => true,
+            Self::Unsigned(n) => n.is_generic(),
+            Self::BitVec(n) => n.is_generic(),
+            Self::Enum(enum_ty) => enum_ty.is_generic(),
+            Self::Ty(_) => true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct ArrayTy {
     count: u128,
+    width: Width,
     ty: ArenaValue<SignalTy>,
 }
 
@@ -198,13 +320,14 @@ impl ArrayTy {
     pub fn new(count: u128, ty: &'static SignalTy) -> Self {
         Self {
             count,
+            width: Width::mk_array(count, ty),
             ty: ty.into(),
         }
     }
 
     #[inline(always)]
-    pub fn width(&self) -> ConstParam {
-        self.ty.width().map(|width| self.count * width)
+    pub fn width(&self) -> Width {
+        self.width
     }
 
     #[inline(always)]
@@ -213,7 +336,7 @@ impl ArrayTy {
     }
 
     #[inline(always)]
-    pub fn item_width(&self) -> ConstParam {
+    pub fn item_width(&self) -> Width {
         self.ty.width()
     }
 
@@ -225,6 +348,11 @@ impl ArrayTy {
     #[inline(always)]
     pub fn item_ty(&self) -> &SignalTy {
         self.ty.0
+    }
+
+    #[inline(always)]
+    pub fn is_generic(&self) -> bool {
+        self.width.is_generic()
     }
 }
 
@@ -256,13 +384,13 @@ impl<'a> ExactSizeIterator for ArrayTyIter<'a> {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct StructTy {
-    width: ConstParam,
+    width: Width,
     tys: ArenaSlice<Named<SignalTy>>,
 }
 
 impl StructTy {
     pub fn new(tys: &'static [Named<SignalTy>]) -> Self {
-        let width = tys.iter().map(|ty| ty.inner.width()).sum();
+        let width = Width::mk_struct(tys);
         Self {
             width,
             tys: tys.into(),
@@ -270,7 +398,7 @@ impl StructTy {
     }
 
     #[inline(always)]
-    pub fn width(&self) -> ConstParam {
+    pub fn width(&self) -> Width {
         self.width
     }
 
@@ -304,52 +432,34 @@ impl StructTy {
             .find(|(_, named)| named.is(field))
             .map(|(idx, _)| idx)
     }
+
+    #[inline(always)]
+    pub fn is_generic(&self) -> bool {
+        self.width.is_generic()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
 pub struct EnumTy {
-    data_width: ConstParam,
     discr_width: u128,
+    data_width: Width,
     variants: ArenaSlice<Named<SignalTy>>,
 }
 
-// impl<D: Decoder> Decodable<D> for
-
-fn data_width(variants: &'static [Named<SignalTy>]) -> ConstParam {
-    let mut max = 0;
-    for variant in variants {
-        match variant.inner.width().opt_value() {
-            Some(width) => {
-                if width > max {
-                    max = width;
-                }
-            }
-            None => {
-                return ConstParam::Generic;
-            }
-        }
-    }
-
-    ConstParam::Value(max)
-}
-
-fn discr_width(variants: &'static [Named<SignalTy>]) -> u128 {
-    clog2_len(variants.len()) as u128
-}
-
 impl EnumTy {
-    pub fn new(variants: &'static [Named<SignalTy>]) -> Self {
+    pub fn new(tys: &'static [Named<SignalTy>]) -> Self {
+        let discr_width = clog2_len(tys.len()) as u128;
+        let data_width = Width::mk_enum_data(tys);
         Self {
-            data_width: data_width(variants),
-            discr_width: discr_width(variants),
-            variants: variants.into(),
+            discr_width,
+            data_width,
+            variants: tys.into(),
         }
     }
 
     #[inline(always)]
-    pub fn width(&self) -> ConstParam {
-        self.data_width()
-            .map(|data_width| self.discr_width() + data_width)
+    pub fn width(&self) -> Width {
+        Width::mk_enum(self.discr_width, self.data_width)
     }
 
     #[inline(always)]
@@ -358,7 +468,7 @@ impl EnumTy {
     }
 
     #[inline(always)]
-    pub fn data_width(&self) -> ConstParam {
+    pub fn data_width(&self) -> Width {
         self.data_width
     }
 
@@ -377,6 +487,11 @@ impl EnumTy {
 
     pub fn variant(&self, idx: usize) -> Named<SignalTy> {
         self.variants[idx]
+    }
+
+    #[inline(always)]
+    pub fn is_generic(&self) -> bool {
+        self.data_width.is_generic()
     }
 }
 
@@ -495,7 +610,7 @@ impl SignalTy {
         matches!(self.kind, SignalTyKind::Enum(_))
     }
 
-    pub fn width(&self) -> ConstParam {
+    pub fn width(&self) -> Width {
         match self.kind {
             SignalTyKind::Node(ty) => ty.width(),
             SignalTyKind::Array(ty) => ty.width(),
@@ -518,5 +633,14 @@ impl SignalTy {
         self.blackbox
             .map(|blackbox| blackbox.is_unsigned_short())
             .unwrap_or_default()
+    }
+
+    pub fn is_generic(&self) -> bool {
+        match self.kind {
+            SignalTyKind::Node(ty) => ty.is_generic(),
+            SignalTyKind::Array(ty) => ty.is_generic(),
+            SignalTyKind::Struct(ty) => ty.is_generic(),
+            SignalTyKind::Enum(ty) => ty.is_generic(),
+        }
     }
 }

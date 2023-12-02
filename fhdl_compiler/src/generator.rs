@@ -1,13 +1,11 @@
 pub mod adt;
 pub mod arg_matcher;
 pub mod bitvec;
-pub mod cache_encoder;
 pub mod closure;
-pub mod encoder;
 pub mod expr;
 pub mod func;
-pub mod gen_nodes;
 pub mod generic;
+pub mod metadata;
 pub mod pattern_match;
 pub mod ty_or_def_id;
 
@@ -17,8 +15,7 @@ use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
     group::ItemId,
-    net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{GenNode, NodeOutput},
+    net_list::{ModuleId, NetList},
     sig_ty::SignalTy,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -35,7 +32,7 @@ use rustc_middle::{
 };
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 
-use self::{gen_nodes::GenNodes, generic::Generics, ty_or_def_id::TyOrDefIdWithGen};
+use self::{generic::Generics, metadata::Metadata, ty_or_def_id::TyOrDefIdWithGen};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -182,13 +179,13 @@ pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub net_list: NetList,
     pub idents: Scopes,
-    gen_nodes: GenNodes<'tcx>,
     mode: GenMode,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
     sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,
+    metadata: Metadata<'tcx>,
 }
 
 impl<'tcx> Generator<'tcx> {
@@ -197,13 +194,13 @@ impl<'tcx> Generator<'tcx> {
             tcx,
             net_list: NetList::new(),
             idents: Scopes::new(),
-            gen_nodes: GenNodes::new(),
             mode,
-            blackbox: FxHashMap::default(),
-            sig_ty: FxHashMap::default(),
-            local_trait_impls: FxHashMap::default(),
-            evaluated_modules: FxHashMap::default(),
+            blackbox: Default::default(),
+            sig_ty: Default::default(),
+            local_trait_impls: Default::default(),
+            evaluated_modules: Default::default(),
             crates,
+            metadata: Default::default(),
         }
     }
 
@@ -251,7 +248,11 @@ impl<'tcx> Generator<'tcx> {
                     }
                 }
 
-                self.net_list.dump(false);
+                self.net_list.transform();
+                self.net_list.reachability();
+
+                let path = StdPath::new(&dir).join("src/fhdl.net_list");
+                self.encode_netlist(path)?;
 
                 Ok(())
             }
@@ -259,7 +260,10 @@ impl<'tcx> Generator<'tcx> {
                 let item = self.tcx.hir().item(top_module);
                 self.eval_fn_item(item, true, GenericArgs::empty())?;
 
-                self.net_list.run_stages();
+                self.net_list.transform();
+                self.net_list.reachability();
+                self.net_list.set_names();
+                self.net_list.inject_nodes();
 
                 let verilog = Verilog::new(&self.net_list).generate();
 
@@ -356,8 +360,9 @@ impl<'tcx> Generator<'tcx> {
             .ok_or_else(|| {
                 SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
             })?;
+        let ty = self.type_of(fn_did, ctx);
         let generic_args = self.extract_generic_args(fn_did, expr.hir_id, ctx)?;
-        self.eval_generic_args(&ctx.with_generic_args(generic_args), expr.span)
+        self.eval_generic_args(ty, &ctx.with_generic_args(generic_args), expr.span)
     }
 
     pub fn eval_const_val(
@@ -392,18 +397,6 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn type_of(&self, def_id: DefId, ctx: &EvalContext<'tcx>) -> Ty<'tcx> {
         ctx.instantiate_early_binder(self.tcx, self.tcx.type_of(def_id))
-    }
-
-    pub fn add_gen_node(
-        &mut self,
-        module_id: ModuleId,
-        inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = NodeOutput>,
-        gen_fn: impl FnMut(&mut Generator<'tcx>, GenNode) + 'static,
-    ) -> NodeId {
-        let gen_fn_idx = self.gen_nodes.add_fn(gen_fn);
-        self.net_list
-            .add(module_id, GenNode::new(gen_fn_idx, inputs, outputs))
     }
 
     pub fn local_def_id<T: Into<DefId>>(&self, def_id: T) -> Option<LocalDefId> {

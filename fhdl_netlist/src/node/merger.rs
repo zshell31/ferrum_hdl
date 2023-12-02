@@ -5,7 +5,7 @@ use rustc_macros::{Decodable, Encodable};
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::NodeOutId,
-    sig_ty::{ConstParam, NodeTy},
+    sig_ty::{NodeTy, Width},
     symbol::Symbol,
 };
 
@@ -18,7 +18,7 @@ pub struct Merger {
 
 impl Merger {
     pub fn new(
-        width: ConstParam,
+        width: Width,
         inputs: impl IntoIterator<Item = NodeOutId>,
         rev: bool,
         sym: impl Into<Option<Symbol>>,

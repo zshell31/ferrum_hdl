@@ -6,7 +6,7 @@ use fhdl_netlist::{
 use rustc_hir::Expr;
 use rustc_span::Span;
 
-use super::{Blackbox, EvaluateExpr};
+use super::{Blackbox, EvalExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -33,7 +33,7 @@ impl SignalReg {
     }
 }
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
+impl<'tcx> EvalExpr<'tcx> for SignalReg {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -100,7 +100,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalReg {
 
 pub struct SignalLift;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
+impl<'tcx> EvalExpr<'tcx> for SignalLift {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -116,7 +116,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalLift {
 
 pub struct SignalMap;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
+impl<'tcx> EvalExpr<'tcx> for SignalMap {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -136,7 +136,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalMap {
 
 pub struct SignalAndThen;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
+impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -156,7 +156,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalAndThen {
 
 pub struct SignalApply2;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
+impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -177,7 +177,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalApply2 {
 
 pub struct SignalValue;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
+impl<'tcx> EvalExpr<'tcx> for SignalValue {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -193,7 +193,7 @@ impl<'tcx> EvaluateExpr<'tcx> for SignalValue {
 
 pub struct SignalWatch;
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalWatch {
+impl<'tcx> EvalExpr<'tcx> for SignalWatch {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -211,7 +211,7 @@ pub struct SignalOp {
     pub op: BinOp,
 }
 
-impl<'tcx> EvaluateExpr<'tcx> for SignalOp {
+impl<'tcx> EvalExpr<'tcx> for SignalOp {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,

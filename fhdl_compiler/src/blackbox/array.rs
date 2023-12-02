@@ -1,12 +1,12 @@
 use fhdl_netlist::group::ItemId;
 use rustc_hir::Expr;
 
-use super::{Blackbox, EvaluateExpr};
+use super::{Blackbox, EvalExpr};
 use crate::{error::Error, eval_context::EvalContext, generator::Generator};
 
 pub struct ArrayReverse;
 
-impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
+impl<'tcx> EvalExpr<'tcx> for ArrayReverse {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -56,7 +56,7 @@ impl<'tcx> EvaluateExpr<'tcx> for ArrayReverse {
 
 pub struct ArrayMap;
 
-impl<'tcx> EvaluateExpr<'tcx> for ArrayMap {
+impl<'tcx> EvalExpr<'tcx> for ArrayMap {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,

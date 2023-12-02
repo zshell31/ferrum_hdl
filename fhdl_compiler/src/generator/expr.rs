@@ -482,7 +482,7 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::Lit(lit) => {
                 let prim_ty = self
                     .find_sig_ty(expr_ty, ctx.generic_args, lit.span)?
-                    .prim_ty();
+                    .node_ty();
                 let value = lit::eval_lit(prim_ty, lit)?;
 
                 Ok(self
@@ -649,7 +649,7 @@ impl<'tcx> Generator<'tcx> {
                 Res::Def(DefKind::ConstParam, def_id) => {
                     let prim_ty = self
                         .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
-                        .prim_ty();
+                        .node_ty();
 
                     let generics = self.tcx.generics_of(self.tcx.parent(*def_id));
                     let value = generics
@@ -771,7 +771,7 @@ impl<'tcx> Generator<'tcx> {
                 let comb = self.eval_expr(inner, ctx)?.node_out_id();
                 let prim_ty = self
                     .find_sig_ty(expr_ty, ctx.generic_args, expr.span)?
-                    .prim_ty();
+                    .node_ty();
 
                 Ok((if prim_ty.is_bool() {
                     self.net_list
@@ -883,13 +883,13 @@ impl<'tcx> Generator<'tcx> {
         ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
-        let prim_ty = self.find_sig_ty(ty, ctx.generic_args, span)?.prim_ty();
+        let prim_ty = self.find_sig_ty(ty, ctx.generic_args, span)?.node_ty();
 
         let lhs_ty = self.node_type(lhs.hir_id, ctx);
-        let lhs_prim_ty = self.find_sig_ty(lhs_ty, ctx.generic_args, span)?.prim_ty();
+        let lhs_prim_ty = self.find_sig_ty(lhs_ty, ctx.generic_args, span)?.node_ty();
 
         let rhs_ty = self.node_type(rhs.hir_id, ctx);
-        let rhs_prim_ty = self.find_sig_ty(rhs_ty, ctx.generic_args, span)?.prim_ty();
+        let rhs_prim_ty = self.find_sig_ty(rhs_ty, ctx.generic_args, span)?.node_ty();
 
         let subexpr_ty =
             NodeTy::ty_for_bin_expr(lhs_prim_ty, rhs_prim_ty).ok_or_else(|| {

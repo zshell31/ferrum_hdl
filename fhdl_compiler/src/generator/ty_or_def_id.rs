@@ -1,8 +1,10 @@
 use std::{fmt::Debug, iter};
 
+use ferrum_hdl::const_functions::clog2;
 use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     arena::with_arena,
+    group::ItemId,
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
 };
 use rustc_ast::{
@@ -21,7 +23,7 @@ use rustc_type_ir::{
     UintTy,
 };
 
-use super::{generic::Generics, Generator};
+use super::{generic::Generics, Generator, SigTyInfo};
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
@@ -84,7 +86,7 @@ impl<'tcx> TyOrDefId<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TyOrDefIdWithGen<'tcx> {
     pub ty_or_def_id: TyOrDefId<'tcx>,
     pub generics: Option<Generics>,
@@ -139,7 +141,7 @@ impl<'tcx> Generator<'tcx> {
                 blackbox = self.find_blackbox_(def_id);
             }
 
-            self.blackbox.insert(key.clone(), blackbox);
+            self.blackbox.insert(key, blackbox);
         }
 
         self.blackbox
@@ -179,6 +181,16 @@ impl<'tcx> Generator<'tcx> {
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<SignalTy, Error> {
+        self.find_sig_ty_info(key, generics, span)
+            .map(|res| res.sig_ty)
+    }
+
+    pub fn find_sig_ty_info<T: IsTyOrDefId<'tcx>>(
+        &mut self,
+        key: T,
+        generics: GenericArgsRef<'tcx>,
+        span: Span,
+    ) -> Result<SigTyInfo<'tcx>, Error> {
         let key = key.make(self.tcx, generics);
         let key = self.eval_generics(key, generics, span)?;
 
@@ -242,12 +254,18 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
 
-            self.sig_ty.insert(key.clone(), sig_ty);
+            self.sig_ty.insert(
+                key,
+                sig_ty.map(|sig_ty| SigTyInfo {
+                    sig_ty,
+                    ty_or_def_id: key,
+                }),
+            );
         }
 
         self.sig_ty
             .get(&key)
-            .cloned()
+            .copied()
             .unwrap()
             .ok_or_else(|| {
                 SpanError::new(
@@ -294,6 +312,13 @@ impl<'tcx> Generator<'tcx> {
                     let ty = key.generic_ty(1)?;
 
                     Some(SignalTy::mk_array(Some(blackbox_ty), n, ty))
+                }
+                BlackboxTy::Index => {
+                    let n = key.generic_const(0)?;
+                    Some(SignalTy::new(
+                        Some(blackbox_ty),
+                        NodeTy::Unsigned(clog2(n) as u128).into(),
+                    ))
                 }
             };
         }
@@ -399,5 +424,14 @@ impl<'tcx> Generator<'tcx> {
                 .phantom_data()
                 .filter(|phantom_data| *phantom_data == def_id)
                 .is_some()
+    }
+
+    pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
+        match item_id {
+            ItemId::Node(node_out_id) => {
+                SignalTy::new(None, self.net_list[node_out_id].ty.into())
+            }
+            ItemId::Group(group) => group.sig_ty,
+        }
     }
 }

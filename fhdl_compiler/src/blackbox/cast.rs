@@ -14,7 +14,7 @@ use rustc_hir::{Expr, HirId};
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::Span;
 
-use super::{Blackbox, EvaluateExpr};
+use super::{Blackbox, EvalExpr};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -253,7 +253,7 @@ impl Conversion {
 
 fn assert_convert<F, T: CastFrom<F>>() {}
 
-impl<'tcx> EvaluateExpr<'tcx> for Conversion {
+impl<'tcx> EvalExpr<'tcx> for Conversion {
     fn eval_expr(
         &self,
         blackbox: &Blackbox<'tcx>,

@@ -4,8 +4,9 @@ use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
     bitvec::BitVec,
     cast::{Cast, CastFrom},
-    const_helpers::{Assert, IsTrue},
+    const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
+    index::{idx_constr, Idx},
     signal::{Bundle, Signal, SignalValue, Unbundle},
     simulation::{SimCtx, Simulate},
 };
@@ -77,16 +78,22 @@ where
 }
 
 pub trait ArrayExt<const N: usize, T> {
-    fn at<const M: usize>(self) -> T
+    fn at<const M: usize>(&self) -> T
     where
         Assert<{ M < N }>: IsTrue,
         T: Clone;
 
-    fn slice<const S: usize, const M: usize>(self) -> [T; M]
+    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
     where
         Assert<{ M > 0 }>: IsTrue,
         Assert<{ S + M - 1 < N }>: IsTrue,
         for<'a> [T; M]: TryFrom<&'a [T]>;
+
+    fn index(&self, idx: Idx<N>) -> T
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
+        T: Clone;
 
     fn reverse(self) -> Self
     where
@@ -96,7 +103,7 @@ pub trait ArrayExt<const N: usize, T> {
 }
 
 impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
-    fn at<const M: usize>(self) -> T
+    fn at<const M: usize>(&self) -> T
     where
         Assert<{ M < N }>: IsTrue,
         T: Clone,
@@ -104,7 +111,7 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         self[M].clone()
     }
 
-    fn slice<const S: usize, const M: usize>(self) -> [T; M]
+    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
     where
         Assert<{ M > 0 }>: IsTrue,
         Assert<{ S + M - 1 < N }>: IsTrue,
@@ -114,6 +121,16 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
             Ok(res) => res,
             Err(_) => unreachable!(),
         }
+    }
+
+    fn index(&self, idx: Idx<N>) -> T
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
+        T: Clone,
+    {
+        let idx = idx.val().cast::<usize>();
+        self[idx].clone()
     }
 
     #[blackbox(ArrayReverse)]
@@ -248,5 +265,21 @@ mod tests {
         let s = Array::<3, Array<2, Bit>>::unpack(b);
 
         assert_eq!(s, [[L, L], [H, H], [L, H]]);
+    }
+
+    #[test]
+    fn array_idx() {
+        let s: Array<4, u8> = [4, 3, 2, 1];
+        let idx: Idx<4> = Default::default();
+
+        assert_eq!(s.index(idx.clone()), 4);
+        let idx = idx.succ();
+        assert_eq!(s.index(idx.clone()), 3);
+        let idx = idx.succ();
+        assert_eq!(s.index(idx.clone()), 2);
+        let idx = idx.succ();
+        assert_eq!(s.index(idx.clone()), 1);
+        let idx = idx.succ();
+        assert_eq!(s.index(idx.clone()), 4);
     }
 }

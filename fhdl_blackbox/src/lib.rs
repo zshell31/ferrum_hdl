@@ -37,6 +37,13 @@ pub enum BlackboxKind {
 
     UnsignedIndex,
 
+    IdxDefault,
+    IdxVal,
+    IdxSucc,
+    IdxPred,
+    IdxIsMax,
+    IdxIsMin,
+
     StdClone,
 }
 
@@ -53,6 +60,7 @@ impl BlackboxKind {
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
 pub enum BlackboxTy {
     Signal,
+    Index,
     Wrapped,
     BitVec,
     Bit,

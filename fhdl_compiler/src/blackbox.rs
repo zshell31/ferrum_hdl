@@ -19,7 +19,7 @@ use crate::{
     generator::{ty_or_def_id::TyOrDefIdWithGen, Generator},
 };
 
-pub trait EvaluateExpr<'tcx> {
+pub trait EvalExpr<'tcx> {
     fn eval_expr(
         &self,
         blackbox: &Blackbox<'tcx>,
@@ -91,6 +91,13 @@ eval_expr!(
     SignalWatch => signal::SignalWatch,
 
     UnsignedIndex => index::UnsignedIndex,
+
+    IdxDefault => index::IdxDefault,
+    IdxVal => index::IdxVal,
+    IdxSucc => index::IdxSucc,
+    IdxPred => index::IdxPred,
+    IdxIsMin => index::IdxIsMin,
+    IdxIsMax => index::IdxIsMax,
 
     StdClone => std::StdClone
 

@@ -14,6 +14,7 @@ pub use self::module::Module;
 use crate::{
     const_val::ConstVal,
     node::{Const, IsNode, ModInst, MultiConst, Node, NodeKind, NodeOutput},
+    sig_ty::NodeTy,
     symbol::Symbol,
 };
 
@@ -221,6 +222,18 @@ impl NetList {
     pub fn add_and_get_out<N: IsNode>(&mut self, mod_id: ModuleId, node: N) -> NodeOutId {
         let node_id = self.add(mod_id, node);
         self.nodes[node_id].only_one_out().node_out_id()
+    }
+
+    pub fn const_val(&mut self, mod_id: ModuleId, ty: NodeTy, val: u128) -> NodeOutId {
+        self.add_and_get_out(mod_id, Const::new(ty, val, None))
+    }
+
+    pub fn const_zero(&mut self, mod_id: ModuleId, ty: NodeTy) -> NodeOutId {
+        self.const_val(mod_id, ty, 0)
+    }
+
+    pub fn const_one(&mut self, mod_id: ModuleId, ty: NodeTy) -> NodeOutId {
+        self.const_val(mod_id, ty, 1)
     }
 
     fn insert<N: IsNode>(

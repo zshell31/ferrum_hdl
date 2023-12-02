@@ -91,7 +91,7 @@ impl Generic {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Generics(&'static [Generic]);
 
 impl Generics {

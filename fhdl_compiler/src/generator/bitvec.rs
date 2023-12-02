@@ -10,15 +10,6 @@ use smallvec::{smallvec, SmallVec};
 use crate::generator::Generator;
 
 impl<'tcx> Generator<'tcx> {
-    pub fn item_ty(&self, item_id: ItemId) -> SignalTy {
-        match item_id {
-            ItemId::Node(node_out_id) => {
-                SignalTy::new(None, self.net_list[node_out_id].ty.into())
-            }
-            ItemId::Group(group) => group.sig_ty,
-        }
-    }
-
     pub fn combine_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
         let mut outputs = self.net_list[node_id]
             .node_out_ids()

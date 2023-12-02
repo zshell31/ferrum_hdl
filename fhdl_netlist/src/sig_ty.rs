@@ -89,7 +89,7 @@ impl NodeTy {
             Self::U32 => 32,
             Self::U64 => 64,
             Self::U128 => 128,
-            Self::Usize => 64,
+            Self::Usize => usize::BITS as u128,
             Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,
             Self::Enum(enum_ty) => enum_ty.width(),
@@ -107,8 +107,8 @@ impl NodeTy {
 
         match (lhs, rhs) {
             (Bool, Bit) | (Bit, Bool) => Some(Bit),
-            (Unsigned(n), U8 | U16 | U32 | U64 | U128)
-            | (U8 | U16 | U32 | U64 | U128, Unsigned(n)) => Some(Unsigned(n)),
+            (Unsigned(n), U8 | U16 | U32 | U64 | U128 | Usize)
+            | (U8 | U16 | U32 | U64 | U128 | Usize, Unsigned(n)) => Some(Unsigned(n)),
             _ => {
                 println!("ty_for_bin_expr: lhs = {:?} rhs = {:?}", lhs, rhs);
                 None
@@ -364,7 +364,7 @@ impl SignalTy {
         }
     }
 
-    pub fn prim_ty(&self) -> NodeTy {
+    pub fn node_ty(&self) -> NodeTy {
         self.opt_prim_ty().expect("expected Prim type")
     }
 

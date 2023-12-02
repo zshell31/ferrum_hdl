@@ -6,7 +6,7 @@ use ferrum_hdl::{
     bitpack::BitPackExt,
     cast::Cast,
     const_functions::clog2,
-    const_helpers::UsizeConstr,
+    const_helpers::ConstConstr,
     domain::{clk_divider, Clock, ClockDomain, SECOND},
     signal::{reg, Reset, Signal},
     unsigned::Unsigned,
@@ -25,7 +25,7 @@ pub fn blinking<D: ClockDomain>(
     rst: Reset<D>,
 ) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
-    UsizeConstr<{ blinking_count::<D>() }>:,
+    ConstConstr<{ blinking_count::<D>() }>:,
 {
     reg::<D, _>(
         clk,

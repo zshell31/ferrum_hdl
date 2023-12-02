@@ -145,13 +145,19 @@ impl Crates {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SigTyInfo<'tcx> {
+    pub sig_ty: SignalTy,
+    pub ty_or_def_id: TyOrDefIdWithGen<'tcx>,
+}
+
 pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub net_list: NetList,
     pub idents: Scopes,
     top_module: HirItemId,
     blackbox: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<BlackboxKind>>,
-    sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SignalTy>>,
+    sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
     local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     crates: Crates,

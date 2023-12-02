@@ -5,7 +5,7 @@ use fhdl_netlist::{
 };
 use rustc_hir::Expr;
 
-use super::{bitvec, Blackbox, EvaluateExpr};
+use super::{bitvec, Blackbox, EvalExpr};
 use crate::{
     error::Error, eval_context::EvalContext, generator::Generator, scopes::SymIdent,
     utils,
@@ -13,7 +13,7 @@ use crate::{
 
 pub struct BitPackPack;
 
-impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
+impl<'tcx> EvalExpr<'tcx> for BitPackPack {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -30,7 +30,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackPack {
 
 pub struct BitPackRepack;
 
-impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
+impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,
@@ -52,7 +52,7 @@ impl<'tcx> EvaluateExpr<'tcx> for BitPackRepack {
 
 pub struct BitPackMsb;
 
-impl<'tcx> EvaluateExpr<'tcx> for BitPackMsb {
+impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
     fn eval_expr(
         &self,
         _: &Blackbox<'tcx>,

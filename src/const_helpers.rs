@@ -9,6 +9,4 @@ impl<const T: u128> EvalU128<T> {
     pub const R: u128 = T;
 }
 
-pub struct U128Constr<const N: u128>;
-
-pub struct UsizeConstr<const N: usize>;
+pub struct ConstConstr<const N: usize>;

@@ -78,6 +78,8 @@ pub enum SpanErrorKind {
     ExpectedEnumVariant,
     #[error("expected const value")]
     ExpectedConst,
+    #[error("non-indexable expression")]
+    NonIndexableExpr,
 
     #[error("prim type {0:?} does not have values")]
     PrimTyWithoutValue(PrimTy),

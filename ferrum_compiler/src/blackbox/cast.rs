@@ -89,15 +89,6 @@ impl StdConversion {
             return Ok(from);
         }
 
-        // let node_id = from.node_id();
-        // let module_id = node_id.module_id();
-        // let node_out = generator.net_list[node_id]
-        //     .kind
-        //     .outputs_mut()
-        //     .only_one_mut();
-        // let node_out_id = node_out.node_out_id(node_id);
-        // let node_out = node_out.out;
-
         match (from_ty, to_ty) {
             (SignalTy::Prim(PrimTy::Bool), SignalTy::Prim(PrimTy::Bit)) => {
                 assert_convert::<bool, Bit>();

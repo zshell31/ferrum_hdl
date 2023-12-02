@@ -36,7 +36,7 @@ use super::{
     Generator, MonoItem, TraitKind,
 };
 use crate::{
-    blackbox::{bitvec, cast::StdConversion, lit, EvaluateExpr},
+    blackbox::{cast::StdConversion, lit, EvaluateExpr},
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
@@ -565,33 +565,8 @@ impl<'tcx> Generator<'tcx> {
                         }),
                     ..
                 },
-                span,
-            ) => {
-                let array_ty = self
-                    .find_sig_ty(ty, ctx.generic_args, expr.span)?
-                    .opt_array_ty()
-                    .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedArray, span))?;
-                let width = array_ty.item_ty().width();
-
-                let expr = self.evaluate_expr(expr, ctx)?;
-
-                bitvec::bit_vec_trans(self, expr, ctx, |generator, ctx, bit_vec| {
-                    let ty = PrimTy::BitVec(width);
-                    let start = ind * width;
-                    Ok((
-                        generator.net_list.add_node(
-                            ctx.module_id,
-                            Splitter::new(
-                                bit_vec,
-                                [(ty, generator.idents.for_module(ctx.module_id).tmp())],
-                                Some(start),
-                                true,
-                            ),
-                        ),
-                        ty.into(),
-                    ))
-                })
-            }
+                _,
+            ) => self.index(expr, *ind, ctx),
             ExprKind::Lit(lit) => {
                 let prim_ty = self.find_sig_ty(ty, ctx.generic_args, lit.span)?.prim_ty();
                 let value = lit::evaluate_lit(prim_ty, lit)?;
@@ -1487,6 +1462,44 @@ impl<'tcx> Generator<'tcx> {
                     self.find_blackbox(fn_id, ctx.generic_args, fn_item.span)?;
                 blackbox.evaluate_expr(self, expr, ctx)
             }
+        }
+    }
+
+    pub fn index(
+        &mut self,
+        expr: &'tcx Expr<'tcx>,
+        ind: u128,
+        ctx: &EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        let span = expr.span;
+        let expr = self.evaluate_expr(expr, ctx)?;
+        match self.item_ty(expr) {
+            SignalTy::Prim(prim) => {
+                assert!(ind < prim.width());
+                let indexed = self.net_list[expr.node_id()]
+                    .kind
+                    .outputs()
+                    .only_one()
+                    .node_out_id(expr.node_id());
+                Ok(self
+                    .net_list
+                    .add_node(
+                        ctx.module_id,
+                        Splitter::new(
+                            indexed,
+                            [(PrimTy::Bit, self.idents.for_module(ctx.module_id).tmp())],
+                            Some(ind),
+                            false,
+                        ),
+                    )
+                    .into())
+            }
+            SignalTy::Array(array_ty) => {
+                assert!(ind < array_ty.count());
+
+                Ok(expr.group().item_ids()[ind as usize])
+            }
+            _ => Err(SpanError::new(SpanErrorKind::NonIndexableExpr, span).into()),
         }
     }
 }

@@ -34,6 +34,8 @@ pub enum Blackbox {
     SignalValue,
     SignalWatch,
 
+    UnsignedIndex,
+
     StdClone,
     StdFrom,
     StdInto,

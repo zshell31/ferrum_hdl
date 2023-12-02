@@ -5,13 +5,14 @@ use std::{
     ops::{Add, BitAnd, BitOr, Div, Mul, Shl, Shr, Sub},
 };
 
-use ferrum_macros::blackbox_ty;
+use ferrum_macros::{blackbox, blackbox_ty};
 use ferrum_netlist::sig_ty::PrimTy;
 
 use crate::{
     bit_pack::{BitPack, BitSize},
     bit_vec::BitVec,
     cast::{CastInner, IsPrimTy},
+    const_helpers::{Assert, IsTrue},
     signal::SignalValue,
 };
 
@@ -41,6 +42,14 @@ pub const fn u<const N: usize>(n: u128) -> Unsigned<N> {
 impl<const N: usize> Unsigned<N> {
     pub const fn new(n: u128) -> Self {
         Self(unsigned_value(n, N as u128))
+    }
+
+    #[blackbox(UnsignedIndex)]
+    pub fn ind<const M: usize>(self) -> bool
+    where
+        Assert<{ M < N }>: IsTrue,
+    {
+        (self.0 & (1 << M)) != 0
     }
 }
 

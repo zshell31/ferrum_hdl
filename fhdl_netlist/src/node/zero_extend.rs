@@ -68,11 +68,10 @@ impl IsNode for ZeroExtend {
         &mut self.output
     }
 
-    fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
         if let (Some(input_width), Some(output_width)) = (
-            net_list[NodeOutId::make(module_id, self.input)]
-                .width()
-                .opt_value(),
+            net_list[node.input()].width().opt_value(),
             self.output.width().opt_value(),
         ) {
             if input_width > output_width {

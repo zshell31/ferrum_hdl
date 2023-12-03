@@ -434,7 +434,7 @@ impl<'tcx> Generator<'tcx> {
         })?;
 
         let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(fn_did, ctx.generic_args);
+            let mono_item = MonoItem::new(fn_did, fn_generics);
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {

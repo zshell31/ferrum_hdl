@@ -2,9 +2,9 @@ use std::fmt::{self, Display};
 
 use rustc_macros::{Decodable, Encodable};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_width, IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
@@ -132,5 +132,32 @@ impl IsNode for BinOpNode {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let lhs = &net_list[node.left()];
+        let rhs = &net_list[node.right()];
+
+        match self.bin_op() {
+            BinOp::Add
+            | BinOp::And
+            | BinOp::BitAnd
+            | BinOp::BitOr
+            | BinOp::BitXor
+            | BinOp::Sub
+            | BinOp::Div
+            | BinOp::Mul
+            | BinOp::Or
+            | BinOp::Rem
+            | BinOp::Shl
+            | BinOp::Shr => {
+                assert_width!(self.output.width(), lhs.width());
+                assert_width!(self.output.width(), rhs.width());
+            }
+            BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
+                assert_width!(lhs.width(), rhs.width());
+            }
+        }
     }
 }

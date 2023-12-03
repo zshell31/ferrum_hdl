@@ -1,10 +1,10 @@
 use rustc_macros::{Decodable, Encodable};
 use smallvec::SmallVec;
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_width, IsNode, NodeKind, NodeOutput};
 use crate::{
     encoding::Wrap,
-    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
@@ -68,6 +68,34 @@ impl DFF {
     pub fn output(&self) -> &NodeOutput {
         &self.output
     }
+
+    fn clk(&self) -> NodeOutIdx {
+        self.inputs[0]
+    }
+
+    fn rst(&self) -> NodeOutIdx {
+        self.inputs[1]
+    }
+
+    fn rst_val(&self) -> NodeOutIdx {
+        self.inputs[2]
+    }
+
+    fn en(&self) -> Option<NodeOutIdx> {
+        if self.en_idx != 0 {
+            Some(self.inputs[self.en_idx as usize])
+        } else {
+            None
+        }
+    }
+
+    fn data(&self) -> Option<NodeOutIdx> {
+        if self.data_idx != 0 {
+            Some(self.inputs[self.data_idx as usize])
+        } else {
+            None
+        }
+    }
 }
 
 impl<R: Resolver> Resolve<R> for DFF {
@@ -86,22 +114,14 @@ impl WithId<ModuleId, &'_ DFF> {
         let module_id = self.id();
 
         DFFInputs {
-            clk: NodeOutId::make(module_id, self.inputs[0]),
-            rst: NodeOutId::make(module_id, self.inputs[1]),
-            en: if self.en_idx != 0 {
-                Some(NodeOutId::make(
-                    module_id,
-                    self.inputs[self.en_idx as usize],
-                ))
-            } else {
-                None
-            },
-            rst_val: NodeOutId::make(module_id, self.inputs[2]),
-            data: if self.data_idx != 0 {
-                NodeOutId::make(module_id, self.inputs[self.data_idx as usize])
-            } else {
-                panic!("no data input specified")
-            },
+            clk: NodeOutId::make(module_id, self.clk()),
+            rst: NodeOutId::make(module_id, self.rst()),
+            en: self.en().map(|en| NodeOutId::make(module_id, en)),
+            rst_val: NodeOutId::make(module_id, self.rst_val()),
+            data: NodeOutId::make(
+                module_id,
+                self.data().expect("no data input specified"),
+            ),
         }
     }
 }
@@ -130,5 +150,16 @@ impl IsNode for DFF {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let inputs = node.inputs();
+
+        let data = &net_list[inputs.data];
+        assert_width!(self.output.width(), data.width());
+
+        let rst_val = &net_list[inputs.rst_val];
+        assert_width!(self.output.width(), rst_val.width());
     }
 }

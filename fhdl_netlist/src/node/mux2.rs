@@ -1,9 +1,9 @@
 use rustc_macros::{Decodable, Encodable};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_width, IsNode, NodeKind, NodeOutput};
 use crate::{
     encoding::Wrap,
-    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
@@ -85,5 +85,16 @@ impl IsNode for Mux2 {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let inputs = node.inputs();
+
+        let input1 = &net_list[inputs.input1];
+        let input2 = &net_list[inputs.input2];
+
+        assert_width!(self.output.width(), input1.width());
+        assert_width!(self.output.width(), input2.width());
     }
 }

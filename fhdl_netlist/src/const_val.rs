@@ -103,7 +103,13 @@ impl Add for ConstVal {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        Self::bin_op(self.val.wrapping_add(rhs.val), self, rhs)
+        Self::bin_op(
+            self.val
+                .checked_add(rhs.val)
+                .expect("attempt to add with overflow"),
+            self,
+            rhs,
+        )
     }
 }
 
@@ -111,7 +117,13 @@ impl Sub for ConstVal {
     type Output = Self;
 
     fn sub(self, rhs: Self) -> Self::Output {
-        Self::bin_op(self.val.wrapping_sub(rhs.val), self, rhs)
+        Self::bin_op(
+            self.val
+                .checked_sub(rhs.val)
+                .expect("attempt to subtract with overflow"),
+            self,
+            rhs,
+        )
     }
 }
 
@@ -119,7 +131,13 @@ impl Mul for ConstVal {
     type Output = Self;
 
     fn mul(self, rhs: Self) -> Self::Output {
-        Self::bin_op(self.val.wrapping_mul(rhs.val), self, rhs)
+        Self::bin_op(
+            self.val
+                .checked_mul(rhs.val)
+                .expect("attempt to multiply with overflow"),
+            self,
+            rhs,
+        )
     }
 }
 
@@ -127,7 +145,7 @@ impl Div for ConstVal {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output {
-        Self::bin_op(self.val.wrapping_div(rhs.val), self, rhs)
+        Self::bin_op(self.val / rhs.val, self, rhs)
     }
 }
 
@@ -135,7 +153,7 @@ impl Rem for ConstVal {
     type Output = Self;
 
     fn rem(self, rhs: Self) -> Self::Output {
-        Self::bin_op(self.val.wrapping_rem(rhs.val), self, rhs)
+        Self::bin_op(self.val % rhs.val, self, rhs)
     }
 }
 

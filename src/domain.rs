@@ -10,10 +10,12 @@ pub const NANOSECOND: usize = 1_000;
 pub const PICOSECOND: usize = 1;
 
 pub const fn hz_to_period(freq: usize) -> usize {
+    assert!(SECOND >= freq);
     SECOND / freq
 }
 
 pub const fn clk_divider<D: ClockDomain>(ps: usize) -> usize {
+    assert!(ps >= D::PERIOD);
     ps / D::PERIOD
 }
 

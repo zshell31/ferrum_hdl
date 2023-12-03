@@ -253,12 +253,6 @@ impl Settings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ModuleKey {
-    krate: CrateNum,
-    module_id: ModuleId,
-}
-
 pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub netlist: NetList,
@@ -274,7 +268,6 @@ pub struct Generator<'tcx> {
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     metadata: Metadata<'tcx>,
     loaded_metadata: FxHashMap<CrateNum, Rc<Metadata<'tcx>>>,
-    imported_modules: FxHashMap<ModuleKey, ModuleId>,
 }
 
 impl<'tcx> Generator<'tcx> {
@@ -299,7 +292,6 @@ impl<'tcx> Generator<'tcx> {
             evaluated_modules: Default::default(),
             metadata: Default::default(),
             loaded_metadata: Default::default(),
-            imported_modules: Default::default(),
         }
     }
 
@@ -347,6 +339,7 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
 
+            self.netlist.assert();
             self.netlist.transform();
             self.netlist.reachability();
 
@@ -376,6 +369,7 @@ impl<'tcx> Generator<'tcx> {
             let item = self.tcx.hir().item(top_module);
             self.eval_fn_item(item, true, GenericArgs::empty())?;
 
+            self.netlist.assert();
             self.netlist.transform();
             self.netlist.reachability();
             self.netlist.set_names();

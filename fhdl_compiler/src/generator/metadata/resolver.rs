@@ -4,11 +4,12 @@ use fhdl_netlist::{
     resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
 };
+use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::Ty;
-use rustc_span::Span;
+use rustc_span::{def_id::CrateNum, Span};
 
-use super::{Generator, Metadata, ModuleKey};
+use super::{Generator, Metadata};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -20,12 +21,19 @@ pub struct ImportModule {
     pub target: ModuleId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ModuleKey {
+    krate: CrateNum,
+    module_id: ModuleId,
+}
+
 pub struct MetadataResolver<'g, 'tcx> {
     generator: &'g mut Generator<'tcx>,
     metadata: &'g Metadata<'tcx>,
     fn_did: DefId,
     ctx: &'g EvalContext<'tcx>,
     span: Span,
+    imported: FxHashMap<ModuleKey, ModuleId>,
 }
 
 impl<'g, 'tcx> MetadataResolver<'g, 'tcx> {
@@ -42,6 +50,7 @@ impl<'g, 'tcx> MetadataResolver<'g, 'tcx> {
             fn_did,
             ctx,
             span,
+            imported: Default::default(),
         }
     }
 
@@ -71,7 +80,7 @@ impl<'g, 'tcx> MetadataResolver<'g, 'tcx> {
         let target_id = self.generator.netlist.add_module(source.name, false);
         self.generator.netlist[target_id].is_inlined = source.is_inlined;
 
-        self.generator.imported_modules.insert(
+        self.imported.insert(
             ModuleKey {
                 krate: self.fn_did.krate,
                 module_id: source_id,
@@ -154,7 +163,7 @@ impl<'g, 'tcx> Resolver for MetadataResolver<'g, 'tcx> {
         let krate = self.fn_did.krate;
         let key = ModuleKey { krate, module_id };
 
-        match self.generator.imported_modules.get(&key) {
+        match self.imported.get(&key) {
             Some(target) => Ok(*target),
             None => self.import_module_from_metadata(module_id),
         }

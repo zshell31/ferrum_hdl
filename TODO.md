@@ -57,3 +57,13 @@ endmodule
 - Определиться с типом для ширины сигналов (сейчас используется u128, но это много)
 - tracing
 - expr complexity for nodes
+
+- inline modules by default
+- cannot synthesize `Idx::default`
+- don't import modules if compiling an intermediate non-primary crate
+- synthesize generic function with assoc function/const/types, for example:
+```rust
+fn into_signal<D: ClockDomain, T: SignalValue + Default>() -> Signal<D, T> {
+  Signal::lift(T::default())
+}
+```

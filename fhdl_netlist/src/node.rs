@@ -290,8 +290,8 @@ impl Node {
         self.output_by_ind_mut(0)
     }
 
-    pub fn validate(&self, module_id: ModuleId, net_list: &NetList) {
-        self.kind.validate(module_id, net_list)
+    pub fn assert(&self, net_list: &NetList) {
+        self.kind.assert(self.module_id, net_list)
     }
 
     pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
@@ -409,7 +409,7 @@ pub trait IsNode: Into<NodeKind> {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs;
 
-    fn validate(&self, _module_id: ModuleId, _net_list: &NetList) {}
+    fn assert(&self, _module_id: ModuleId, _net_list: &NetList) {}
 }
 
 macro_rules! define_nodes {
@@ -432,10 +432,10 @@ macro_rules! define_nodes {
                 }
             }
 
-            pub(crate) fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+            pub(crate) fn assert(&self, module_id: ModuleId, net_list: &NetList) {
                 match self {
                     $(
-                        Self::$kind(node) => node.validate(module_id, net_list),
+                        Self::$kind(node) => node.assert(module_id, net_list),
                     )+
                 }
 
@@ -642,3 +642,20 @@ define_nodes!(
 );
 
 impl NodeKind {}
+
+macro_rules! assert_opt {
+    ($lhs:expr, $rhs:expr) => {
+        if let (Some(lhs), Some(rhs)) = ($lhs, $rhs) {
+            assert_eq!(lhs, rhs);
+        }
+    };
+}
+use assert_opt;
+
+macro_rules! assert_width {
+    ($lhs:expr, $rhs:expr) => {
+        crate::node::assert_opt!($lhs.opt_value(), $rhs.opt_value());
+    };
+}
+
+use assert_width;

@@ -207,8 +207,6 @@ impl NetList {
         assert!(!self.nodes.contains_key(&node.node_id()));
         assert_eq!(node.node_id().module_id(), mod_id);
 
-        node.validate(mod_id, self);
-
         let node_id = node.node_id();
         self.nodes.insert(node_id, node);
 
@@ -258,7 +256,6 @@ impl NetList {
     ) {
         assert!(!self.nodes.contains_key(&node.node_id()));
         assert_eq!(node.node_id().module_id(), mod_id);
-        node.validate(mod_id, self);
 
         let node_id = node.node_id();
         self.nodes.insert(node_id, node);
@@ -274,7 +271,7 @@ impl NetList {
     }
 
     pub fn replace<N: IsNode>(&mut self, node_id: NodeId, node: N) {
-        node.validate(node_id.module_id(), self);
+        node.assert(node_id.module_id(), self);
 
         let mod_id = node_id.module_id();
         let mut node: Node = Node::new(node_id, node.into());

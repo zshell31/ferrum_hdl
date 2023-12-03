@@ -1,6 +1,6 @@
 use rustc_macros::{Decodable, Encodable};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_width, IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
@@ -117,8 +117,22 @@ impl IsNode for ModInst {
         self.outputs.as_mut_slice()
     }
 
-    fn validate(&self, _: ModuleId, net_list: &NetList) {
-        assert_eq!(self.inputs.len(), net_list[self.module_id].inputs_len());
-        assert_eq!(self.outputs.len(), net_list[self.module_id].outputs_len());
+    fn assert(&self, target: ModuleId, net_list: &NetList) {
+        let module_id = self.module_id;
+        let module = &net_list[module_id];
+        let node = WithId::<ModuleId, _>::new(target, self);
+
+        assert_eq!(self.inputs.len(), module.inputs_len());
+        for (input, mod_input) in node.inputs().zip(module.inputs()) {
+            assert_width!(
+                net_list[input].width(),
+                net_list[mod_input].only_one_out().width()
+            );
+        }
+
+        assert_eq!(self.outputs.len(), module.outputs_len());
+        for (output, mod_output) in self.outputs().iter().zip(module.outputs()) {
+            assert_width!(output.width(), net_list[mod_output].width());
+        }
     }
 }

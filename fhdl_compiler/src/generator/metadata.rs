@@ -22,7 +22,7 @@ use rustc_serialize::{opaque::MemDecoder, Decodable, Encodable, Encoder};
 use rustc_session::config::OutputType;
 
 use self::encoder::NetListEncoder;
-use super::{temp_nodes::TemplateNodeKind, Generator, ModuleKey};
+use super::{temp_nodes::TemplateNodeKind, Generator};
 use crate::{error::Error, generator::metadata::decoder::NetListDecoder};
 
 const NETLIST_EXT: &str = "netlist";

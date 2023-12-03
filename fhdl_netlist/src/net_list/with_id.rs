@@ -17,6 +17,10 @@ impl<Id: IsId, T> WithId<Id, T> {
     pub fn into_inner(self) -> T {
         self.1
     }
+
+    pub fn inner(&self) -> &T {
+        &self.1
+    }
 }
 
 impl<Id: IsId, T> Deref for WithId<Id, T> {

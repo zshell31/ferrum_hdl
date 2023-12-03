@@ -1,8 +1,8 @@
 use rustc_macros::{Decodable, Encodable};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_width, IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::NodeTy,
     symbol::Symbol,
@@ -66,5 +66,11 @@ impl IsNode for BitNot {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let input = &net_list[node.input()];
+        assert_width!(self.output.width(), input.width());
     }
 }

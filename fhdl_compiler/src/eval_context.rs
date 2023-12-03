@@ -7,7 +7,7 @@ use fhdl_netlist::{
 use rustc_middle::ty::{EarlyBinder, GenericArgsRef, TyCtxt};
 use rustc_type_ir::fold::TypeFoldable;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EvalContext<'tcx> {
     pub is_primary: bool,
     pub generic_args: GenericArgsRef<'tcx>,
@@ -69,7 +69,7 @@ impl<'tcx> EvalContext<'tcx> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ClosureInputs {
     inputs: Rc<RefCell<Vec<NodeOutId>>>,
     start: usize,

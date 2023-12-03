@@ -146,7 +146,7 @@ impl IsNode for Splitter {
         self.outputs.as_mut_slice()
     }
 
-    fn validate(&self, module_id: ModuleId, net_list: &NetList) {
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
         assert!(
             !self.outputs.is_empty(),
             "Splitter should have at least one output"

@@ -1,3 +1,4 @@
+mod assert;
 mod dump;
 mod inject_nodes;
 mod reachability;
@@ -10,6 +11,7 @@ use reachability::Reachability;
 use set_names::SetNames;
 use transform::Transform;
 
+use self::assert::Assert;
 use crate::net_list::{ModuleId, NetList, NodeId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,6 +29,14 @@ pub trait Visitor {
 }
 
 impl NetList {
+    pub fn assert(&self) {
+        Assert::new(self).run()
+    }
+
+    pub fn assert_mod(&self, module_id: ModuleId) {
+        Assert::new(self).visit_module(module_id);
+    }
+
     pub fn transform(&mut self) {
         Transform::new(self).run();
     }

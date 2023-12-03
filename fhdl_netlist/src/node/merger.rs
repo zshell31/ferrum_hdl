@@ -2,9 +2,9 @@ use std::fmt::Debug;
 
 use rustc_macros::{Decodable, Encodable};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{assert_opt, IsNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NodeOutId, NodeOutIdx, WithId},
+    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
     resolver::{Resolve, Resolver},
     sig_ty::{NodeTy, Width},
     symbol::Symbol,
@@ -91,5 +91,15 @@ impl IsNode for Merger {
 
     fn outputs_mut(&mut self) -> &mut Self::Outputs {
         &mut self.output
+    }
+
+    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let total = node
+            .inputs()
+            .map(|input| net_list[input].width().opt_value())
+            .sum::<Option<u128>>();
+
+        assert_opt!(total, self.output.width().opt_value());
     }
 }

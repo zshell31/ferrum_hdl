@@ -911,16 +911,16 @@ impl<'tcx> Generator<'tcx> {
         ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
-        let prim_ty = self.find_sig_ty(ty, ctx, span)?.node_ty();
+        let node_ty = self.find_sig_ty(ty, ctx, span)?.node_ty();
 
         let lhs_ty = self.node_type(lhs.hir_id, ctx);
-        let lhs_prim_ty = self.find_sig_ty(lhs_ty, ctx, span)?.node_ty();
+        let lhs_node_ty = self.find_sig_ty(lhs_ty, ctx, span)?.node_ty();
 
         let rhs_ty = self.node_type(rhs.hir_id, ctx);
-        let rhs_prim_ty = self.find_sig_ty(rhs_ty, ctx, span)?.node_ty();
+        let rhs_node_ty = self.find_sig_ty(rhs_ty, ctx, span)?.node_ty();
 
         let subexpr_ty =
-            NodeTy::ty_for_bin_expr(lhs_prim_ty, rhs_prim_ty).ok_or_else(|| {
+            NodeTy::ty_for_bin_expr(lhs_node_ty, rhs_node_ty).ok_or_else(|| {
                 SpanError::new(
                     SpanErrorKind::IncompatibleTypes(
                         lhs_ty.to_string(),
@@ -931,11 +931,11 @@ impl<'tcx> Generator<'tcx> {
             })?;
 
         let mut subnode =
-            |expr: &'tcx Expr<'tcx>, prim_ty: NodeTy| -> Result<NodeOutId, Error> {
+            |expr: &'tcx Expr<'tcx>, node_ty: NodeTy| -> Result<NodeOutId, Error> {
                 let span = expr.span;
                 let node = self.eval_expr(expr, ctx)?;
 
-                let item_id = if prim_ty != subexpr_ty {
+                let item_id = if node_ty != subexpr_ty {
                     Conversion::convert_as_prim_ty(
                         ctx.module_id,
                         node,
@@ -949,14 +949,14 @@ impl<'tcx> Generator<'tcx> {
                 Ok(item_id.node_out_id())
             };
 
-        let lhs = subnode(lhs, lhs_prim_ty)?;
-        let rhs = subnode(rhs, rhs_prim_ty)?;
+        let lhs = subnode(lhs, lhs_node_ty)?;
+        let rhs = subnode(rhs, rhs_node_ty)?;
 
         Ok(self
             .netlist
             .add_and_get_out(
                 ctx.module_id,
-                BinOpNode::new(prim_ty, bin_op, lhs, rhs, None),
+                BinOpNode::new(node_ty, bin_op, lhs, rhs, None),
             )
             .into())
     }

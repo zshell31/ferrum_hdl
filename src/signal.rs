@@ -22,6 +22,8 @@ pub trait SignalValue: Debug + Clone + 'static {}
 
 impl SignalValue for bool {}
 
+impl<T: SignalValue> SignalValue for Option<T> {}
+
 #[derive_where(Debug, Clone)]
 #[blackbox_ty(Signal)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {

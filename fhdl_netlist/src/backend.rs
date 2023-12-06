@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-use either::Either;
 use rustc_data_structures::fx::FxHashSet;
 use smallvec::SmallVec;
 
@@ -196,11 +195,7 @@ impl<'n> Verilog<'n> {
             }
             NodeKind::Merger(merger) => {
                 expr.write_str("{ ");
-                let inputs = if !merger.rev() {
-                    Either::Left(merger.inputs())
-                } else {
-                    Either::Right(merger.inputs().rev())
-                };
+                let inputs = merger.inputs();
                 expr.intersperse(", ", inputs, |expr, input| {
                     self.inject_node(module_id, input, expr, false);
                 });
@@ -448,17 +443,12 @@ impl<'n> Visitor for Verilog<'n> {
             NodeKind::Merger(merger) => {
                 if !merger.inputs_is_empty() {
                     let output = merger.output().sym.unwrap();
-                    let rev = merger.rev();
 
                     self.buffer.write_tab();
                     self.buffer
                         .write_fmt(format_args!("assign {output} = {{\n"));
 
-                    let inputs = if !rev {
-                        Either::Left(merger.inputs())
-                    } else {
-                        Either::Right(merger.inputs().rev())
-                    };
+                    let inputs = merger.inputs();
                     let inputs = inputs
                         .map(|input| self.inject_input(input, false))
                         .collect::<SmallVec<[_; 8]>>();
@@ -488,7 +478,7 @@ impl<'n> Visitor for Verilog<'n> {
                         sel,
                         default,
                         variant_inputs,
-                        variants,
+                        masks,
                     } = case.inputs();
 
                     let output = case.output().sym.unwrap();
@@ -496,7 +486,7 @@ impl<'n> Visitor for Verilog<'n> {
                     let sel_sym = self.inject_input(sel, false);
                     let sel_width = self.net_list[sel].ty.width().value();
 
-                    let has_mask = variants.iter().any(|mask| mask.mask != 0);
+                    let has_mask = masks.iter().any(|mask| mask.mask != 0);
 
                     self.buffer.write_tab();
                     self.buffer.write_fmt(format_args!("always @(*) begin\n"));
@@ -524,17 +514,15 @@ impl<'n> Visitor for Verilog<'n> {
                         ));
                     };
 
-                    for i in 0 .. (variants.len() - 1) {
-                        let mask = variants[i];
-                        let input = variant_inputs[i];
+                    let mut variants = masks.iter().zip(variant_inputs);
+                    for (&mask, input) in variants.by_ref().take(masks.len() - 1) {
                         write_case(mask, input);
                     }
 
+                    let (&mask, input) = variants.next().unwrap();
                     match default {
                         Some(default) => {
-                            let mask = variants.last().unwrap();
-                            let input = variant_inputs.last().unwrap();
-                            write_case(*mask, *input);
+                            write_case(mask, input);
 
                             let default = self.inject_input(default, false);
 
@@ -544,8 +532,7 @@ impl<'n> Visitor for Verilog<'n> {
                             ));
                         }
                         None => {
-                            let input = variant_inputs.last().unwrap();
-                            let default = self.inject_input(*input, false);
+                            let default = self.inject_input(input, false);
 
                             self.buffer.write_tab();
                             self.buffer.write_fmt(format_args!(

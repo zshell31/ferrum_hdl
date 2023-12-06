@@ -138,38 +138,44 @@ impl<'n> Transform<'n> {
                     let indices = splitter.eval_indices(self.net_list);
                     let input = self.net_list.to_const(splitter.input());
 
-                    match (indices, input) {
-                        (Some(indices), Some(input)) => {
-                            let values = indices
-                                .map(|(output, index)| {
-                                    ConstVal::new(
-                                        input.val >> index,
-                                        output.width().value(),
-                                    )
+                    let tmp = (indices, input);
+                    if let (Some(indices), Some(input)) = tmp {
+                        let values = indices
+                            .map(|(output, index)| {
+                                ConstVal::new(input.val >> index, output.width().value())
                                     .val
-                                })
-                                .collect::<Vec<_>>();
+                            })
+                            .collect::<Vec<_>>();
 
-                            Some(
-                                MultiConst::new(
-                                    values,
-                                    splitter.outputs().iter().copied(),
-                                )
+                        Some(
+                            MultiConst::new(values, splitter.outputs().iter().copied())
                                 .into(),
-                            )
+                        )
+                    } else {
+                        drop(tmp);
+
+                        let input = splitter.input();
+
+                        let input_id = input.node_id();
+                        let input = &self.net_list[input_id];
+
+                        #[allow(clippy::single_match)]
+                        match input.kind() {
+                            NodeKind::Merger(merger) => {
+                                if splitter.rev() != merger.rev() // TODO: maybe it's unnecessary
+                                    && self.net_list.is_reversible(input_id, node_id)
+                                {
+                                    self.net_list.reconnect_from_to(input_id, node_id);
+                                }
+                            }
+                            _ => {}
                         }
-                        _ => None,
+
+                        None
                     }
                 }
             }
-            NodeKind::Merger(merger) if merger.inputs_len() == 1 => self
-                .net_list
-                .to_const(merger.inputs().next().unwrap())
-                .map(|const_val| {
-                    let output = merger.output();
-                    Const::new(output.ty, const_val.val.into(), output.sym).into()
-                }),
-            NodeKindWithId::Merger(merger) if merger.inputs_len() > 1 => {
+            NodeKindWithId::Merger(merger) => {
                 // let sym = output.sym;
 
                 // if !*rev {
@@ -256,12 +262,12 @@ impl<'n> Transform<'n> {
                     sel,
                     default,
                     variant_inputs,
-                    variants,
+                    masks,
                 } = node.inputs();
 
                 if let Some(new_input) =
                     self.net_list.to_const(sel).and_then(|const_val| {
-                        for (mask, variant) in variants.iter().zip(variant_inputs) {
+                        for (mask, variant) in masks.iter().zip(variant_inputs) {
                             if mask.is_match(const_val) {
                                 return Some(variant);
                             }
@@ -297,7 +303,8 @@ impl<'n> Visitor for Transform<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         let mut cursor = self.net_list.mod_cursor(module_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {
-            if let Some(new_node) = self.transform(node_id, &mut cursor) {
+            let new_node = self.transform(node_id, &mut cursor);
+            if let Some(new_node) = new_node {
                 self.net_list.replace(node_id, new_node);
             }
         }

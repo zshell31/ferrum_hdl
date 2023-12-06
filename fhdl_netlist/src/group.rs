@@ -33,11 +33,15 @@ impl IntoIterator for ItemId {
 pub struct ItemIdIter(Either<Once<NodeId>, GroupIter>);
 
 impl ItemId {
-    pub fn node_out_id(self) -> NodeOutId {
+    pub fn node_out_id_opt(&self) -> Option<NodeOutId> {
         match self {
-            Self::Node(node_out_id) => node_out_id,
-            _ => panic!("expected node_id"),
+            Self::Node(node_out_id) => Some(*node_out_id),
+            _ => None,
         }
+    }
+
+    pub fn node_out_id(self) -> NodeOutId {
+        self.node_out_id_opt().expect("expected node_out_id")
     }
 
     pub fn group(self) -> &'static Group {
@@ -131,7 +135,7 @@ impl<'a> IntoIterator for &'a Group {
 
 pub struct GroupIter {
     len: usize,
-    stack: SmallVec<[Iter<'static, ItemId>; 8]>,
+    stack: SmallVec<[Iter<'static, ItemId>; 4]>,
 }
 
 impl GroupIter {

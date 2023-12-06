@@ -18,14 +18,25 @@ pub struct Merger {
 }
 
 impl Merger {
-    pub fn new(
+    pub fn new<I>(
         width: Width,
-        inputs: impl IntoIterator<Item = NodeOutId>,
+        inputs: I,
         rev: bool,
         sym: impl Into<Option<Symbol>>,
-    ) -> Self {
+    ) -> Self
+    where
+        I: IntoIterator<Item = NodeOutId>,
+        I::IntoIter: DoubleEndedIterator,
+    {
+        let inputs = inputs.into_iter().map(Into::into);
+        let inputs = if !rev {
+            inputs.collect()
+        } else {
+            inputs.rev().collect()
+        };
+
         Self {
-            inputs: inputs.into_iter().map(Into::into).collect(),
+            inputs,
             output: NodeOutput::wire(NodeTy::BitVec(width), sym.into()),
             rev,
         }
@@ -35,16 +46,16 @@ impl Merger {
         &self.output
     }
 
-    pub fn rev(&self) -> bool {
-        self.rev
-    }
-
     pub fn inputs_len(&self) -> usize {
         self.inputs.len()
     }
 
     pub fn inputs_is_empty(&self) -> bool {
         self.inputs.is_empty()
+    }
+
+    pub fn rev(&self) -> bool {
+        self.rev
     }
 }
 

@@ -110,7 +110,11 @@ impl<'tcx> Generator<'tcx> {
         }
 
         match sig_ty.kind {
-            SignalTyKind::Node(_) | SignalTyKind::Enum(_) => node_out_id.into(),
+            SignalTyKind::Node(node_ty) => {
+                self.netlist[node_out_id].ty = node_ty;
+                node_out_id.into()
+            }
+            SignalTyKind::Enum(_) => node_out_id.into(),
             SignalTyKind::Array(ty) => {
                 let outputs = if ty.count() == 1 {
                     smallvec![node_out_id]

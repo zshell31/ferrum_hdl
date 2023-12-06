@@ -29,6 +29,7 @@ pub const fn max(n: usize, m: usize) -> usize {
 }
 
 pub const fn mask(n: u128) -> u128 {
+    assert!(n <= 128);
     if n == 128 {
         u128::MAX
     } else {

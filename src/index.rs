@@ -1,15 +1,19 @@
 use std::fmt::{Binary, Debug, LowerHex};
 
-use fhdl_const_func::clog2;
+use fhdl_const_func::{clog2_len, max_val};
 use fhdl_macros::synth;
 
 use crate::{
-    cast::Cast, const_helpers::ConstConstr, signal::SignalValue, unsigned::Unsigned,
+    cast::{Cast, CastFrom},
+    const_helpers::{Assert, ConstConstr, IsTrue},
+    signal::SignalValue,
+    unsigned::Unsigned,
 };
 
 #[inline]
 pub const fn idx_constr(n: usize) -> usize {
-    clog2(n)
+    assert!(n > 0);
+    clog2_len(n)
 }
 
 #[derive(Clone)]
@@ -57,6 +61,24 @@ where
 
 impl<const N: usize> SignalValue for Idx<N> where ConstConstr<{ idx_constr(N) }>: {}
 
+pub const fn idx_cast_constr(n: usize) -> bool {
+    n.is_power_of_two() && {
+        let bits = idx_constr(n);
+        n == max_val(bits as u128) as usize + 1
+    }
+}
+
+impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N>
+where
+    Assert<{ idx_cast_constr(N) }>: IsTrue,
+{
+    // FIXME: check that impl method is synth, not trait method
+    #[synth]
+    fn cast_from(val: Unsigned<{ idx_constr(N) }>) -> Self {
+        Idx(val)
+    }
+}
+
 impl<const N: usize> Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
@@ -100,5 +122,14 @@ where
     #[inline]
     pub fn is_min(&self) -> bool {
         self.0 == 0_u8.cast::<Unsigned<_>>()
+    }
+
+    #[synth]
+    #[inline]
+    pub fn from(val: Unsigned<{ idx_constr(N) }>) -> Self
+    where
+        Assert<{ idx_cast_constr(N) }>: IsTrue,
+    {
+        Self(val)
     }
 }

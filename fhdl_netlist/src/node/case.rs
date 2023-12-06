@@ -14,17 +14,18 @@ use crate::{
 #[derive(Debug, Clone, Encodable, Decodable)]
 pub struct Case {
     inputs: Vec<NodeOutIdx>,
-    variants: Vec<BitVecMask>,
+    masks: Vec<BitVecMask>,
     is_default: bool,
     output: NodeOutput,
 }
 
-#[derive(Debug, Clone)]
+pub type VariantInputs<'n> = impl Iterator<Item = NodeOutId> + 'n;
+
 pub struct CaseInputs<'n> {
     pub sel: NodeOutId,
     pub default: Option<NodeOutId>,
-    pub variant_inputs: Vec<NodeOutId>,
-    pub variants: &'n [BitVecMask],
+    pub variant_inputs: VariantInputs<'n>,
+    pub masks: &'n [BitVecMask],
 }
 
 impl Case {
@@ -53,14 +54,14 @@ impl Case {
 
         Self {
             inputs,
-            variants: mask,
+            masks: mask,
             is_default,
             output: NodeOutput::wire(ty, sym.into()),
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.variants.is_empty()
+        self.masks.is_empty()
     }
 
     pub fn output(&self) -> &NodeOutput {
@@ -83,9 +84,8 @@ impl WithId<ModuleId, &'_ Case> {
             default: default.map(|default| NodeOutId::make(module_id, default)),
             variant_inputs: self.inputs[offset ..]
                 .iter()
-                .map(move |input| NodeOutId::make(module_id, *input))
-                .collect(),
-            variants: self.variants.as_slice(),
+                .map(move |input| NodeOutId::make(module_id, *input)),
+            masks: self.masks.as_slice(),
         }
     }
 }
@@ -94,7 +94,7 @@ impl<R: Resolver> Resolve<R> for Case {
     fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
         Ok(Self {
             inputs: self.inputs.clone(),
-            variants: self.variants.resolve(resolver)?,
+            masks: self.masks.resolve(resolver)?,
             is_default: self.is_default,
             output: self.output.resolve(resolver)?,
         })
@@ -128,8 +128,9 @@ impl IsNode for Case {
     }
 
     fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        for input in self.inputs() {
-            let input = NodeOutId::make(module_id, *input);
+        let node = WithId::<ModuleId, _>::new(module_id, self);
+        let CaseInputs { variant_inputs, .. } = node.inputs();
+        for input in variant_inputs {
             assert_width!(self.output.width(), net_list[input].width());
         }
     }

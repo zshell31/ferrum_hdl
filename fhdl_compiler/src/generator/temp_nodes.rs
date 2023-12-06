@@ -9,6 +9,7 @@ use fhdl_netlist::{
 use rustc_macros::{Decodable, Encodable};
 
 use super::Generator;
+use crate::scopes::SymIdent;
 
 #[derive(Debug, Encodable, Decodable)]
 pub enum TemplateNodeKind {
@@ -188,15 +189,6 @@ impl EvalTemplateNodeKind for CaseIndex {
 
         let variant_width = clog2(count as usize) as u128;
 
-        let default = {
-            let mut mask = BitVecMask::default();
-            mask.set_val(0, variant_width);
-
-            generator.netlist.add_and_get_out(
-                module_id,
-                Splitter::new(self.expr, [(variant_ty, None)], Some(0.into()), false),
-            )
-        };
         let variants = StepBy {
             current: 0,
             step: width,
@@ -215,7 +207,7 @@ impl EvalTemplateNodeKind for CaseIndex {
             (mask, variant)
         });
 
-        Case::new(variant_ty, self.idx, variants, Some(default), None).into()
+        Case::new(variant_ty, self.idx, variants, None, SymIdent::Mux).into()
     }
 }
 

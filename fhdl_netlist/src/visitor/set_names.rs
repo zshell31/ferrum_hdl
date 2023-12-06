@@ -79,11 +79,12 @@ impl<'n> SetNames<'n> {
         let mut mod_outputs = SmallVec::<[_; 8]>::new();
 
         if let NodeKindWithId::ModInst(mod_inst) = self.net_list[node_id].kind() {
-            let sym = Symbol::new_from_args(format_args!(
-                "__{}",
-                self.net_list[mod_inst.module_id()].name
-            ));
             if mod_inst.name().is_none() {
+                let sym = Symbol::new_from_args(format_args!(
+                    "__{}",
+                    self.net_list[mod_inst.module_id()].name
+                ));
+
                 let count = self.idents.get(&(module_id, sym)).copied();
 
                 let (new_sym, count) = Self::ident(sym, count);
@@ -117,7 +118,7 @@ impl<'n> SetNames<'n> {
 
         let node = &mut self.net_list[node_id];
         for mut out in node.outputs_mut() {
-            let sym = out.sym.unwrap_or(Symbol::new("__tmp"));
+            let sym = out.sym.unwrap_or_else(|| Symbol::new("__tmp"));
             let count = self.idents.get(&(module_id, sym)).copied();
 
             let (new_sym, count) = Self::ident(sym, count);

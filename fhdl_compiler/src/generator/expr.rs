@@ -16,8 +16,8 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::{
     def::{CtorOf, DefKind, Res},
     def_id::{DefId, LocalDefId},
-    Expr, ExprKind, HirId, PatKind, Path, QPath, StmtKind, Ty as HirTy,
-    TyKind as HirTyKind, UnOp,
+    BorrowKind, Expr, ExprKind, HirId, Item, ItemKind, Mutability, Node as HirNode,
+    PatKind, Path, QPath, StmtKind, Ty as HirTy, TyKind as HirTyKind, UnOp,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_middle::ty::{
@@ -234,6 +234,9 @@ impl<'tcx> Generator<'tcx> {
         let expr_ty = self.node_type(expr.hir_id, ctx);
 
         match expr.kind {
+            ExprKind::AddrOf(BorrowKind::Ref, Mutability::Not, expr) => {
+                self.eval_expr(expr, ctx)
+            }
             ExprKind::Array(items) => {
                 let array_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.array_ty();
 
@@ -644,9 +647,23 @@ impl<'tcx> Generator<'tcx> {
                     self.eval_closure_fn_without_params(*def_id, expr, ctx)
                 }
                 Res::Def(DefKind::Const, def_id) => {
-                    if self.is_local_def_id(*def_id) {
+                    if let Some(def_id) = self.local_def_id(*def_id) {
+                        // First try to eval expr from HIR definition
+                        let node = self.tcx.hir().get_by_def_id(def_id);
+                        if let HirNode::Item(Item {
+                            kind: ItemKind::Const(_, generics, body_id),
+                            ..
+                        }) = node
+                        {
+                            if generics.params.is_empty() {
+                                let expr = self.tcx.hir().body(*body_id).value;
+                                return self.eval_expr(expr, ctx);
+                            }
+                        }
+
+                        // Or try to eval const value
                         if let Some(const_val) =
-                            self.eval_const_val(*def_id, ctx, Some(*span))
+                            self.eval_const_val(def_id.into(), ctx, Some(*span))
                         {
                             let sig_ty = self.find_sig_ty(expr_ty, ctx, *span)?;
 

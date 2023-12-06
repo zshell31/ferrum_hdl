@@ -320,14 +320,20 @@ impl NetList {
     }
 
     pub(crate) fn reconnect(&mut self, node_id: NodeId) {
-        let node = &self.nodes[node_id];
-        assert_eq!(node.inputs_len(), node.outputs_len());
-        let len = node.inputs_len();
+        self.reconnect_from_to(node_id, node_id);
+    }
 
-        self.remove_links(node_id);
+    pub(crate) fn reconnect_from_to(&mut self, from_id: NodeId, to_id: NodeId) {
+        let from = &self.nodes[from_id];
+        let to = &self.nodes[to_id];
+        assert_eq!(from.inputs_len(), to.outputs_len());
+
+        let len = from.inputs_len();
+        self.remove_links(from_id);
+
         for ind in 0 .. len {
-            let input = self.nodes[node_id].input_by_ind(ind);
-            self.reconnect_input_by_ind(node_id, ind, *input);
+            let input = self.nodes[from_id].input_by_ind(ind);
+            self.reconnect_input_by_ind(to_id, ind, *input);
         }
     }
 
@@ -353,8 +359,14 @@ impl NetList {
             .flat_map(|links| links.iter())
         {
             let link_node_id = NodeId::make(module_id, link.node_idx());
+
             **self.nodes[link_node_id].input_by_ind_mut(link.idx()) = new_input.into();
             self.links.get_mut(&new_input).unwrap().insert(*link);
+        }
+
+        let sym = self.nodes[input].sym;
+        if sym.is_some() {
+            self.nodes[new_input].sym = sym;
         }
 
         self.modules[input.node_id().module_id()]
@@ -525,8 +537,10 @@ impl NetList {
 
             self.reconnect_input_by_ind(mod_inst_node_id, ind, new_input);
 
-            let sym = self.nodes[mod_inst_node_id].output_by_ind(ind).sym;
-            self.nodes[new_input].sym = sym;
+            if self.nodes[new_input].sym.is_none() {
+                let sym = self.nodes[mod_inst_node_id].output_by_ind(ind).sym;
+                self.nodes[new_input].sym = sym;
+            }
         }
 
         self.remove(mod_inst_node_id);
@@ -541,5 +555,34 @@ impl NetList {
 
             self.add_link(data, NodeInId::new(node_id, idx));
         }
+    }
+
+    pub fn is_reversible(&self, from_id: NodeId, to_id: NodeId) -> bool {
+        let from = &self.nodes[from_id];
+        let to = &self.nodes[to_id];
+
+        let compare = |from: NodeOutId, to: NodeOutId| {
+            let from = &self.nodes[from];
+            let to = &self.nodes[to];
+
+            if let (Some(from_w), Some(to_w)) =
+                (from.width().opt_value(), to.width().opt_value())
+            {
+                from_w == to_w
+            } else {
+                false
+            }
+        };
+
+        from.inputs_len() == to.outputs_len()
+            && from.outputs_len() == to.inputs_len()
+            && from
+                .inputs()
+                .zip(to.outputs())
+                .all(|(from, to)| compare(*from, to.node_out_id()))
+            && from
+                .outputs()
+                .zip(to.inputs())
+                .all(|(from, to)| from.node_out_id() == *to)
     }
 }

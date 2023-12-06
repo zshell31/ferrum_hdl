@@ -1,4 +1,7 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    fmt::Debug,
+    ops::{Deref, DerefMut},
+};
 
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use smallvec::{Array, SmallVec};

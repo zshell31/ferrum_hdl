@@ -111,6 +111,7 @@ impl<'tcx> Generator<'tcx> {
             with_arena()
                 .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
         };
+        assert_eq!(group.len(), ty.count() as usize);
 
         Ok(
             Group::new_with_item_ids(SignalTy::new(SignalTyKind::Array(ty)), group)
@@ -128,6 +129,23 @@ impl<'tcx> Generator<'tcx> {
             with_arena()
                 .alloc_from_res_iter(iter.into_iter().map(|item| f(self, item)))?
         };
+
+        assert_eq!(group.len(), ty.len());
+        for (item_id, ty) in group.iter().zip(ty.tys()) {
+            if let Some(node_out_id) = item_id.node_out_id_opt() {
+                if self.netlist[node_out_id].sym.is_none()
+                    && ty
+                        .name
+                        .as_str()
+                        .chars()
+                        .next()
+                        .map(|ch| !ch.is_ascii_digit())
+                        .unwrap_or_default()
+                {
+                    self.netlist[node_out_id].sym = Some(ty.name);
+                }
+            }
+        }
 
         Ok(
             Group::new_with_item_ids(SignalTy::new(SignalTyKind::Struct(ty)), group)

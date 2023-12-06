@@ -18,6 +18,10 @@ impl<'n> InjectNodes<'n> {
     }
 
     fn linked_by_dff(&self, link: &Node, link_out_id: NodeOutId) -> bool {
+        if !self.net_list[link_out_id.node_id()].is_const() {
+            return false;
+        }
+
         use NodeKindWithId as NodeKind;
 
         match link.kind() {

@@ -55,6 +55,10 @@ impl ModuleScopes {
         self.scopes.pop();
     }
 
+    pub fn add_self_ident(&mut self, item_id: ItemId) {
+        self.add_local_ident(Ident::from_str("self"), item_id);
+    }
+
     pub fn add_local_ident(&mut self, ident: Ident, item_id: ItemId) {
         if ident.as_str() == "self" {
             self.self_arg = Some(item_id);

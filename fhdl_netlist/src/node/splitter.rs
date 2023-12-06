@@ -41,6 +41,10 @@ impl Splitter {
     pub fn outputs(&self) -> &[NodeOutput] {
         &self.outputs
     }
+
+    pub fn rev(&self) -> bool {
+        self.rev
+    }
 }
 
 pub type Indices<'a> = impl Iterator<Item = (&'a NodeOutput, u128)> + 'a;

@@ -16,7 +16,7 @@ use rustc_hir::{
     MutTy, Param, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
 };
 use rustc_middle::ty::{FnSig, GenericArgsRef, TyKind};
-use rustc_span::{symbol::Ident, Span, Symbol as RustSymbol};
+use rustc_span::{Span, Symbol as RustSymbol};
 use smallvec::SmallVec;
 
 use super::{
@@ -110,7 +110,15 @@ impl<'tcx> Generator<'tcx> {
 
         self.eval_inputs(inputs, &mut ctx, false)?;
         let item_id = self.eval_expr(body.value, &mut ctx)?;
-        self.eval_outputs(item_id);
+        self.eval_outputs(
+            self.tcx
+                .hir()
+                .find_parent(body_id.hir_id)
+                .and_then(|node| node.ident())
+                .as_ref()
+                .map(|ident| ident.as_str()),
+            item_id,
+        );
 
         self.idents.for_module(module_id).pop_scope();
 
@@ -193,9 +201,7 @@ impl<'tcx> Generator<'tcx> {
                 let input = self.make_input_with_sig_ty(sig_ty, ctx, is_closure);
 
                 if is_self_param {
-                    self.idents
-                        .for_module(ctx.module_id)
-                        .add_local_ident(Ident::from_str("self"), input);
+                    self.idents.for_module(ctx.module_id).add_self_ident(input);
                 }
 
                 Ok(input)
@@ -280,11 +286,18 @@ impl<'tcx> Generator<'tcx> {
             .collect()
     }
 
-    fn eval_outputs(&mut self, item_id: ItemId) {
+    fn eval_outputs(&mut self, prefix: Option<&str>, item_id: ItemId) {
         for node_out_id in item_id.into_iter() {
             let out = &mut self.netlist[node_out_id];
             if out.sym.is_none() {
-                out.sym = SymIdent::Out.into();
+                out.sym = match prefix {
+                    Some(prefix) => Some(Symbol::new_from_args(format_args!(
+                        "{}_{}",
+                        prefix,
+                        SymIdent::Out.as_str()
+                    ))),
+                    None => SymIdent::Out.into(),
+                };
             }
             self.netlist.add_output(node_out_id);
         }

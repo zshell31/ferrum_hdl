@@ -18,3 +18,4 @@ pub mod signal_fn;
 pub mod simulation;
 mod tuples;
 pub mod unsigned;
+pub mod watchable;

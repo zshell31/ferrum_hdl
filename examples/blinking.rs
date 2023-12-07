@@ -30,7 +30,7 @@ where
     reg::<D, _>(
         clk,
         rst,
-        0_u8.cast(),
+        &0_u8.cast(),
         |r: Unsigned<{ blinking_count::<D>() }>| r + 1_u8,
     )
     .map(|value| (value.clone().msb().cast(), value))

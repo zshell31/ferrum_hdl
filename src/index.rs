@@ -1,4 +1,4 @@
-use std::fmt::{Binary, Debug, LowerHex};
+use std::fmt::{Binary, Debug, Display, LowerHex};
 
 use fhdl_const_func::{clog2_len, max_val};
 use fhdl_macros::synth;
@@ -27,6 +27,15 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         Debug::fmt(&self.0, f)
+    }
+}
+
+impl<const N: usize> Display for Idx<N>
+where
+    ConstConstr<{ idx_constr(N) }>:,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Display::fmt(&self.0, f)
     }
 }
 
@@ -79,6 +88,15 @@ where
     }
 }
 
+impl<const N: usize> From<usize> for Idx<N>
+where
+    ConstConstr<{ idx_constr(N) }>:,
+{
+    fn from(value: usize) -> Self {
+        Self(value.cast())
+    }
+}
+
 impl<const N: usize> Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
@@ -90,8 +108,12 @@ where
 
     #[synth]
     #[inline]
-    pub fn val(self) -> Unsigned<{ idx_constr(N) }> {
-        self.0
+    pub fn val(&self) -> Unsigned<{ idx_constr(N) }> {
+        self.0.clone()
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.val().cast()
     }
 
     #[synth]

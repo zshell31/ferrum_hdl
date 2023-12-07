@@ -4,7 +4,7 @@ use crate::{signal::SignalValue, simulation::SimCtx};
 
 #[derive_where(Debug)]
 pub struct SignalFn<T: SignalValue> {
-    cycle: u16,
+    cycle: usize,
     cached: Option<T>,
     #[derive_where(skip)]
     f: Box<dyn FnMut(&mut SimCtx) -> T>,
@@ -13,7 +13,7 @@ pub struct SignalFn<T: SignalValue> {
 impl<T: SignalValue> SignalFn<T> {
     pub(crate) fn new(f: impl FnMut(&mut SimCtx) -> T + 'static) -> Self {
         Self {
-            cycle: u16::MAX,
+            cycle: usize::MAX,
             cached: None,
             f: Box::new(f),
         }
@@ -45,7 +45,7 @@ mod tests {
 
     #[test]
     fn signal_fn() {
-        let mut ctx = SimCtx::default();
+        let mut ctx = SimCtx::new();
         let mut value = 0;
         let mut signal_fn = SignalFn::new(move |_| {
             value += 1_u8;

@@ -1,20 +1,19 @@
-// use std::collections::HashMap;
+use crate::{signal::SignalValue, watchable::Formatter};
 
-// use fnv::FnvBuildHasher;
-
-use std::fmt::Binary;
-
-// type FnvHashMap<K, V> = HashMap<K, V, FnvBuildHasher>;
-use crate::signal::SignalValue;
-
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct SimCtx {
     cycle_printed: bool,
-    cycle: u16,
+    cycle: usize,
 }
 
 impl SimCtx {
-    pub(crate) fn cycle(&self) -> u16 {
+    pub(crate) fn new() -> Self {
+        Self {
+            cycle_printed: false,
+            cycle: usize::MAX,
+        }
+    }
+    pub(crate) fn cycle(&self) -> usize {
         self.cycle
     }
 
@@ -25,7 +24,7 @@ impl SimCtx {
 
     fn next_cycle_inner(&mut self) {
         self.cycle_printed = false;
-        self.cycle += 1;
+        self.cycle = self.cycle.wrapping_add(1);
     }
 
     fn print_cycle(&mut self) {
@@ -35,32 +34,9 @@ impl SimCtx {
         }
     }
 
-    pub(crate) fn watch<T: SignalValue>(&mut self, name: &'static str, value: &T) {
+    pub(crate) fn watch<T: SignalValue>(&mut self, value: &T, fmt: &Formatter<T>) {
         self.print_cycle();
-        println!("'{}': {:?}", name, value);
-    }
-
-    pub(crate) fn watch_bin<T: SignalValue + Binary>(
-        &mut self,
-        name: &'static str,
-        value: &T,
-    ) {
-        self.print_cycle();
-        println!("'{}': {:b}", name, value);
-    }
-}
-
-pub struct Watcher<'a> {
-    ctx: &'a mut SimCtx,
-}
-
-impl<'a> Watcher<'a> {
-    pub fn watch<T: SignalValue>(&mut self, name: &'static str, value: &T) {
-        self.ctx.watch(name, value);
-    }
-
-    pub fn watch_bin<T: SignalValue + Binary>(&mut self, name: &'static str, value: &T) {
-        self.ctx.watch_bin(name, value);
+        fmt.output(value);
     }
 }
 
@@ -71,7 +47,7 @@ pub trait Simulate: Sized {
 
     fn simulate(self) -> Simulation<Self> {
         Simulation {
-            ctx: SimCtx::default(),
+            ctx: SimCtx::new(),
             source: self,
         }
     }

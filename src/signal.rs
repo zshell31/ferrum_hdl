@@ -1,4 +1,5 @@
 use std::{
+    borrow::{Borrow, Cow},
     cell::RefCell,
     fmt::Debug,
     marker::PhantomData,
@@ -16,6 +17,7 @@ use crate::{
     domain::{Clock, ClockDomain},
     signal_fn::SignalFn,
     simulation::{SimCtx, Simulate},
+    watchable::{AsDisplay, FmtKind, Formatter, Watchable},
 };
 
 pub trait SignalValue: Debug + Clone + 'static {}
@@ -30,7 +32,7 @@ pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
     _dom: PhantomData<D>,
     next: Rc<RefCell<SignalFn<T>>>,
-    name: Option<&'static str>,
+    fmt: Option<Formatter<T>>,
 }
 
 impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
@@ -38,23 +40,34 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         Self {
             _dom: PhantomData,
             next: Rc::new(RefCell::new(SignalFn::new(f))),
-            name: None,
+            fmt: None,
         }
     }
 
     #[allow(clippy::should_implement_trait)]
     pub(crate) fn next(&mut self, ctx: &mut SimCtx) -> T {
         let value = self.next.borrow_mut().next_val(ctx);
-        if let Some(name) = self.name.as_ref() {
-            ctx.watch(name, &value);
+        if let Some(fmt) = self.fmt.as_ref() {
+            ctx.watch(&value, fmt);
         }
 
         value
     }
 
     #[blackbox(SignalWatch)]
-    pub fn watch(mut self, name: &'static str) -> Self {
-        self.name = Some(name);
+    pub fn watch(self, name: impl Into<Cow<'static, str>>) -> Self
+    where
+        T: Watchable<AsDisplay>,
+    {
+        self.watch_with(name)
+    }
+
+    #[blackbox(SignalWatch)]
+    pub fn watch_with<F: FmtKind, I: Into<Cow<'static, str>>>(mut self, name: I) -> Self
+    where
+        T: Watchable<F>,
+    {
+        self.fmt = Some(T::formatter(name));
         self
     }
 
@@ -64,11 +77,11 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[blackbox(SignalMap)]
-    pub fn map<U: SignalValue, F>(self, f: F) -> Signal<D, U>
+    pub fn map<U: SignalValue, F>(&self, f: F) -> Signal<D, U>
     where
         F: Fn(T) -> U + Clone + 'static,
     {
-        let mut inner = self;
+        let mut inner = self.clone();
         Signal::new(move |ctx| {
             let val = inner.next(ctx);
             (f)(val)
@@ -76,11 +89,11 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[blackbox(SignalAndThen)]
-    pub fn and_then<U: SignalValue, F>(self, f: F) -> Signal<D, U>
+    pub fn and_then<U: SignalValue, F>(&self, f: F) -> Signal<D, U>
     where
-        F: FnOnce(Wrapped<D, T>) -> Signal<D, U> + Clone + 'static,
+        F: FnOnce(Wrapped<D, T>) -> Signal<D, U> + Clone,
     {
-        let mut wrapped = Wrapped::new(self);
+        let mut wrapped = Wrapped::new(self.clone());
         let mut signal = f(wrapped.clone());
         Signal::new(move |ctx| {
             wrapped.next(ctx);
@@ -98,14 +111,14 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
 
     #[blackbox(SignalApply2)]
     pub fn apply2<U: SignalValue, V: SignalValue, F>(
-        self,
+        &self,
         other: impl Into<Signal<D, U>>,
         f: F,
     ) -> Signal<D, V>
     where
         F: Fn(T, U) -> V + Clone + 'static,
     {
-        let mut this = self;
+        let mut this = self.clone();
         let mut other = other.into();
 
         Signal::new(move |ctx| {
@@ -116,7 +129,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[blackbox(SignalEq)]
-    pub fn eq<U: SignalValue>(self, other: impl Into<Signal<D, U>>) -> Signal<D, bool>
+    pub fn eq<U: SignalValue>(&self, other: impl Into<Signal<D, U>>) -> Signal<D, bool>
     where
         T: PartialEq<U>,
     {
@@ -231,7 +244,7 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     #[inline]
     #[blackbox(SignalValue)]
     pub fn value(&self) -> T {
-        self.0.next.borrow().value()
+        RefCell::borrow(&self.0.next).value()
     }
 
     pub(crate) fn next(&mut self, ctx: &mut SimCtx) {
@@ -239,7 +252,10 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     }
 
     #[blackbox(SignalWatch)]
-    pub fn watch(self, name: &'static str) -> Self {
+    pub fn watch(self, name: &'static str) -> Self
+    where
+        T: Watchable<AsDisplay>,
+    {
         Self(self.0.watch(name))
     }
 }
@@ -277,11 +293,16 @@ impl<T: SignalValue> Source<T> {
     }
 
     pub fn value(&self) -> T {
-        self.0.borrow().clone()
+        RefCell::borrow(&self.0).clone()
     }
 
     pub fn set_value(&self, value: T) -> T {
         self.0.replace(value)
+    }
+
+    pub fn with(&self, f: impl FnOnce(T) -> T) {
+        let value = self.value();
+        self.set_value(f(value));
     }
 }
 
@@ -415,44 +436,53 @@ where
 #[blackbox(SignalReg)]
 pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    mut rst: Reset<D>,
-    rst_val: T,
+    rst: impl Borrow<Reset<D>>,
+    rst_val: impl Borrow<T>,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
+    let mut rst = rst.borrow().clone();
+    let rst_val = rst_val.borrow().clone();
+
     let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
-        let value = if rst.next(ctx) {
-            rst_val.clone()
+        if rst.next(ctx) {
+            let val = rst_val.clone();
+            next_val = (comb_fn)(val.clone());
+            val
         } else {
-            next_val.clone()
-        };
-        next_val = (comb_fn)(value.clone());
-
-        value
+            let val = next_val.clone();
+            next_val = (comb_fn)(val.clone());
+            val
+        }
     })
 }
 
 #[blackbox(SignalRegEn)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    mut rst: Reset<D>,
-    mut en: Signal<D, impl Into<bool> + SignalValue>,
-    rst_val: T,
+    rst: impl Borrow<Reset<D>>,
+    en: impl Borrow<Enable<D>>,
+    rst_val: impl Borrow<T>,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
+    let mut rst = rst.borrow().clone();
+    let mut en = en.borrow().clone();
+    let rst_val = rst_val.borrow().clone();
+
     let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
         if rst.next(ctx) {
-            next_val = rst_val.clone();
-            (comb_fn)(next_val.clone());
-            next_val.clone()
-        } else if en.next(ctx).into() {
-            let val = (comb_fn)(next_val.clone());
-            next_val = val.clone();
+            let val = rst_val.clone();
+            next_val = (comb_fn)(val.clone());
+            val
+        } else if en.next(ctx) {
+            let val = next_val.clone();
+            next_val = (comb_fn)(val.clone());
             val
         } else {
-            (comb_fn)(next_val.clone());
-            next_val.clone()
+            let val = next_val.clone();
+            (comb_fn)(val.clone());
+            val
         }
     })
 }
@@ -489,11 +519,57 @@ mod tests {
     #[test]
     fn test_reg() {
         let clk = Clock::<TestSystem4>::default();
-        let rst = Reset::reset();
-        let r = reg::<TestSystem4, Unsigned<3>>(clk, rst, 0_u8.cast(), |val| val + 1_u8);
+        let (rst, rst_signal) = Reset::reset_src();
 
-        assert_eq!(r.simulate().take(16).collect::<Vec<_>>(), [
-            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+        let mut r =
+            reg::<TestSystem4, Unsigned<3>>(clk, rst_signal, &0_u8.cast(), |val| {
+                val + 1_u8
+            })
+            .simulate();
+
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
+        ]);
+
+        rst.revert();
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [0; 15]);
+
+        rst.revert();
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
+            1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+        ]);
+    }
+
+    #[test]
+    fn test_reg_en() {
+        let clk = Clock::<TestSystem4>::default();
+        let (rst, rst_signal) = Reset::reset_src();
+        let (en, en_signal) = Enable::enable_src();
+
+        let mut r =
+            reg_en::<_, Unsigned<3>>(clk, rst_signal, en_signal, &0_u8.cast(), |val| {
+                val + 1_u8
+            })
+            .simulate();
+
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
+        ]);
+
+        rst.revert();
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [0; 15]);
+
+        rst.revert();
+        assert_eq!(r.by_ref().take(14).collect::<Vec<_>>(), [
+            1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
+        ]);
+
+        en.revert();
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [7; 15]);
+
+        en.revert();
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
+            7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5
         ]);
     }
 }

@@ -102,6 +102,10 @@ pub trait ArrayExt<const N: usize, T> {
         T: Clone;
 
     fn map<U>(self, f: impl Fn(T) -> U) -> [U; N];
+
+    fn make(f: impl FnMut(Idx<N>) -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:;
 }
 
 impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
@@ -149,6 +153,18 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     #[blackbox(ArrayMap)]
     fn map<U>(self, f: impl Fn(T) -> U) -> [U; N] {
         self.map(f)
+    }
+
+    fn make(mut f: impl FnMut(Idx<N>) -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        let values = (0 .. N).map(|idx| f(idx.into())).collect::<Vec<_>>();
+
+        match <[T; N]>::try_from(values) {
+            Ok(res) => res,
+            Err(_) => unreachable!(),
+        }
     }
 }
 

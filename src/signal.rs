@@ -446,9 +446,9 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
         if rst.next(ctx) {
-            let val = rst_val.clone();
-            next_val = (comb_fn)(val.clone());
-            val
+            // Asynchronous reset
+            next_val = rst_val.clone();
+            next_val.clone()
         } else {
             let val = next_val.clone();
             next_val = (comb_fn)(val.clone());
@@ -472,9 +472,9 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     let mut next_val = rst_val.clone();
     Signal::new(move |ctx| {
         if rst.next(ctx) {
-            let val = rst_val.clone();
-            next_val = (comb_fn)(val.clone());
-            val
+            // Asynchronous reset
+            next_val = rst_val.clone();
+            next_val.clone()
         } else if en.next(ctx) {
             let val = next_val.clone();
             next_val = (comb_fn)(val.clone());
@@ -503,6 +503,8 @@ pub trait Bundle {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
     use super::{SignalIterExt, *};
     use crate::{domain::TestSystem4, unsigned::Unsigned};
 
@@ -532,11 +534,11 @@ mod tests {
         ]);
 
         rst.revert();
-        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [0; 15]);
+        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [0, 0, 0, 0, 0]);
 
         rst.revert();
         assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
-            1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6, 7
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
         ]);
     }
 
@@ -557,19 +559,92 @@ mod tests {
         ]);
 
         rst.revert();
-        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [0; 15]);
+        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [0, 0, 0, 0, 0]);
 
         rst.revert();
         assert_eq!(r.by_ref().take(14).collect::<Vec<_>>(), [
-            1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
+            0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5
         ]);
 
         en.revert();
-        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [7; 15]);
+        assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [6; 15]);
 
         en.revert();
         assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
-            7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5
+            6, 7, 0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4
+        ]);
+    }
+
+    #[test]
+    fn test_reg_seq() {
+        let clk = Clock::<TestSystem4>::default();
+        let (rst, rst_signal) = Reset::reset_src();
+        let (en, en_signal) = Enable::enable_src();
+
+        let data = iter::successors::<Unsigned<3>, _>(Some(1_u8.cast()), |val| {
+            Some(val.clone() + 1_u8)
+        })
+        .into_signal::<TestSystem4>();
+
+        macro_rules! block {
+            ($pred:ident) => {
+                $pred.and_then(|data| {
+                    reg_en(
+                        clk,
+                        &rst_signal,
+                        &en_signal,
+                        0_u8.cast::<Unsigned<3>>(),
+                        move |_| data.value(),
+                    )
+                })
+            };
+        }
+
+        let reg0 = block!(data);
+        let reg1 = block!(reg0);
+        let reg2 = block!(reg1);
+        let reg3 = block!(reg2);
+
+        let r = [reg0, reg1, reg2, reg3].bundle();
+        let mut r = (data, en_signal, r).bundle().simulate();
+
+        let cast = |value: (Unsigned<3>, bool, [Unsigned<3>; 4])| {
+            value.cast::<(u8, bool, [u8; 4])>()
+        };
+
+        assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
+            (1, true, [0, 0, 0, 0]),
+            (2, true, [1, 0, 0, 0]),
+            (3, true, [2, 1, 0, 0]),
+            (4, true, [3, 2, 1, 0])
+        ]);
+
+        en.revert();
+        assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
+            (5, false, [4, 3, 2, 1]),
+            (6, false, [4, 3, 2, 1]),
+            (7, false, [4, 3, 2, 1]),
+            (0, false, [4, 3, 2, 1])
+        ]);
+
+        en.revert();
+        assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
+            (1, true, [4, 3, 2, 1]),
+            (2, true, [1, 4, 3, 2]),
+            (3, true, [2, 1, 4, 3]),
+            (4, true, [3, 2, 1, 4]),
+        ]);
+
+        rst.revert();
+        assert_eq!(cast(r.next_cycle()), (5, true, [0, 0, 0, 0]));
+        assert_eq!(cast(r.next_cycle()), (6, true, [0, 0, 0, 0]));
+        rst.revert();
+
+        assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
+            (7, true, [0, 0, 0, 0]),
+            (0, true, [7, 0, 0, 0]),
+            (1, true, [0, 7, 0, 0]),
+            (2, true, [1, 0, 7, 0]),
         ]);
     }
 }

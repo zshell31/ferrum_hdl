@@ -30,51 +30,6 @@ pub fn bit_vec_trans<'tcx>(
     Ok(from)
 }
 
-#[allow(dead_code)]
-pub struct LoopArgs {
-    pub input: NodeOutId,
-    pub output: Option<Symbol>,
-    pub loop_var: Symbol,
-}
-
-#[allow(dead_code)]
-pub fn bit_vec_trans_in_loop<'tcx>(
-    _generator: &mut Generator<'tcx>,
-    _source: ItemId,
-    _ctx: &EvalContext<'tcx>,
-    _count: u128,
-    _trans: impl FnOnce(
-        &mut Generator<'tcx>,
-        &EvalContext<'tcx>,
-        LoopArgs,
-    ) -> Result<SignalTy, Error>,
-) -> Result<ItemId, Error> {
-    todo!()
-    // bit_vec_trans(generator, source, ctx, |generator, ctx, bit_vec| {
-    //     let loop_var = Symbol::new("i");
-    //     let output = None;
-
-    //     let loop_id = generator
-    //         .net_list
-    //         .add(ctx.module_id, LoopStart::new(loop_var, count, None));
-
-    //     let sig_ty = trans(generator, ctx, LoopArgs {
-    //         input: bit_vec,
-    //         output,
-    //         loop_var,
-    //     })?;
-    //     let width = sig_ty.width();
-
-    //     generator.net_list.add(ctx.module_id, LoopEnd {});
-
-    //     if let NodeKind::LoopStart(node) = &mut generator.net_list[loop_id].kind {
-    //         node.set_out(Some((NodeTy::BitVec(count * width), output)));
-    //     }
-
-    //     Ok((loop_id, SignalTy::mk_array(None, count, sig_ty)))
-    // })
-}
-
 pub struct BitVecShrink;
 
 impl<'tcx> EvalExpr<'tcx> for BitVecShrink {

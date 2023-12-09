@@ -10,7 +10,7 @@ use smallvec::{smallvec, SmallVec};
 use crate::generator::Generator;
 
 impl<'tcx> Generator<'tcx> {
-    pub fn combine_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
+    pub fn combine_node_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
         let mut outputs = self.netlist[node_id]
             .node_out_ids()
             .collect::<SmallVec<[_; 8]>>()
@@ -19,6 +19,14 @@ impl<'tcx> Generator<'tcx> {
         let res = self.combine_outputs_(&mut outputs, sig_ty);
         assert!(outputs.next().is_none());
         res
+    }
+
+    pub fn combine_outputs(
+        &mut self,
+        outputs: impl IntoIterator<Item = NodeOutId>,
+        sig_ty: SignalTy,
+    ) -> ItemId {
+        self.combine_outputs_(outputs.into_iter().by_ref(), sig_ty)
     }
 
     fn combine_outputs_<I: Iterator<Item = NodeOutId>>(

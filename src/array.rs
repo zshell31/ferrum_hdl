@@ -103,6 +103,7 @@ pub trait ArrayExt<const N: usize, T> {
 
     fn map<U>(self, f: impl Fn(T) -> U) -> [U; N];
 
+    #[blackbox(ArrayMake)]
     fn make(f: impl FnMut(Idx<N>) -> T) -> [T; N]
     where
         ConstConstr<{ idx_constr(N) }>:;

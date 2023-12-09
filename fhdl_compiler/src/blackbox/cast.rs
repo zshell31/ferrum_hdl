@@ -171,7 +171,7 @@ impl Conversion {
                 })
             }
             None => {
-                let to_item_ty = *to_ty.item_ty();
+                let to_item_ty = to_ty.item_ty();
                 generator.make_array_group(to_ty, from, |generator, from| {
                     self.convert(generator, expr, ctx, *from, to_item_ty)
                 })

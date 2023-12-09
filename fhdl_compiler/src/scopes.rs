@@ -69,7 +69,7 @@ impl ModuleScopes {
         }
     }
 
-    pub fn item_id(&self, ident: Ident) -> Option<ItemId> {
+    pub fn find_item_id(&self, ident: Ident) -> Option<ItemId> {
         if ident.as_str() == "self" {
             return self.self_arg;
         }
@@ -84,7 +84,7 @@ impl ModuleScopes {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Scopes {
     modules: FxHashMap<ModuleId, ModuleScopes>,
 }

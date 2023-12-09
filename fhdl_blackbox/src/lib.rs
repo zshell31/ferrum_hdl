@@ -14,6 +14,7 @@ pub enum BlackboxKind {
     ArrayMap,
     ArrayReverse,
     ArrayIndex,
+    ArrayMake,
 
     BitH,
     BitL,

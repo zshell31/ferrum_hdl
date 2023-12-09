@@ -409,7 +409,7 @@ impl<'tcx> Generator<'tcx> {
         let mod_inst = ModInst::new(None, instant_mod_id, inputs, outputs);
         let node_id = self.netlist.add(ctx.module_id, mod_inst);
 
-        self.combine_outputs(node_id, sig_ty)
+        self.combine_node_outputs(node_id, sig_ty)
     }
 
     pub fn eval_synth_fn_or_blackbox(
@@ -509,5 +509,20 @@ impl<'tcx> Generator<'tcx> {
         }
 
         self.find_blackbox_kind(def_id)
+    }
+
+    pub fn eval_closure_as_module(
+        &mut self,
+        name: Symbol,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ModuleId, Error> {
+        println!("{:#?}", self.idents);
+        let module_id = self.netlist.add_module(name, false);
+        let item_id =
+            ctx.eval_closure_as_module(module_id, |ctx| self.eval_expr(expr, ctx))?;
+        self.eval_outputs(None, item_id);
+
+        Ok(module_id)
     }
 }

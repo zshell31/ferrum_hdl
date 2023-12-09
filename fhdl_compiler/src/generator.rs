@@ -470,7 +470,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> Result<ItemId, Error> {
         self.idents
             .for_module(module_id)
-            .item_id(ident)
+            .find_item_id(ident)
             .ok_or_else(|| {
                 SpanError::new(SpanErrorKind::MissingNodeForIdent(ident), ident.span)
             })

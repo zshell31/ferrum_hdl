@@ -28,7 +28,7 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
-    fn assign_names_to_group(&mut self, ident: &str, item_id: ItemId) {
+    pub fn assign_names_to_item(&mut self, ident: &str, item_id: ItemId) {
         match item_id {
             ItemId::Node(node_out_id) => {
                 let sym = Some(Symbol::new(ident));
@@ -40,22 +40,22 @@ impl<'tcx> Generator<'tcx> {
                 | SignalTyKind::Array(_)
                 | SignalTyKind::Node(_) => {
                     if group.item_ids().len() == 1 {
-                        self.assign_names_to_group(ident, group.item_ids()[0]);
+                        self.assign_names_to_item(ident, group.item_ids()[0]);
                     } else {
                         for (idx, item_id) in group.item_ids().iter().enumerate() {
                             let ident = format!("{}${}", ident, idx);
-                            self.assign_names_to_group(&ident, *item_id);
+                            self.assign_names_to_item(&ident, *item_id);
                         }
                     }
                 }
                 SignalTyKind::Struct(ty) => {
                     if group.item_ids().len() == 1 {
-                        self.assign_names_to_group(ident, group.item_ids()[0]);
+                        self.assign_names_to_item(ident, group.item_ids()[0]);
                     } else {
                         ty.tys().iter().zip(group.item_ids()).for_each(
                             |(ty, item_id)| {
                                 let ident = format!("{}${}", ident, ty.name);
-                                self.assign_names_to_group(&ident, *item_id);
+                                self.assign_names_to_item(&ident, *item_id);
                             },
                         );
                     }
@@ -73,7 +73,7 @@ impl<'tcx> Generator<'tcx> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
-                self.assign_names_to_group(ident.as_str(), item_id);
+                self.assign_names_to_item(ident.as_str(), item_id);
 
                 self.idents
                     .for_module(module_id)
@@ -279,7 +279,7 @@ impl<'tcx> Generator<'tcx> {
                 let array_ty = sig_ty.opt_array_ty().ok_or_else(|| {
                     SpanError::new(SpanErrorKind::ExpectedArray, pat.span)
                 })?;
-                let item_ty = *array_ty.item_ty();
+                let item_ty = array_ty.item_ty();
                 let width = item_ty.width().value();
 
                 let count = array_ty.count() as usize;

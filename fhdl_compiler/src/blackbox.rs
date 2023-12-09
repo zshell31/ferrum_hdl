@@ -52,9 +52,10 @@ macro_rules! eval_expr {
 }
 
 eval_expr!(
-    ArrayReverse => array::ArrayReverse,
-    ArrayMap => array::ArrayMap,
-    ArrayIndex => array::ArrayIndex,
+    ArrayReverse => array::Reverse,
+    ArrayMap => array::Map,
+    ArrayIndex => array::Index,
+    ArrayMake => array::Make,
 
     BitL => bit::BitVal(false),
     BitH => bit::BitVal(true),

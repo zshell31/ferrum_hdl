@@ -237,6 +237,23 @@ impl<'tcx> Generator<'tcx> {
             ExprKind::AddrOf(BorrowKind::Ref, Mutability::Not, expr) => {
                 self.eval_expr(expr, ctx)
             }
+            ExprKind::Assign(
+                Expr {
+                    kind: ExprKind::Path(QPath::Resolved(_, path)),
+                    ..
+                },
+                rhs,
+                _,
+            ) if path.segments.len() == 1 => {
+                let rhs = self.eval_expr(rhs, ctx)?;
+
+                let ident = path.segments[0].ident;
+                self.idents
+                    .for_module(ctx.module_id)
+                    .add_local_ident(ident, rhs);
+
+                Ok(rhs)
+            }
             ExprKind::Array(items) => {
                 let array_ty = self.find_sig_ty(expr_ty, ctx, expr.span)?.array_ty();
 
@@ -266,6 +283,11 @@ impl<'tcx> Generator<'tcx> {
                             self.pattern_match(local.pat, item_id, ctx.module_id)?;
                         }
                         StmtKind::Item(_) => {}
+                        StmtKind::Semi(expr) => {
+                            println!("{:#?}", self.idents);
+                            self.eval_expr(expr, ctx)?;
+                            println!("{:#?}", self.idents);
+                        }
                         _ => {
                             println!("{:#?}", stmt);
                             return Err(SpanError::new(
@@ -446,7 +468,7 @@ impl<'tcx> Generator<'tcx> {
                 let body = self.tcx.hir().body(closure.body);
                 let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
 
-                self.eval_inputs(inputs, ctx, true)?;
+                self.eval_inputs(inputs, ctx, !ctx.closure_as_module())?;
                 let closure = self.eval_expr(body.value, ctx)?;
 
                 Ok(closure)
@@ -1030,7 +1052,7 @@ impl<'tcx> Generator<'tcx> {
             SignalTyKind::Array(array_ty) => (
                 self.to_rev_bitvec(ctx.module_id, expr),
                 array_ty.count().into(),
-                *array_ty.item_ty(),
+                array_ty.item_ty(),
             ),
             _ => return Err(SpanError::new(SpanErrorKind::NonIndexableExpr, span).into()),
         };

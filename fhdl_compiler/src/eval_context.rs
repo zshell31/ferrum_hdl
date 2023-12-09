@@ -12,7 +12,8 @@ pub struct EvalContext<'tcx> {
     pub is_primary: bool,
     pub generic_args: GenericArgsRef<'tcx>,
     pub module_id: ModuleId,
-    pub closure_inputs: ClosureInputs,
+    closure_inputs: ClosureInputs,
+    closure_as_module: bool,
 }
 
 impl<'tcx> EvalContext<'tcx> {
@@ -26,6 +27,7 @@ impl<'tcx> EvalContext<'tcx> {
             generic_args,
             module_id,
             closure_inputs: ClosureInputs::new(),
+            closure_as_module: false,
         }
     }
 
@@ -56,6 +58,7 @@ impl<'tcx> EvalContext<'tcx> {
             generic_args,
             module_id: self.module_id,
             closure_inputs: self.closure_inputs.clone(),
+            closure_as_module: self.closure_as_module,
         }
     }
 
@@ -66,6 +69,28 @@ impl<'tcx> EvalContext<'tcx> {
 
     pub fn next_closure_input(&mut self) -> NodeOutId {
         self.closure_inputs.next_input().expect("no closure inputs")
+    }
+
+    pub fn eval_closure_as_module<T>(
+        &mut self,
+        module_id: ModuleId,
+        mut f: impl FnMut(&mut Self) -> T,
+    ) -> T {
+        let old_module_id = self.module_id;
+
+        self.module_id = module_id;
+        self.closure_as_module = true;
+
+        let res = f(self);
+
+        self.closure_as_module = false;
+        self.module_id = old_module_id;
+
+        res
+    }
+
+    pub fn closure_as_module(&self) -> bool {
+        self.closure_as_module
     }
 }
 

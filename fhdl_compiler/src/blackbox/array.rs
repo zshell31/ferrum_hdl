@@ -1,12 +1,12 @@
-use fhdl_netlist::group::ItemId;
+use fhdl_netlist::{group::ItemId, symbol::Symbol};
 use rustc_hir::Expr;
 
 use super::EvalExpr;
 use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
-pub struct ArrayReverse;
+pub struct Reverse;
 
-impl<'tcx> EvalExpr<'tcx> for ArrayReverse {
+impl<'tcx> EvalExpr<'tcx> for Reverse {
     fn eval_expr(
         &self,
         _generator: &mut Generator<'tcx>,
@@ -53,9 +53,9 @@ impl<'tcx> EvalExpr<'tcx> for ArrayReverse {
     }
 }
 
-pub struct ArrayMap;
+pub struct Map;
 
-impl<'tcx> EvalExpr<'tcx> for ArrayMap {
+impl<'tcx> EvalExpr<'tcx> for Map {
     fn eval_expr(
         &self,
         _generator: &mut Generator<'tcx>,
@@ -127,9 +127,9 @@ impl<'tcx> EvalExpr<'tcx> for ArrayMap {
     }
 }
 
-pub struct ArrayIndex;
+pub struct Index;
 
-impl<'tcx> EvalExpr<'tcx> for ArrayIndex {
+impl<'tcx> EvalExpr<'tcx> for Index {
     fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
@@ -141,5 +141,43 @@ impl<'tcx> EvalExpr<'tcx> for ArrayIndex {
         let idx = generator.eval_expr(idx, ctx)?;
 
         generator.index(rec, idx, ctx)
+    }
+}
+
+pub struct Make;
+
+impl<'tcx> EvalExpr<'tcx> for Make {
+    fn eval_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        utils::args!(expr as closure);
+        let array_ty = generator
+            .find_sig_ty(generator.node_type(expr.hir_id, ctx), ctx, expr.span)?
+            .array_ty();
+        let item_ty = array_ty.item_ty();
+        let count = array_ty.count();
+
+        let source = generator.eval_closure_as_module(
+            Symbol::new("ArrayMakeClosure"),
+            closure,
+            ctx,
+        )?;
+
+        assert_eq!(generator.netlist[source].inputs_len(), 1);
+        let input = generator.netlist[source].inputs().next().unwrap();
+        let input_ty = generator.netlist[input].only_one_out().ty;
+
+        let target = ctx.module_id;
+        generator.make_array_group(array_ty, 0 .. count, |generator, idx| {
+            let input = generator.netlist.const_val(target, input_ty, idx);
+            let outputs =
+                generator
+                    .netlist
+                    .inline_mod(Some(input.node_id()), source, target, [input]);
+            Ok(generator.combine_outputs(outputs, item_ty))
+        })
     }
 }

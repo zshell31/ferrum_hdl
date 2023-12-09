@@ -450,8 +450,8 @@ impl ArrayTy {
     }
 
     #[inline]
-    pub fn item_ty(&self) -> &SignalTy {
-        self.ty.0
+    pub fn item_ty(&self) -> SignalTy {
+        *self.ty.0
     }
 
     #[inline]

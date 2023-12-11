@@ -29,7 +29,7 @@ where
 {
     reg::<D, _>(
         clk,
-        rst,
+        &rst,
         &0_u8.cast(),
         |r: Unsigned<{ blinking_count::<D>() }>| r + 1_u8,
     )

@@ -28,6 +28,7 @@ pub struct Conversion {
 }
 
 impl Conversion {
+    #[allow(dead_code)]
     pub fn new(from: bool) -> Self {
         Self { from }
     }
@@ -114,6 +115,7 @@ impl Conversion {
         }
     }
 
+    #[allow(dead_code)]
     pub fn eval_cast_as_closure<'tcx>(
         &self,
         generator: &mut Generator<'tcx>,

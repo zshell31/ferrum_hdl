@@ -9,7 +9,7 @@ use std::{
 
 use derive_where::derive_where;
 pub use fhdl_macros::SignalValue;
-use fhdl_macros::{blackbox, blackbox_ty};
+use fhdl_macros::{blackbox, blackbox_ty, synth};
 
 use crate::{
     bit::Bit,
@@ -187,7 +187,7 @@ impl<T: SignalValue, D: ClockDomain> From<T> for Signal<D, T> {
 pub type Reset<D: ClockDomain> = Signal<D, bool>;
 
 impl<D: ClockDomain> Reset<D> {
-    #[blackbox(SignalReset)]
+    #[synth]
     pub fn reset() -> Self {
         Self::lift(false)
     }
@@ -201,6 +201,7 @@ impl<D: ClockDomain> Reset<D> {
 pub type Enable<D: ClockDomain> = Signal<D, bool>;
 
 impl<D: ClockDomain> Enable<D> {
+    #[synth]
     pub fn enable() -> Self {
         Self::lift(true)
     }
@@ -436,11 +437,11 @@ where
 #[blackbox(SignalReg)]
 pub fn reg<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    rst: impl Borrow<Reset<D>>,
-    rst_val: impl Borrow<T>,
+    rst: &Reset<D>,
+    rst_val: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut rst = rst.borrow().clone();
+    let mut rst = rst.clone();
     let rst_val = rst_val.borrow().clone();
 
     let mut next_val = rst_val.clone();
@@ -460,13 +461,13 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
 #[blackbox(SignalRegEn)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
-    rst: impl Borrow<Reset<D>>,
-    en: impl Borrow<Enable<D>>,
-    rst_val: impl Borrow<T>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    rst_val: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut rst = rst.borrow().clone();
-    let mut en = en.borrow().clone();
+    let mut rst = rst.clone();
+    let mut en = en.clone();
     let rst_val = rst_val.borrow().clone();
 
     let mut next_val = rst_val.clone();
@@ -524,7 +525,7 @@ mod tests {
         let (rst, rst_signal) = Reset::reset_src();
 
         let mut r =
-            reg::<TestSystem4, Unsigned<3>>(clk, rst_signal, &0_u8.cast(), |val| {
+            reg::<TestSystem4, Unsigned<3>>(clk, &rst_signal, &0_u8.cast(), |val| {
                 val + 1_u8
             })
             .simulate();
@@ -549,7 +550,7 @@ mod tests {
         let (en, en_signal) = Enable::enable_src();
 
         let mut r =
-            reg_en::<_, Unsigned<3>>(clk, rst_signal, en_signal, &0_u8.cast(), |val| {
+            reg_en::<_, Unsigned<3>>(clk, &rst_signal, &en_signal, &0_u8.cast(), |val| {
                 val + 1_u8
             })
             .simulate();
@@ -593,7 +594,7 @@ mod tests {
                         clk,
                         &rst_signal,
                         &en_signal,
-                        0_u8.cast::<Unsigned<3>>(),
+                        &0_u8.cast::<Unsigned<3>>(),
                         move |_| data.value(),
                     )
                 })

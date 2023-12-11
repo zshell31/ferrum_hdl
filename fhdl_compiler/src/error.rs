@@ -51,6 +51,10 @@ impl SpanError {
     pub fn new(kind: SpanErrorKind, span: Span) -> Self {
         Self { kind, span }
     }
+
+    pub fn missing_item_id(ident: Ident) -> Self {
+        Self::new(SpanErrorKind::MissingNodeForIdent(ident), ident.span)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -72,6 +76,8 @@ pub enum SpanErrorKind {
     ExpectedCall,
     #[error("expected method call")]
     ExpectedMethodCall,
+    #[error("expected closure")]
+    ExpectedClosure,
     #[error("expected identifier")]
     ExpectedIdentifier,
     #[error("expected expression")]

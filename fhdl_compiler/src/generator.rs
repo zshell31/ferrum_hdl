@@ -19,7 +19,6 @@ use cargo_toml::Manifest;
 use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use fhdl_netlist::{
     backend::Verilog,
-    group::ItemId,
     net_list::{ModuleId, NetList},
     sig_ty::SignalTy,
 };
@@ -38,7 +37,10 @@ use rustc_middle::{
 use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
 use serde::Deserialize;
 
-use self::{generic::Generics, metadata::Metadata, ty_or_def_id::TyOrDefIdWithGen};
+use self::{
+    closure::Closure, generic::Generics, metadata::Metadata,
+    ty_or_def_id::TyOrDefIdWithGen,
+};
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
@@ -268,6 +270,7 @@ pub struct Generator<'tcx> {
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     metadata: Metadata<'tcx>,
     loaded_metadata: FxHashMap<CrateNum, Rc<Metadata<'tcx>>>,
+    closures: FxHashMap<ModuleId, Closure>,
 }
 
 impl<'tcx> Generator<'tcx> {
@@ -292,6 +295,7 @@ impl<'tcx> Generator<'tcx> {
             evaluated_modules: Default::default(),
             metadata: Default::default(),
             loaded_metadata: Default::default(),
+            closures: Default::default(),
         }
     }
 
@@ -461,20 +465,6 @@ impl<'tcx> Generator<'tcx> {
         ctx: &EvalContext<'tcx>,
     ) -> GenericArgsRef<'tcx> {
         ctx.instantiate(self.tcx, subst)
-    }
-
-    pub fn item_id_for_ident(
-        &mut self,
-        module_id: ModuleId,
-        ident: Ident,
-    ) -> Result<ItemId, Error> {
-        self.idents
-            .for_module(module_id)
-            .find_item_id(ident)
-            .ok_or_else(|| {
-                SpanError::new(SpanErrorKind::MissingNodeForIdent(ident), ident.span)
-            })
-            .map_err(Into::into)
     }
 
     pub fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {

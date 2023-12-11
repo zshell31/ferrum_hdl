@@ -160,24 +160,21 @@ impl<'tcx> EvalExpr<'tcx> for Make {
         let item_ty = array_ty.item_ty();
         let count = array_ty.count();
 
-        let source = generator.eval_closure_as_module(
-            Symbol::new("ArrayMakeClosure"),
-            closure,
-            ctx,
-        )?;
+        let closure_id =
+            generator.eval_closure(closure, Symbol::new("ArrayMap"), true, ctx)?;
 
-        assert_eq!(generator.netlist[source].inputs_len(), 1);
-        let input = generator.netlist[source].inputs().next().unwrap();
-        let input_ty = generator.netlist[input].only_one_out().ty;
+        let inputs = &generator.closure(closure_id).inputs;
 
-        let target = ctx.module_id;
+        assert_eq!(inputs.len(), 1);
+        let input = inputs[0];
+        let input_ty = generator.item_ty(input).to_bitvec();
+
         generator.make_array_group(array_ty, 0 .. count, |generator, idx| {
-            let input = generator.netlist.const_val(target, input_ty, idx);
-            let outputs =
-                generator
-                    .netlist
-                    .inline_mod(Some(input.node_id()), source, target, [input]);
-            Ok(generator.combine_outputs(outputs, item_ty))
+            let input = generator
+                .netlist
+                .const_val(ctx.module_id, input_ty, idx)
+                .into();
+            generator.instantiate_closure(closure_id, [input], item_ty, ctx)
         })
     }
 }

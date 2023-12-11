@@ -364,13 +364,13 @@ impl NetList {
             self.links.get_mut(&new_input).unwrap().insert(*link);
         }
 
-        let sym = self.nodes[input].sym;
-        if sym.is_some() {
-            self.nodes[new_input].sym = sym;
+        // use output name for new_input
+        if self.modules[module_id].replace_output(input, new_input) {
+            let sym = self.nodes[input].sym;
+            if sym.is_some() {
+                self.nodes[new_input].sym = sym;
+            }
         }
-
-        self.modules[input.node_id().module_id()]
-            .replace_output(input.into(), new_input.into());
     }
 
     pub fn links(&self, node_out_id: NodeOutId) -> impl Iterator<Item = &Node> + '_ {

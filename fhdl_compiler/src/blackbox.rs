@@ -83,7 +83,6 @@ eval_expr!(
     SignalOr => signal::SignalOp { op: BinOp::Or },
     SignalReg => signal::SignalReg { has_en: false },
     SignalRegEn => signal::SignalReg { has_en: true },
-    SignalReset => bit::BitVal(false),
     SignalValue => signal::SignalValue,
     SignalWatch => signal::SignalWatch,
 

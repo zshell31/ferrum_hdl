@@ -1,3 +1,5 @@
+use std::iter::Peekable;
+
 use either::Either;
 use fhdl_netlist::{
     group::ItemId,
@@ -9,46 +11,56 @@ use smallvec::{smallvec, SmallVec};
 
 use crate::generator::Generator;
 
-impl<'tcx> Generator<'tcx> {
-    pub fn combine_node_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
-        let mut outputs = self.netlist[node_id]
-            .node_out_ids()
-            .collect::<SmallVec<[_; 8]>>()
-            .into_iter();
+pub type CombineOutputsIter = impl Iterator<Item = NodeOutId>;
 
-        let res = self.combine_outputs_(&mut outputs, sig_ty);
-        assert!(outputs.next().is_none());
-        res
+pub struct CombineOutputs {
+    outputs: Peekable<CombineOutputsIter>,
+}
+
+impl CombineOutputs {
+    pub fn new(generator: &Generator<'_>, node_id: NodeId) -> Self {
+        Self {
+            outputs: generator.netlist[node_id]
+                .node_out_ids()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .peekable(),
+        }
     }
 
-    pub fn combine_outputs(
+    pub fn next_output(
         &mut self,
-        outputs: impl IntoIterator<Item = NodeOutId>,
-        sig_ty: SignalTy,
-    ) -> ItemId {
-        self.combine_outputs_(outputs.into_iter().by_ref(), sig_ty)
-    }
-
-    fn combine_outputs_<I: Iterator<Item = NodeOutId>>(
-        &mut self,
-        outputs: &mut I,
+        generator: &mut Generator<'_>,
         sig_ty: SignalTy,
     ) -> ItemId {
         match sig_ty.kind {
             SignalTyKind::Node(_) | SignalTyKind::Enum(_) => {
-                outputs.next().unwrap().into()
+                self.outputs.next().unwrap().into()
             }
-            SignalTyKind::Array(ty) => self
+            SignalTyKind::Array(ty) => generator
                 .make_array_group(ty, ty.tys(), |generator, sig_ty| {
-                    Ok(generator.combine_outputs_(outputs, sig_ty))
+                    Ok(self.next_output(generator, sig_ty))
                 })
                 .unwrap(),
-            SignalTyKind::Struct(ty) => self
+            SignalTyKind::Struct(ty) => generator
                 .make_struct_group(ty, ty.tys(), |generator, sig_ty| {
-                    Ok(generator.combine_outputs_(outputs, sig_ty.inner))
+                    Ok(self.next_output(generator, sig_ty.inner))
                 })
                 .unwrap(),
         }
+    }
+
+    pub fn has_outputs(&mut self) -> bool {
+        self.outputs.peek().is_some()
+    }
+}
+
+impl<'tcx> Generator<'tcx> {
+    pub fn combine_outputs(&mut self, node_id: NodeId, sig_ty: SignalTy) -> ItemId {
+        let mut outputs = CombineOutputs::new(self, node_id);
+        let res = outputs.next_output(self, sig_ty);
+        assert!(!outputs.has_outputs());
+        res
     }
 
     #[allow(clippy::wrong_self_convention)]

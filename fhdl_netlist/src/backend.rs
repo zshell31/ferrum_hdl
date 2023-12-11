@@ -277,8 +277,10 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, inputs, |buffer, input| {
-                buffer.write_tab();
-                write_param(net_list, buffer, input, ParamKind::Input);
+                if !self.net_list[input].is_skip {
+                    buffer.write_tab();
+                    write_param(net_list, buffer, input, ParamKind::Input);
+                }
             });
         }
         self.buffer.pop_tab();
@@ -294,8 +296,10 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, outputs, |buffer, output| {
-                buffer.write_tab();
-                write_param(net_list, buffer, output, ParamKind::Output);
+                if !self.net_list[output].is_skip {
+                    buffer.write_tab();
+                    write_param(net_list, buffer, output, ParamKind::Output);
+                }
             });
         }
         self.buffer.pop_tab();
@@ -352,6 +356,9 @@ impl<'n> Visitor for Verilog<'n> {
                 for (input, mod_input) in
                     mod_inst.inputs().zip(self.net_list.mod_inputs(module_id))
                 {
+                    if self.net_list[mod_input].is_skip {
+                        continue;
+                    }
                     let input_sym = self.inject_input(input, false);
                     let mod_input_sym = self.net_list[mod_input].sym.unwrap();
 
@@ -369,6 +376,9 @@ impl<'n> Visitor for Verilog<'n> {
                         .iter()
                         .zip(self.net_list.mod_outputs(module_id)),
                     |buffer, (output, mod_output)| {
+                        if self.net_list[mod_output].is_skip {
+                            return;
+                        }
                         let output_sym = output.sym.unwrap();
                         let mod_output_sym = self.net_list[mod_output].sym.unwrap();
 

@@ -42,7 +42,6 @@ pub enum BlackboxKind {
     SignalOr,
     SignalReg,
     SignalRegEn,
-    SignalReset,
     SignalValue,
     SignalWatch,
 

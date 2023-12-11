@@ -39,7 +39,7 @@ pub struct Module {
     module_id: ModuleId,
     list: List<NodeIdx>,
     inputs: FxIndexSet<NodeIdx>,
-    outputs: FxIndexSet<NodeOutIdx>,
+    outputs: Vec<NodeOutIdx>,
 }
 
 impl Module {
@@ -130,7 +130,7 @@ impl Module {
     }
 
     pub(super) fn add_output(&mut self, node_out_idx: NodeOutIdx) {
-        self.outputs.insert(node_out_idx);
+        self.outputs.push(node_out_idx);
     }
 
     pub(super) fn is_output(&self, node_out_idx: NodeOutIdx) -> bool {
@@ -155,12 +155,21 @@ impl Module {
         NodeOutId::make(self.module_id, self.outputs[ind])
     }
 
-    pub(super) fn replace_output(&mut self, old_id: NodeOutIdx, new_id: NodeOutIdx) {
-        if let Some(old_idx) = self.outputs.get_index_of(&old_id) {
-            let (new_idx, _) = self.outputs.replace_full(new_id);
-            self.outputs.swap_indices(old_idx, new_idx);
-            self.outputs.shift_remove(&old_id);
+    pub(super) fn replace_output(
+        &mut self,
+        old_id: NodeOutId,
+        new_id: NodeOutId,
+    ) -> bool {
+        let mut found = false;
+        let old_idx = old_id.into();
+        for output in &mut self.outputs {
+            if *output == old_idx {
+                *output = new_id.into();
+                found = true;
+            }
         }
+
+        found
     }
 
     pub(super) fn head(&self) -> Option<NodeId> {

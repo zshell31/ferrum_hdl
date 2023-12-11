@@ -248,9 +248,7 @@ impl<'tcx> Generator<'tcx> {
                 let rhs = self.eval_expr(rhs, ctx)?;
 
                 let ident = path.segments[0].ident;
-                self.idents
-                    .for_module(ctx.module_id)
-                    .add_local_ident(ident, rhs);
+                self.replace_item_id_for_ident(ctx.module_id, ident, rhs)?;
 
                 Ok(rhs)
             }
@@ -284,9 +282,7 @@ impl<'tcx> Generator<'tcx> {
                         }
                         StmtKind::Item(_) => {}
                         StmtKind::Semi(expr) => {
-                            println!("{:#?}", self.idents);
                             self.eval_expr(expr, ctx)?;
-                            println!("{:#?}", self.idents);
                         }
                         _ => {
                             println!("{:#?}", stmt);
@@ -463,15 +459,6 @@ impl<'tcx> Generator<'tcx> {
                     self,
                     expr.span,
                 )
-            }
-            ExprKind::Closure(closure) => {
-                let body = self.tcx.hir().body(closure.body);
-                let inputs = closure.fn_decl.inputs.iter().zip(body.params.iter());
-
-                self.eval_inputs(inputs, ctx, !ctx.closure_as_module())?;
-                let closure = self.eval_expr(body.value, ctx)?;
-
-                Ok(closure)
             }
             ExprKind::DropTemps(inner) => self.eval_expr(inner, ctx),
             ExprKind::Field(expr, ident) => {
@@ -663,11 +650,12 @@ impl<'tcx> Generator<'tcx> {
             )) => match res {
                 Res::Local(_) if segments.len() == 1 => {
                     let ident = segments[0].ident;
-                    self.item_id_for_ident(ctx.module_id, ident)
+
+                    self.find_item_id_for_ident(ctx.module_id, ident)
                 }
-                Res::Def(DefKind::AssocFn, def_id) | Res::Def(DefKind::Fn, def_id) => {
-                    self.eval_closure_fn_without_params(*def_id, expr, ctx)
-                }
+                // Res::Def(DefKind::AssocFn, def_id) | Res::Def(DefKind::Fn, def_id) => {
+                //     self.eval_closure_fn_without_params(*def_id, expr, ctx)
+                // }
                 Res::Def(DefKind::Const, def_id) => {
                     if let Some(def_id) = self.local_def_id(*def_id) {
                         // First try to eval expr from HIR definition
@@ -757,10 +745,10 @@ impl<'tcx> Generator<'tcx> {
             },
             ExprKind::Path(qpath @ QPath::TypeRelative(_, _)) => {
                 let ty = self.node_type(expr.hir_id, ctx);
-                if ty.is_fn() {
-                    let fn_did = utils::ty_def_id(ty).unwrap();
-                    self.eval_closure_fn_without_params(fn_did, expr, ctx)
-                } else {
+                if !ty.is_fn() {
+                    //     let fn_did = utils::ty_def_id(ty).unwrap();
+                    //     self.eval_closure_fn_without_params(fn_did, expr, ctx)
+                    // } else {
                     let def_id = self
                         .tcx
                         .typeck(expr.hir_id.owner)
@@ -787,8 +775,9 @@ impl<'tcx> Generator<'tcx> {
                             }
                         }
                     }
-                    Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
                 }
+
+                Err(SpanError::new(SpanErrorKind::NotSynthExpr, expr.span).into())
             }
             ExprKind::Struct(
                 QPath::Resolved(

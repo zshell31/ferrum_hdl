@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     group::ItemId,
-    net_list::ModuleId,
+    net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
@@ -108,15 +108,20 @@ impl<'tcx> Generator<'tcx> {
 
         let mut ctx = EvalContext::new(self.is_primary, generic_args, module_id);
 
-        self.eval_inputs(inputs, &mut ctx, false)?;
+        self.eval_inputs(inputs, &mut ctx)?;
         let item_id = self.eval_expr(body.value, &mut ctx)?;
+
+        let prefix = self
+            .tcx
+            .hir()
+            .find_parent(body_id.hir_id)
+            .and_then(|node| node.ident());
         self.eval_outputs(
-            self.tcx
-                .hir()
-                .find_parent(body_id.hir_id)
-                .and_then(|node| node.ident())
-                .as_ref()
-                .map(|ident| ident.as_str()),
+            if !top_module {
+                prefix.as_ref().map(|ident| ident.as_str())
+            } else {
+                None
+            },
             item_id,
         );
 
@@ -129,38 +134,45 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
         ctx: &mut EvalContext<'tcx>,
-        is_closure: bool,
-    ) -> Result<(), Error>
+    ) -> Result<Vec<ItemId>, Error>
     where
         'tcx: 'a,
     {
-        for (input, param) in inputs {
-            let ty = self.node_type(param.hir_id, ctx);
-            if let TyKind::Adt(adt, ..) = ty.kind() {
-                if self.ignore_ty(adt.did()) {
-                    continue;
+        inputs
+            .filter_map(|(input, param)| {
+                let ty = self.node_type(param.hir_id, ctx);
+                if let TyKind::Adt(adt, ..) = ty.kind() {
+                    if self.ignore_ty(adt.did()) {
+                        return None;
+                    }
                 }
-            }
 
-            let item_id = self.make_input(input, ctx, is_closure)?;
-            self.pattern_match(param.pat, item_id, ctx.module_id)?;
-        }
+                let item_id = match self.make_input(input, ctx) {
+                    Ok(item_id) => item_id,
+                    Err(e) => {
+                        return Some(Err(e));
+                    }
+                };
+                if let Err(e) = self.pattern_match(param.pat, item_id, ctx.module_id) {
+                    return Some(Err(e));
+                }
 
-        Ok(())
+                Some(Ok(item_id))
+            })
+            .collect::<Result<Vec<_>, _>>()
     }
 
     fn make_input(
         &mut self,
         input: &HirTy<'tcx>,
         ctx: &mut EvalContext<'tcx>,
-        is_closure: bool,
     ) -> Result<ItemId, Error> {
         match input.kind {
             HirTyKind::Infer => {
                 let sig_ty =
                     self.find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?;
 
-                Ok(self.make_input_with_sig_ty(sig_ty, ctx, is_closure))
+                Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id))
             }
             HirTyKind::Path(QPath::Resolved(_, path)) => {
                 let fn_id = input.hir_id.owner.def_id;
@@ -198,7 +210,7 @@ impl<'tcx> Generator<'tcx> {
                     _ => panic!("Cannot define def_id for {:?}", path.res),
                 };
 
-                let input = self.make_input_with_sig_ty(sig_ty, ctx, is_closure);
+                let input = self.make_input_with_sig_ty(sig_ty, ctx.module_id);
 
                 if is_self_param {
                     self.idents.for_module(ctx.module_id).add_self_ident(input);
@@ -212,14 +224,14 @@ impl<'tcx> Generator<'tcx> {
                     ty,
                     mutbl: Mutability::Not,
                 },
-            ) => self.make_input(ty, ctx, is_closure),
+            ) => self.make_input(ty, ctx),
             HirTyKind::Tup(ty) => {
                 let tuple_ty = self
                     .find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?
                     .struct_ty();
 
                 self.make_struct_group(tuple_ty, ty.iter(), |generator, ty| {
-                    generator.make_input(ty, ctx, is_closure)
+                    generator.make_input(ty, ctx)
                 })
             }
             _ => {
@@ -229,43 +241,32 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn make_input_with_sig_ty(
+    pub fn make_input_with_sig_ty(
         &mut self,
         sig_ty: SignalTy,
-        ctx: &mut EvalContext<'tcx>,
-        is_closure: bool,
+        module_id: ModuleId,
     ) -> ItemId {
-        let module_id = ctx.module_id;
-
         match sig_ty.kind {
-            SignalTyKind::Node(prim_ty) => (if is_closure {
-                ctx.next_closure_input()
-            } else {
+            SignalTyKind::Node(prim_ty) => {
                 let input = Input::new(prim_ty, None);
-                self.netlist.add_and_get_out(module_id, input)
-            })
-            .into(),
+                self.netlist.add_and_get_out(module_id, input).into()
+            }
             SignalTyKind::Array(ty) => self
                 .make_array_group(ty, ty.tys(), |generator, ty| {
-                    Ok(generator.make_input_with_sig_ty(ty, ctx, is_closure))
+                    Ok(generator.make_input_with_sig_ty(ty, module_id))
                 })
                 .unwrap(),
             SignalTyKind::Struct(ty) => self
                 .make_struct_group(
                     ty,
                     ty.tys().iter().map(|ty| ty.inner),
-                    |generator, ty| {
-                        Ok(generator.make_input_with_sig_ty(ty, ctx, is_closure))
-                    },
+                    |generator, ty| Ok(generator.make_input_with_sig_ty(ty, module_id)),
                 )
                 .unwrap(),
-            SignalTyKind::Enum(ty) => (if is_closure {
-                ctx.next_closure_input()
-            } else {
+            SignalTyKind::Enum(ty) => {
                 let input = Input::new(ty.prim_ty(), None);
-                self.netlist.add_and_get_out(module_id, input)
-            })
-            .into(),
+                self.netlist.add_and_get_out(module_id, input).into()
+            }
         }
     }
 
@@ -286,7 +287,7 @@ impl<'tcx> Generator<'tcx> {
             .collect()
     }
 
-    fn eval_outputs(&mut self, prefix: Option<&str>, item_id: ItemId) {
+    pub fn eval_outputs(&mut self, prefix: Option<&str>, item_id: ItemId) {
         for node_out_id in item_id.into_iter() {
             let out = &mut self.netlist[node_out_id];
             if out.sym.is_none() {
@@ -349,7 +350,8 @@ impl<'tcx> Generator<'tcx> {
         // part of the caller and may require the generics of the caller
         let args = self.eval_fn_inputs(args, ctx)?;
 
-        Ok(self.instantiate_module(module_id, args, output_ty, ctx))
+        let inst = self.instantiate_module(module_id, args, ctx);
+        Ok(self.combine_outputs(inst, output_ty))
     }
 
     pub fn eval_impl_fn_call(
@@ -389,16 +391,16 @@ impl<'tcx> Generator<'tcx> {
         // part of the caller and may require the generics of the caller
         let inputs = self.eval_fn_inputs(self_arg.into_iter().chain(args), ctx)?;
 
-        Ok(self.instantiate_module(module_id, inputs, output_ty, ctx))
+        let inst = self.instantiate_module(module_id, inputs, ctx);
+        Ok(self.combine_outputs(inst, output_ty))
     }
 
-    fn instantiate_module(
+    pub fn instantiate_module(
         &mut self,
         instant_mod_id: ModuleId,
-        inputs: SmallVec<[ItemId; 4]>,
-        sig_ty: SignalTy,
+        inputs: impl IntoIterator<Item = ItemId>,
         ctx: &EvalContext<'tcx>,
-    ) -> ItemId {
+    ) -> NodeId {
         let inputs = inputs.into_iter().flat_map(|input| input.into_iter());
 
         let outputs = self
@@ -407,9 +409,9 @@ impl<'tcx> Generator<'tcx> {
             .map(|node_out_id| (self.netlist[node_out_id].ty, None));
 
         let mod_inst = ModInst::new(None, instant_mod_id, inputs, outputs);
-        let node_id = self.netlist.add(ctx.module_id, mod_inst);
+        self.netlist.add(ctx.module_id, mod_inst)
 
-        self.combine_node_outputs(node_id, sig_ty)
+        // self.combine_node_outputs(node_id, sig_ty)
     }
 
     pub fn eval_synth_fn_or_blackbox(
@@ -475,7 +477,8 @@ impl<'tcx> Generator<'tcx> {
             ctx,
         )?;
 
-        Ok(self.instantiate_module(module_id, inputs, output_ty, ctx))
+        let inst = self.instantiate_module(module_id, inputs, ctx);
+        Ok(self.combine_outputs(inst, output_ty))
     }
 
     pub fn find_blackbox(
@@ -509,20 +512,5 @@ impl<'tcx> Generator<'tcx> {
         }
 
         self.find_blackbox_kind(def_id)
-    }
-
-    pub fn eval_closure_as_module(
-        &mut self,
-        name: Symbol,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ModuleId, Error> {
-        println!("{:#?}", self.idents);
-        let module_id = self.netlist.add_module(name, false);
-        let item_id =
-            ctx.eval_closure_as_module(module_id, |ctx| self.eval_expr(expr, ctx))?;
-        self.eval_outputs(None, item_id);
-
-        Ok(module_id)
     }
 }

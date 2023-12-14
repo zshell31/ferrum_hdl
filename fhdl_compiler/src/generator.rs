@@ -326,7 +326,7 @@ impl<'tcx> Generator<'tcx> {
                             self.eval_fn_item(item, false, generic_args)?
                         }
                         HirNode::ImplItem(impl_item) => {
-                            self.eval_impl_item(impl_item, generic_args)?
+                            self.eval_impl_fn_item(impl_item, generic_args)?
                         }
                         _ => {
                             return Err(SpanError::new(

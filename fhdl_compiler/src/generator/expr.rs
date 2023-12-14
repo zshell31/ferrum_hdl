@@ -353,6 +353,34 @@ impl<'tcx> Generator<'tcx> {
                         QPath::Resolved(
                             _,
                             Path {
+                                span,
+                                res: Res::Def(DefKind::AssocFn, fn_did),
+                                ..
+                            },
+                        ) => {
+                            let fn_ty = self.node_type(fn_item.hir_id, ctx);
+                            let generic_args = utils::subst(fn_ty).unwrap();
+                            if self.is_local_def_id(*fn_did) {
+                                self.eval_trait_fn_call(
+                                    fn_did.expect_local(),
+                                    generic_args,
+                                    args.iter().map(Into::into),
+                                    ctx,
+                                    expr.span,
+                                )
+                            } else {
+                                self.eval_synth_fn_or_blackbox(
+                                    *fn_did,
+                                    expr,
+                                    generic_args,
+                                    ctx,
+                                    *span,
+                                )
+                            }
+                        }
+                        QPath::Resolved(
+                            _,
+                            Path {
                                 res:
                                     Res::Def(
                                         DefKind::Ctor(CtorOf::Variant, _),

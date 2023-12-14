@@ -13,7 +13,8 @@ use rustc_hir::{
     def::Res,
     def_id::{DefId, LocalDefId},
     BodyId, Expr, FnDecl, FnSig as HirFnSig, ImplItem, ImplItemKind, Item, ItemKind,
-    MutTy, Param, PrimTy as HirPrimTy, QPath, Ty as HirTy, TyKind as HirTyKind,
+    MutTy, Param, PrimTy as HirPrimTy, QPath, TraitFn, TraitItem, TraitItemKind,
+    Ty as HirTy, TyKind as HirTyKind,
 };
 use rustc_middle::ty::{FnSig, GenericArgsRef, TyKind};
 use rustc_span::{Span, Symbol as RustSymbol};
@@ -55,7 +56,7 @@ impl<'tcx> Generator<'tcx> {
         Err(SpanError::new(SpanErrorKind::NotSynthItem, item.span).into())
     }
 
-    pub fn eval_impl_item(
+    pub fn eval_impl_fn_item(
         &mut self,
         impl_item: &ImplItem<'tcx>,
         generic_args: GenericArgsRef<'tcx>,
@@ -85,6 +86,22 @@ impl<'tcx> Generator<'tcx> {
         }
 
         Err(SpanError::new(SpanErrorKind::NotSynthItem, impl_item.span).into())
+    }
+
+    pub fn eval_trait_fn_item(
+        &mut self,
+        trait_item: &TraitItem<'tcx>,
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> Result<ModuleId, Error> {
+        let trait_ = self.tcx.hir().get_parent(trait_item.hir_id()).expect_item();
+        let ident = format!("{}${}", trait_.ident, trait_item.ident);
+        if let TraitItemKind::Fn(HirFnSig { decl, .. }, TraitFn::Provided(body_id)) =
+            trait_item.kind
+        {
+            return self.eval_fn(ident.as_ref(), decl, body_id, false, generic_args);
+        }
+
+        Err(SpanError::new(SpanErrorKind::NotSynthItem, trait_item.span).into())
     }
 
     pub fn eval_fn(
@@ -356,40 +373,80 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn eval_impl_fn_call(
         &mut self,
-        impl_id: LocalDefId,
+        fn_did: LocalDefId,
         fn_generics: GenericArgsRef<'tcx>,
         self_arg: Option<ExprOrItemId<'tcx>>,
         args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
         ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
-        let impl_item = self.tcx.hir().expect_impl_item(impl_id);
+        let impl_item = self.tcx.hir().expect_impl_item(fn_did);
 
         let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(impl_id, fn_generics);
+            let mono_item = MonoItem::new(fn_did, fn_generics);
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_impl_item(impl_item, fn_generics)?;
+                let module_id = self.eval_impl_fn_item(impl_item, fn_generics)?;
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
 
             *self.evaluated_modules.get(&mono_item).unwrap()
         } else {
-            let module_id = self.eval_impl_item(impl_item, fn_generics)?;
+            let module_id = self.eval_impl_fn_item(impl_item, fn_generics)?;
 
-            self.metadata.add_module_id(impl_id, module_id);
+            self.metadata.add_module_id(fn_did, module_id);
 
             module_id
         };
 
         // use fn generics to get output_ty because output_ty is the part of the fn signature
         let output_ty =
-            self.fn_output(impl_id, &ctx.with_generic_args(fn_generics), span)?;
+            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
         // but ctx.generic_args to evaluate arguments of the function because arguments are is the
         // part of the caller and may require the generics of the caller
         let inputs = self.eval_fn_inputs(self_arg.into_iter().chain(args), ctx)?;
+
+        let inst = self.instantiate_module(module_id, inputs, ctx);
+        Ok(self.combine_outputs(inst, output_ty))
+    }
+
+    pub fn eval_trait_fn_call(
+        &mut self,
+        fn_did: LocalDefId,
+        fn_generics: GenericArgsRef<'tcx>,
+        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
+        ctx: &mut EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let trait_item = self.tcx.hir().expect_trait_item(fn_did);
+
+        let module_id = if self.is_primary {
+            let mono_item = MonoItem::new(fn_did, fn_generics);
+
+            #[allow(clippy::map_entry)]
+            if !self.evaluated_modules.contains_key(&mono_item) {
+                let module_id = self.eval_trait_fn_item(trait_item, fn_generics)?;
+
+                self.evaluated_modules.insert(mono_item, module_id);
+            }
+
+            *self.evaluated_modules.get(&mono_item).unwrap()
+        } else {
+            let module_id = self.eval_trait_fn_item(trait_item, fn_generics)?;
+
+            self.metadata.add_module_id(fn_did, module_id);
+
+            module_id
+        };
+
+        // use fn generics to get output_ty because output_ty is the part of the fn signature
+        let output_ty =
+            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
+        // but ctx.generic_args to evaluate arguments of the function because arguments are is the
+        // part of the caller and may require the generics of the caller
+        let inputs = self.eval_fn_inputs(args, ctx)?;
 
         let inst = self.instantiate_module(module_id, inputs, ctx);
         Ok(self.combine_outputs(inst, output_ty))

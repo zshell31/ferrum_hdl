@@ -12,7 +12,8 @@ use crate::{
     bitvec::BitVec,
     cast::{Cast, CastFrom, IsPrimTy},
     const_functions::bit,
-    const_helpers::{Assert, IsTrue},
+    const_helpers::{Assert, ConstConstr, IsTrue},
+    index::{idx_constr, Idx},
     signal::SignalValue,
 };
 
@@ -111,12 +112,20 @@ where
 }
 
 impl<const N: usize> Unsigned<N> {
-    #[blackbox(UnsignedIndex)]
-    pub fn bit<const M: usize>(self) -> bool
+    #[blackbox(UnsignedBit)]
+    pub fn bit<const M: usize>(&self) -> bool
     where
         Assert<{ bit(M, N) }>: IsTrue,
     {
         self.0.bit::<M>()
+    }
+
+    #[blackbox(Index)]
+    pub fn idx(&self, idx: Idx<N>) -> bool
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        self.0.idx(idx)
     }
 }
 

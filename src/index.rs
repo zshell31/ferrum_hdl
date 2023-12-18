@@ -13,6 +13,7 @@ use crate::{
 #[inline]
 pub const fn idx_constr(n: usize) -> usize {
     assert!(n > 0);
+    assert!(n <= usize::BITS as usize);
     clog2_len(n)
 }
 
@@ -81,21 +82,42 @@ impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N>
 where
     Assert<{ idx_cast_constr(N) }>: IsTrue,
 {
-    // FIXME: check that impl method is synth, not trait method
     #[synth]
+    #[inline]
     fn cast_from(val: Unsigned<{ idx_constr(N) }>) -> Self {
         Idx(val)
     }
 }
 
-impl<const N: usize> From<usize> for Idx<N>
+impl<const N: usize> CastFrom<Idx<N>> for Unsigned<{ idx_constr(N) }>
 where
     ConstConstr<{ idx_constr(N) }>:,
 {
-    fn from(value: usize) -> Self {
-        Self(value.cast())
+    #[synth]
+    #[inline]
+    fn cast_from(val: Idx<N>) -> Self {
+        val.val()
     }
 }
+
+macro_rules! impl_cast_from {
+    ( $( $prim_ty:ty ),+ ) => {
+        $(
+            impl<const N: usize> CastFrom<Idx<N>> for $prim_ty
+            where
+                ConstConstr<{ idx_constr(N) }>:,
+            {
+                #[synth]
+                #[inline]
+                fn cast_from(val: Idx<N>) -> Self {
+                    val.cast::<Unsigned<_>>().cast()
+                }
+            }
+        )+
+    };
+}
+
+impl_cast_from!(u8, u16, u32, u64, u128, usize);
 
 impl<const N: usize> Idx<N>
 where
@@ -148,10 +170,22 @@ where
 
     #[synth]
     #[inline]
-    pub fn from(val: Unsigned<{ idx_constr(N) }>) -> Self
+    pub fn from<const M: usize>() -> Self
     where
-        Assert<{ idx_cast_constr(N) }>: IsTrue,
+        Assert<{ M < N }>: IsTrue,
     {
-        Self(val)
+        Self(M.cast())
+    }
+
+    pub(crate) fn from_val(val: usize) -> Self {
+        Self(val.cast())
+    }
+
+    #[synth]
+    #[inline]
+    pub fn rev(&self) -> Self {
+        let val = self.val();
+        let rev_val = N.cast::<Unsigned<_>>() - val;
+        Self(rev_val)
     }
 }

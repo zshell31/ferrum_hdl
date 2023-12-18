@@ -89,11 +89,10 @@ pub trait ArrayExt<const N: usize, T> {
         Assert<{ S + M - 1 < N }>: IsTrue,
         for<'a> [T; M]: TryFrom<&'a [T]>;
 
-    #[blackbox(ArrayIndex)]
+    #[blackbox(Index)]
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone;
 
     #[blackbox(ArrayReverse)]
@@ -133,7 +132,6 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone,
     {
         let idx = idx.val().cast::<usize>();
@@ -160,7 +158,9 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     where
         ConstConstr<{ idx_constr(N) }>:,
     {
-        let values = (0 .. N).map(|idx| f(idx.into())).collect::<Vec<_>>();
+        let values = (0 .. N)
+            .map(|idx| f(Idx::from_val(idx)))
+            .collect::<Vec<_>>();
 
         match <[T; N]>::try_from(values) {
             Ok(res) => res,

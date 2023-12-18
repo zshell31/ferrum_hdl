@@ -4,9 +4,9 @@ use rustc_hir::Expr;
 use super::EvalExpr;
 use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
 
-pub struct UnsignedIndex;
+pub struct UnsignedBit;
 
-impl<'tcx> EvalExpr<'tcx> for UnsignedIndex {
+impl<'tcx> EvalExpr<'tcx> for UnsignedBit {
     fn eval_expr(
         &self,
         generator: &mut Generator<'tcx>,
@@ -25,6 +25,23 @@ impl<'tcx> EvalExpr<'tcx> for UnsignedIndex {
             .netlist
             .add_and_get_out(ctx.module_id, Const::new(NodeTy::BitVec(width), idx, None))
             .into();
+
+        generator.index(rec, idx, ctx)
+    }
+}
+
+pub struct Index;
+
+impl<'tcx> EvalExpr<'tcx> for Index {
+    fn eval_expr(
+        &self,
+        generator: &mut Generator<'tcx>,
+        expr: &'tcx Expr<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Result<ItemId, Error> {
+        utils::args!(expr as rec, idx);
+
+        let idx = generator.eval_expr(idx, ctx)?;
 
         generator.index(rec, idx, ctx)
     }

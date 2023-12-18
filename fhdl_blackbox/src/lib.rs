@@ -13,7 +13,6 @@ use strum::{Display, EnumString};
 pub enum BlackboxKind {
     ArrayMap,
     ArrayReverse,
-    ArrayIndex,
     ArrayMake,
 
     BitH,
@@ -33,6 +32,8 @@ pub enum BlackboxKind {
     CastFrom,
     Cast,
 
+    Index,
+
     SignalAnd,
     SignalAndThen,
     SignalApply2,
@@ -45,7 +46,7 @@ pub enum BlackboxKind {
     SignalValue,
     SignalWatch,
 
-    UnsignedIndex,
+    UnsignedBit,
 
     StdClone,
 }

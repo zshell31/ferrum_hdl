@@ -54,7 +54,6 @@ macro_rules! eval_expr {
 eval_expr!(
     ArrayReverse => array::Reverse,
     ArrayMap => array::Map,
-    ArrayIndex => array::Index,
     ArrayMake => array::Make,
 
     BitL => bit::BitVal(false),
@@ -74,6 +73,8 @@ eval_expr!(
     CastFrom => cast::Conversion { from: true },
     Cast => cast::Conversion { from: true },
 
+    Index => index::Index,
+
     SignalAndThen => signal::SignalAndThen,
     SignalApply2 => signal::SignalApply2,
     SignalAnd => signal::SignalOp { op: BinOp::And },
@@ -86,7 +87,7 @@ eval_expr!(
     SignalValue => signal::SignalValue,
     SignalWatch => signal::SignalWatch,
 
-    UnsignedIndex => index::UnsignedIndex,
+    UnsignedBit => index::UnsignedBit,
 
     StdClone => std::StdClone
 

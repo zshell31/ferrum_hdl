@@ -1,4 +1,4 @@
-use fhdl_macros::blackbox;
+use fhdl_macros::{blackbox, synth};
 
 pub trait IsPrimTy: Sized {}
 
@@ -9,7 +9,7 @@ pub trait CastFrom<T: Sized>: Sized {
 }
 
 pub trait Cast: Sized {
-    #[blackbox(Cast)]
+    #[synth]
     fn cast<T>(self) -> T
     where
         T: Sized + CastFrom<Self>,

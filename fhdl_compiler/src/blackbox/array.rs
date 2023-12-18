@@ -127,23 +127,6 @@ impl<'tcx> EvalExpr<'tcx> for Map {
     }
 }
 
-pub struct Index;
-
-impl<'tcx> EvalExpr<'tcx> for Index {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec, idx);
-
-        let idx = generator.eval_expr(idx, ctx)?;
-
-        generator.index(rec, idx, ctx)
-    }
-}
-
 pub struct Make;
 
 impl<'tcx> EvalExpr<'tcx> for Make {

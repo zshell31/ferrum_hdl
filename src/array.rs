@@ -1,4 +1,4 @@
-use fhdl_macros::blackbox;
+use fhdl_macros::{blackbox, synth};
 
 use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
@@ -59,21 +59,18 @@ where
     }
 }
 
-fn transform_array<const N: usize, T, U>(a: [T; N], f: impl Fn(T) -> U) -> [U; N] {
-    let v = a.into_iter().map(f).collect::<Vec<_>>();
-
-    match <[U; N]>::try_from(v) {
-        Ok(res) => res,
-        Err(_) => unreachable!(),
-    }
-}
-
 impl<const N: usize, T, U> CastFrom<[U; N]> for [T; N]
 where
+    U: Clone,
     T: CastFrom<U>,
+    ConstConstr<{ idx_constr(N) }>:,
 {
+    #[synth]
     fn cast_from(from: [U; N]) -> [T; N] {
-        transform_array(from, CastFrom::cast_from)
+        Array::make(|idx| {
+            let from = from.idx(idx);
+            T::cast_from(from)
+        })
     }
 }
 
@@ -89,11 +86,10 @@ pub trait ArrayExt<const N: usize, T> {
         Assert<{ S + M - 1 < N }>: IsTrue,
         for<'a> [T; M]: TryFrom<&'a [T]>;
 
-    #[blackbox(ArrayIndex)]
+    #[blackbox(Index)]
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone;
 
     #[blackbox(ArrayReverse)]
@@ -133,7 +129,6 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone,
     {
         let idx = idx.val().cast::<usize>();
@@ -160,7 +155,9 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     where
         ConstConstr<{ idx_constr(N) }>:,
     {
-        let values = (0 .. N).map(|idx| f(idx.into())).collect::<Vec<_>>();
+        let values = (0 .. N)
+            .map(|idx| f(Idx::from_val(idx)))
+            .collect::<Vec<_>>();
 
         match <[T; N]>::try_from(values) {
             Ok(res) => res,

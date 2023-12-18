@@ -19,3 +19,18 @@ pub mod simulation;
 mod tuples;
 pub mod unsigned;
 pub mod watchable;
+
+pub mod prelude {
+    pub use crate::{
+        array::{Array, ArrayExt},
+        bit::Bit,
+        bitpack::BitPack,
+        cast::{Cast, CastFrom},
+        const_helpers::{Assert, ConstConstr, IsTrue},
+        domain::{clk_divider, hz_to_period, Clock, ClockDomain},
+        index::{idx_constr, Idx},
+        signal::{reg, reg_en, Enable, Reset, Signal, SignalValue},
+        simulation::Simulate,
+        unsigned::{u, Unsigned},
+    };
+}

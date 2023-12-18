@@ -10,9 +10,10 @@ use num_traits::Zero;
 
 use crate::{
     bitpack::{BitPack, IsPacked},
-    cast::CastFrom,
+    cast::{Cast, CastFrom},
     const_functions::{bit, slice},
-    const_helpers::{Assert, IsTrue},
+    const_helpers::{Assert, ConstConstr, IsTrue},
+    index::{idx_constr, Idx},
     signal::SignalValue,
 };
 
@@ -81,11 +82,18 @@ impl<const N: usize> BitVec<N> {
         }
     }
 
-    pub fn bit<const M: usize>(self) -> bool
+    pub fn bit<const M: usize>(&self) -> bool
     where
         Assert<{ bit(M, N) }>: IsTrue,
     {
         self.bit_(M)
+    }
+
+    pub fn idx(&self, idx: Idx<N>) -> bool
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        self.bit_(idx.cast())
     }
 
     pub fn msb(self) -> bool {

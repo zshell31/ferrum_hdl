@@ -128,7 +128,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         })
     }
 
-    #[blackbox(SignalEq)]
+    #[synth]
     pub fn eq<U: SignalValue>(&self, other: impl Into<Signal<D, U>>) -> Signal<D, bool>
     where
         T: PartialEq<U>,
@@ -144,12 +144,12 @@ impl<D: ClockDomain> Signal<D, bool> {
         source.revert();
     }
 
-    #[blackbox(SignalAnd)]
+    #[synth]
     pub fn and(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| this && other)
     }
 
-    #[blackbox(SignalOr)]
+    #[synth]
     pub fn or(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| this || other)
     }
@@ -162,14 +162,14 @@ impl<D: ClockDomain> Signal<D, Bit> {
         source.revert();
     }
 
-    #[blackbox(SignalAnd)]
+    #[synth]
     pub fn and(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| {
             Bit::cast_from(this.cast() && other.cast())
         })
     }
 
-    #[blackbox(SignalOr)]
+    #[synth]
     pub fn or(self, other: impl Into<Self>) -> Self {
         self.apply2(other, |this, other| {
             Bit::cast_from(this.cast() || other.cast())
@@ -262,24 +262,24 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
 }
 
 impl<D: ClockDomain> Wrapped<D, bool> {
-    #[blackbox(SignalAnd)]
+    #[synth]
     pub fn and(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
         Signal::from(self).and(other)
     }
 
-    #[blackbox(SignalOr)]
+    #[synth]
     pub fn or(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
         Signal::from(self).or(other)
     }
 }
 
 impl<D: ClockDomain> Wrapped<D, Bit> {
-    #[blackbox(SignalAnd)]
+    #[synth]
     pub fn and(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
         Signal::from(self).and(other)
     }
 
-    #[blackbox(SignalOr)]
+    #[synth]
     pub fn or(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
         Signal::from(self).or(other)
     }
@@ -326,6 +326,7 @@ where
 {
     type Output = Signal<D, <T as BitAnd<U>>::Output>;
 
+    #[synth]
     fn bitand(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.bitand(rhs))
     }
@@ -338,6 +339,7 @@ where
 {
     type Output = Signal<D, <T as BitOr<U>>::Output>;
 
+    #[synth]
     fn bitor(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.bitor(rhs))
     }
@@ -350,6 +352,7 @@ where
 {
     type Output = Signal<D, <T as BitXor<U>>::Output>;
 
+    #[synth]
     fn bitxor(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.bitxor(rhs))
     }
@@ -374,6 +377,7 @@ where
 {
     type Output = Signal<D, <T as Add<U>>::Output>;
 
+    #[synth]
     fn add(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.add(rhs))
     }
@@ -386,6 +390,7 @@ where
 {
     type Output = Signal<D, <T as Sub<U>>::Output>;
 
+    #[synth]
     fn sub(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.sub(rhs))
     }
@@ -398,6 +403,7 @@ where
 {
     type Output = Signal<D, <T as Mul<U>>::Output>;
 
+    #[synth]
     fn mul(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.mul(rhs))
     }
@@ -410,6 +416,7 @@ where
 {
     type Output = Signal<D, <T as Div<U>>::Output>;
 
+    #[synth]
     fn div(self, rhs: Signal<D, U>) -> Self::Output {
         self.apply2(rhs, |lhs, rhs| lhs.div(rhs))
     }

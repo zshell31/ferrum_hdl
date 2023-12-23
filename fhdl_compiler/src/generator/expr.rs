@@ -687,11 +687,11 @@ impl<'tcx> Generator<'tcx> {
                 Res::Def(DefKind::Const, def_id) => {
                     if let Some(def_id) = self.local_def_id(*def_id) {
                         // First try to eval expr from HIR definition
-                        let node = self.tcx.hir().get_by_def_id(def_id);
-                        if let HirNode::Item(Item {
+                        let node = self.tcx.hir().get_if_local(def_id.into());
+                        if let Some(HirNode::Item(Item {
                             kind: ItemKind::Const(_, generics, body_id),
                             ..
-                        }) = node
+                        })) = node
                         {
                             if generics.params.is_empty() {
                                 let expr = self.tcx.hir().body(*body_id).value;

@@ -9,6 +9,7 @@ use fhdl_netlist::{
     net_list::{TempNodeId, TyId},
     sig_ty::NodeTy,
 };
+use rustc_middle::mir::Local;
 use rustc_span::{symbol::Ident, Span};
 
 #[derive(Debug, thiserror::Error)]
@@ -71,6 +72,8 @@ pub enum SpanErrorKind {
     MissingModule(String),
     #[error("cannot find template node '{0}'")]
     MissingTemplateNode(TempNodeId),
+    #[error("missing local ({0:?})")]
+    MissingLocal(Local),
 
     #[error("expected call")]
     ExpectedCall,

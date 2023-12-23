@@ -10,7 +10,7 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
     Ty as HirTy,
 };
-use rustc_middle::ty::{AliasKind, EarlyBinder, ParamEnv, Ty, TyCtxt};
+use rustc_middle::ty::{AliasKind, ClosureArgs, EarlyBinder, ParamEnv, Ty, TyCtxt};
 use rustc_span::Span;
 use rustc_type_ir::{
     TyKind::{self},
@@ -148,6 +148,16 @@ impl<'tcx> Generator<'tcx> {
 
             if let Some(ty) = &key.ty() {
                 match ty.kind() {
+                    TyKind::Ref(_, ty, _) => {
+                        sig_ty = Some(self.find_sig_ty(*ty, ctx, span)?);
+                    }
+                    TyKind::Closure(_, closure_generics) => {
+                        let closure_args = ClosureArgs {
+                            args: closure_generics,
+                        };
+                        let upvars_ty = closure_args.tupled_upvars_ty();
+                        sig_ty = Some(self.find_sig_ty(upvars_ty, ctx, span)?);
+                    }
                     TyKind::Array(..) => {
                         let ty =
                             unsafe { with_arena().alloc(key.opt_generic_ty(0).unwrap()) };

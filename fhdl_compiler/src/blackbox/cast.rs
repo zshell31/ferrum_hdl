@@ -10,14 +10,14 @@ use fhdl_netlist::{
     net_list::ModuleId,
     sig_ty::{ArrayTy, NodeTy, SignalTy, SignalTyKind},
 };
-use rustc_hir::{Expr, HirId};
+use rustc_hir::{def_id::DefId, Expr, HirId};
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::Span;
 
 use super::EvalExpr;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
-    eval_context::EvalContext,
+    eval_context::{EvalContext, ModuleOrItem},
     generator::{expr::ExprOrItemId, Generator, TraitKind},
     utils,
 };
@@ -111,6 +111,62 @@ impl Conversion {
             }
             _ => {
                 Self::convert_as_prim_ty(ctx.module_id, from, to_ty, generator, expr.span)
+            }
+        }
+    }
+
+    fn convert_(
+        &self,
+        generator: &mut Generator<'_>,
+        module_id: ModuleId,
+        from: ItemId,
+        to_ty: SignalTy,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        let from_ty = generator.item_ty(from);
+        if from_ty.kind == to_ty.kind {
+            return Ok(from);
+        }
+
+        match (from_ty.kind, to_ty.kind) {
+            (
+                SignalTyKind::Node(NodeTy::Unsigned(_)),
+                SignalTyKind::Struct(struct_ty),
+            ) if generator.is_unsigned_short(&to_ty)
+                && from_ty.width() == to_ty.width() =>
+            {
+                assert_convert::<Unsigned<1>, u<1>>();
+                generator
+                    .make_struct_group(struct_ty, iter::once(from), |_, item| Ok(item))
+            }
+            (
+                SignalTyKind::Struct(_),
+                SignalTyKind::Node(to_ty @ NodeTy::Unsigned(_)),
+            ) if generator.is_unsigned_short(&from_ty)
+                && from_ty.width() == to_ty.width() =>
+            {
+                assert_convert::<u<1>, Unsigned<1>>();
+
+                let from = from.group().item_ids()[0];
+                Ok(Self::to_unsigned(module_id, from, to_ty, generator))
+            }
+            (SignalTyKind::Node(NodeTy::Bool), SignalTyKind::Node(NodeTy::Bit)) => {
+                assert_convert::<bool, Bit>();
+                Ok(Self::bool_to_bit(from, generator))
+            }
+            (SignalTyKind::Node(NodeTy::Bit), SignalTyKind::Node(NodeTy::Bool)) => {
+                assert_convert::<Bit, bool>();
+                Ok(Self::bit_to_bool(from, generator))
+            }
+            (SignalTyKind::Node(from_ty), SignalTyKind::Node(to_ty))
+                if from_ty.is_unsigned() && to_ty.is_unsigned() =>
+            {
+                Ok(Self::to_unsigned(module_id, from, to_ty, generator))
+            }
+            _ => {
+                println!("from {:?} => to {:?}", from_ty, to_ty);
+
+                Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
             }
         }
     }
@@ -271,5 +327,19 @@ impl<'tcx> EvalExpr<'tcx> for Conversion {
                 self.convert(generator, expr, ctx, from, to_ty)
             }
         }
+    }
+
+    fn eval(
+        &self,
+        generator: &mut Generator<'tcx>,
+        args: &[ModuleOrItem],
+        output_ty: SignalTy,
+        ctx: &EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<ItemId, Error> {
+        utils::args1!(args as from);
+        let from = from.item_id();
+
+        self.convert_(generator, ctx.module_id, from, output_ty, span)
     }
 }

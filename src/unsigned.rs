@@ -1,11 +1,12 @@
 use std::{
-    cmp::Ordering,
+    cmp::Ordering::{self, *},
     fmt::{self, Binary, Display, LowerHex},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
 use fhdl_const_func::max_val;
 use fhdl_macros::{blackbox, blackbox_ty};
+use paste::paste;
 
 use crate::{
     bitpack::{BitPack, BitSize},
@@ -25,10 +26,55 @@ pub fn unsigned_value(val: u128, width: u128) -> u128 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Eq)]
 #[blackbox_ty(Unsigned)]
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(BitVec<N>);
+
+impl<const N: usize> PartialEq for Unsigned<N> {
+    #[blackbox(OpEq)]
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+
+    #[allow(clippy::partialeq_ne_impl)]
+    #[blackbox(OpNe)]
+    fn ne(&self, other: &Self) -> bool {
+        !self.eq(other)
+    }
+}
+
+impl<const N: usize> PartialOrd for Unsigned<N> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+
+    #[blackbox(OpLt)]
+    fn lt(&self, other: &Self) -> bool {
+        matches!(self.partial_cmp(other), Some(Less))
+    }
+
+    #[blackbox(OpLe)]
+    fn le(&self, other: &Self) -> bool {
+        matches!(self.partial_cmp(other), Some(Less | Equal))
+    }
+
+    #[blackbox(OpGt)]
+    fn gt(&self, other: &Self) -> bool {
+        matches!(self.partial_cmp(other), Some(Greater))
+    }
+
+    #[blackbox(OpGe)]
+    fn ge(&self, other: &Self) -> bool {
+        matches!(self.partial_cmp(other), Some(Greater | Equal))
+    }
+}
+
+impl<const N: usize> Ord for Unsigned<N> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
 
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -205,35 +251,44 @@ impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
 
 macro_rules! impl_op {
     ($trait:ident => $method:ident) => {
-        impl<const N: usize> $trait for Unsigned<N> {
-            type Output = Self;
+        paste! {
 
-            fn $method(self, rhs: Self) -> Self::Output {
-                Self(self.0.$method(rhs.0))
+            impl<const N: usize> $trait for Unsigned<N> {
+                type Output = Self;
+
+                #[blackbox([<Op $trait>])]
+                fn $method(self, rhs: Self) -> Self::Output {
+                    Self(self.0.$method(rhs.0))
+                }
             }
         }
     };
 }
 
 macro_rules! impl_ops_for_prim {
-    ($trait:ident => $method:ident => $( $prim:ty ),+) => {
-        $(
-            impl<const N: usize> $trait<$prim> for Unsigned<N> {
-                type Output = Unsigned<N>;
+    ( $trait:ident => $method:ident => $( $(#[$inner:meta])* $prim:ty ),+) => {
+        paste! {
 
-                fn $method(self, rhs: $prim) -> Self::Output {
-                    Unsigned::<N>(self.0.$method(rhs))
+            $(
+                impl<const N: usize> $trait<$prim> for Unsigned<N> {
+                    type Output = Unsigned<N>;
+
+                    #[blackbox([<Op $trait>])]
+                    fn $method(self, rhs: $prim) -> Self::Output {
+                        Unsigned::<N>(self.0.$method(rhs))
+                    }
                 }
-            }
 
-            impl<const N: usize> $trait<Unsigned<N>> for $prim {
-                type Output = Unsigned<N>;
+                impl<const N: usize> $trait<Unsigned<N>> for $prim {
+                    type Output = Unsigned<N>;
 
-                fn $method(self, rhs: Unsigned<N>) -> Self::Output {
-                    Unsigned::<N>(self.$method(rhs.0))
+                    #[blackbox([<Op $trait>])]
+                    fn $method(self, rhs: Unsigned<N>) -> Self::Output {
+                        Unsigned::<N>(self.$method(rhs.0))
+                    }
                 }
-            }
-        )+
+            )+
+        }
     };
 }
 
@@ -242,7 +297,14 @@ macro_rules! impl_ops {
         $(
             impl_op!($trait => $method $( => $spec_method)?);
 
-            impl_ops_for_prim!($trait => $method => u8, u16, u32, u64, u128, usize);
+            impl_ops_for_prim!($trait => $method =>
+                u8,
+                u16,
+                u32,
+                u64,
+                u128,
+                usize
+            );
         )+
     };
 }
@@ -264,6 +326,7 @@ macro_rules! impl_shift_ops {
             impl<const N: usize> Shl<$prim> for Unsigned<N> {
                 type Output = Self;
 
+                #[blackbox(OpShl)]
                 fn shl(self, rhs: $prim) -> Self::Output {
                     Self(self.0.shl(rhs))
                 }
@@ -272,6 +335,7 @@ macro_rules! impl_shift_ops {
             impl<const N: usize> Shr<$prim> for Unsigned<N> {
                 type Output = Self;
 
+                #[blackbox(OpShr)]
                 fn shr(self, rhs: $prim) -> Self::Output {
                     Self(self.0.shr(rhs))
                 }
@@ -288,6 +352,7 @@ where
 {
     type Output = Unsigned<N>;
 
+    #[blackbox(OpShl)]
     fn shl(self, rhs: Unsigned<N>) -> Self::Output {
         Self(self.0.shl(rhs.0))
     }

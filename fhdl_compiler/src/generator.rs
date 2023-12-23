@@ -7,6 +7,7 @@ pub mod expr;
 pub mod func;
 pub mod generic;
 pub mod metadata;
+pub mod mir;
 pub mod pattern_match;
 pub mod temp_nodes;
 pub mod ty_or_def_id;
@@ -21,6 +22,7 @@ use fhdl_netlist::{
     backend::Verilog,
     net_list::{ModuleId, NetList},
     sig_ty::SignalTy,
+    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -314,40 +316,40 @@ impl<'tcx> Generator<'tcx> {
         if !self.is_primary {
             self.print_message(&"Synthesizing", Some(&crate_name.as_str()))?;
 
-            for body_id in self.tcx.hir().body_owners() {
-                if self
-                    .metadata
-                    .find_module_id_by_def_id(body_id.into())
-                    .is_none()
-                    && self.is_synth(body_id.into())
-                {
-                    let module_id = match self.tcx.hir().get_by_def_id(body_id) {
-                        HirNode::Item(item) => {
-                            self.eval_fn_item(item, false, generic_args)?
-                        }
-                        HirNode::ImplItem(impl_item) => {
-                            self.eval_impl_fn_item(impl_item, generic_args)?
-                        }
-                        _ => {
-                            return Err(SpanError::new(
-                                SpanErrorKind::NotSynthItem,
-                                self.tcx
-                                    .def_ident_span(body_id)
-                                    .unwrap_or_else(|| self.tcx.def_span(body_id)),
-                            )
-                            .into());
-                        }
-                    };
+            // for body_id in self.tcx.hir().body_owners() {
+            //     if self
+            //         .metadata
+            //         .find_module_id_by_def_id(body_id.into())
+            //         .is_none()
+            //         && self.is_synth(body_id.into())
+            //     {
+            //         let module_id = match self.tcx.hir().get_by_def_id(body_id) {
+            //             HirNode::Item(item) => {
+            //                 self.eval_fn_item(item, false, generic_args)?
+            //             }
+            //             HirNode::ImplItem(impl_item) => {
+            //                 self.eval_impl_fn_item(impl_item, generic_args)?
+            //             }
+            //             _ => {
+            //                 return Err(SpanError::new(
+            //                     SpanErrorKind::NotSynthItem,
+            //                     self.tcx
+            //                         .def_ident_span(body_id)
+            //                         .unwrap_or_else(|| self.tcx.def_span(body_id)),
+            //                 )
+            //                 .into());
+            //             }
+            //         };
 
-                    self.metadata.add_module_id(body_id, module_id);
-                }
-            }
+            //         self.metadata.add_module_id(body_id, module_id);
+            //     }
+            // }
 
-            self.netlist.assert();
-            self.netlist.transform();
-            self.netlist.reachability();
+            // self.netlist.assert();
+            // self.netlist.transform();
+            // self.netlist.reachability();
 
-            self.encode_netlist()?;
+            // self.encode_netlist()?;
 
             Ok(())
         } else {
@@ -370,8 +372,9 @@ impl<'tcx> Generator<'tcx> {
             )?;
 
             let top_module = self.top_module.unwrap();
-            let item = self.tcx.hir().item(top_module);
-            self.eval_fn_item(item, true, GenericArgs::empty())?;
+            self.eval_fn_mir(top_module.hir_id().owner, GenericArgs::empty(), true)?;
+            // let item = self.tcx.hir().item(top_module);
+            // self.eval_fn_item(item, true, GenericArgs::empty())?;
 
             self.netlist.assert();
             self.netlist.transform();
@@ -538,5 +541,9 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn is_local_def_id<T: Into<DefId>>(&self, def_id: T) -> bool {
         self.local_def_id(def_id).is_some()
+    }
+
+    pub fn set_mod_name(&mut self, mod_id: ModuleId, name: &str) {
+        self.netlist[mod_id].name = Symbol::new(name);
     }
 }

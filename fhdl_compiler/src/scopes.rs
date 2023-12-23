@@ -2,9 +2,10 @@ use std::{cell::Cell, rc::Rc};
 
 use fhdl_netlist::{group::ItemId, net_list::ModuleId, symbol::Symbol};
 use rustc_data_structures::fx::FxHashMap;
-use rustc_span::symbol::Ident;
+use rustc_middle::mir::Local;
+use rustc_span::{symbol::Ident, Span};
 
-use crate::error::{Error, SpanError};
+use crate::error::{Error, SpanError, SpanErrorKind};
 
 #[derive(Debug, Clone, Copy)]
 pub enum SymIdent {
@@ -48,6 +49,7 @@ pub struct LocalScope(FxHashMap<Ident, Rc<Cell<ItemId>>>);
 pub struct ModuleScopes {
     scopes: Vec<LocalScope>,
     self_arg: Option<Rc<Cell<ItemId>>>,
+    local_decls: FxHashMap<Local, ItemId>,
 }
 
 impl ModuleScopes {
@@ -115,6 +117,16 @@ impl ModuleScopes {
     pub fn item_id(&self, ident: Ident) -> Result<Rc<Cell<ItemId>>, Error> {
         self.item_id_opt(ident)
             .ok_or_else(|| SpanError::missing_item_id(ident).into())
+    }
+
+    pub fn add_local(&mut self, local: Local, item_id: ItemId) {
+        self.local_decls.insert(local, item_id);
+    }
+
+    pub fn find_local(&mut self, local: Local, span: Span) -> Result<ItemId, Error> {
+        self.local_decls.get(&local).copied().ok_or_else(|| {
+            SpanError::new(SpanErrorKind::MissingLocal(local), span).into()
+        })
     }
 }
 

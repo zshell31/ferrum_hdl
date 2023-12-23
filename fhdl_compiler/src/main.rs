@@ -18,7 +18,7 @@ use std::{
 };
 
 use rustc_driver::Callbacks;
-use rustc_session::{config::ErrorOutputType, EarlyErrorHandler};
+use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
 
 use crate::generator::CompilerCallbacks;
 
@@ -28,17 +28,19 @@ extern crate rustc_data_structures;
 extern crate rustc_driver;
 extern crate rustc_hir;
 extern crate rustc_hir_analysis;
+extern crate rustc_index;
 extern crate rustc_interface;
 extern crate rustc_macros;
 extern crate rustc_middle;
 extern crate rustc_serialize;
 extern crate rustc_session;
 extern crate rustc_span;
+extern crate rustc_target;
 extern crate rustc_type_ir;
 
 fn init_session() {
-    let handler = EarlyErrorHandler::new(ErrorOutputType::default());
-    rustc_driver::init_rustc_env_logger(&handler);
+    let ctx = EarlyDiagCtxt::new(ErrorOutputType::default());
+    rustc_driver::init_rustc_env_logger(&ctx);
 }
 
 fn arg_value<'a, T: Deref<Target = str>>(

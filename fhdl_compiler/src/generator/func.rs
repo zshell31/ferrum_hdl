@@ -287,7 +287,7 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn is_inlined<T: Into<DefId>>(&self, did: T) -> bool {
+    pub fn is_inlined<T: Into<DefId>>(&self, did: T) -> bool {
         self.tcx
             .get_attrs(did.into(), RustSymbol::intern("inline"))
             .next()
@@ -321,7 +321,7 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    fn fn_output<T: Into<DefId>>(
+    pub fn fn_output<T: Into<DefId>>(
         &mut self,
         fn_did: T,
         ctx: &EvalContext<'tcx>,
@@ -569,5 +569,9 @@ impl<'tcx> Generator<'tcx> {
         }
 
         self.find_blackbox_kind(def_id)
+    }
+
+    pub fn is_blackbox(&self, def_id: DefId) -> bool {
+        self.find_blackbox_(def_id).is_some()
     }
 }

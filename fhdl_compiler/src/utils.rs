@@ -91,6 +91,13 @@ pub fn eval_val_tree(val_tree: ValTree) -> Option<u128> {
     val_tree.try_to_scalar_int().and_then(eval_scalar_int)
 }
 
+pub fn eval_scalar(scalar: Scalar) -> Option<u128> {
+    match scalar {
+        Scalar::Int(scalar) => eval_scalar_int(scalar),
+        _ => None,
+    }
+}
+
 pub fn eval_scalar_int(scalar: ScalarInt) -> Option<u128> {
     scalar
         .try_to_u128()
@@ -114,3 +121,11 @@ macro_rules! args {
 }
 
 pub(crate) use args;
+
+macro_rules! args1 {
+    ($args:ident as $( $arg:ident ),+) => {
+        let [$($arg,)+ ..] = $args else { panic!("not enough arguments"); };
+    };
+}
+
+pub(crate) use args1;

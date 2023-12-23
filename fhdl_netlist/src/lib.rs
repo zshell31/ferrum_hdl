@@ -12,7 +12,6 @@ pub mod encoding;
 pub mod group;
 pub mod net_list;
 pub mod node;
-pub mod params;
 pub mod resolver;
 pub mod sig_ty;
 pub mod symbol;

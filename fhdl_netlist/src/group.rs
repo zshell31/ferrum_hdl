@@ -114,6 +114,10 @@ impl Group {
             .map(|idx| self.item_ids[idx])
     }
 
+    pub fn by_idx(&self, idx: usize) -> ItemId {
+        self.item_ids[idx]
+    }
+
     pub fn item_ids(&self) -> &'static [ItemId] {
         self.item_ids
     }

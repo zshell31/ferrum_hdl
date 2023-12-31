@@ -107,7 +107,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         output_ty: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         let mod_id = ctx.module_id;
@@ -173,7 +173,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalLift {
         _: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        _: &EvalContext<'tcx>,
+        _: &mut EvalContext<'tcx>,
         _: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as arg);
@@ -208,7 +208,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalMap {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as rec, comb);
@@ -247,7 +247,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as rec, comb);
@@ -287,7 +287,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as arg1, arg2, comb);
@@ -320,7 +320,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalValue {
         _: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        _: &EvalContext<'tcx>,
+        _: &mut EvalContext<'tcx>,
         _: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as rec);
@@ -348,7 +348,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalWatch {
         _: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         _: SignalTy,
-        _: &EvalContext<'tcx>,
+        _: &mut EvalContext<'tcx>,
         _: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as rec);

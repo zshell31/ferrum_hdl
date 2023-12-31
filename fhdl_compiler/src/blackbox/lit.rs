@@ -16,15 +16,10 @@ pub fn eval_lit(node_ty: NodeTy, lit: &Lit) -> Result<u128, Error> {
         | NodeTy::U128
         | NodeTy::Usize
         | NodeTy::Unsigned(_) => eval_unsigned_lit(lit, node_ty.width()),
-        NodeTy::Enum(_)
-        | NodeTy::BitVec(_)
-        | NodeTy::Clock
-        | NodeTy::ClockDomain
-        | NodeTy::Ty(_) => Err(SpanError::new(
-            SpanErrorKind::PrimTyWithoutValue(NodeTy::Clock),
-            lit.span,
-        )
-        .into()),
+        NodeTy::BitVec(_) | NodeTy::Clock | NodeTy::ClockDomain | NodeTy::Ty(_) => Err(
+            SpanError::new(SpanErrorKind::PrimTyWithoutValue(NodeTy::Clock), lit.span)
+                .into(),
+        ),
     }
 }
 

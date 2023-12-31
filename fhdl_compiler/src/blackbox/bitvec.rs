@@ -88,6 +88,36 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
             )
             .into())
     }
+
+    fn eval(
+        &self,
+        generator: &mut Generator<'tcx>,
+        args: &[crate::eval_context::ModuleOrItem],
+        _: SignalTy,
+        ctx: &mut EvalContext<'tcx>,
+        span: rustc_span::Span,
+    ) -> Result<ItemId, Error> {
+        utils::args1!(args as rec);
+        let rec = rec.item_id().node_out_id();
+
+        let fn_ty = generator.type_of(ctx.fn_did, ctx);
+        let generics = generator.eval_generic_args(fn_ty, ctx, span)?;
+
+        let start = generics.as_const_opt(1).unwrap();
+        let width = generics.as_const_opt(2).unwrap();
+
+        let sym = generator.netlist[rec]
+            .sym
+            .map(|sym| Symbol::new_from_args(format_args!("{}_slice", sym)));
+
+        Ok(generator
+            .netlist
+            .add_and_get_out(
+                ctx.module_id,
+                Splitter::new(rec, [(NodeTy::BitVec(width), sym)], Some(start), false),
+            )
+            .into())
+    }
 }
 
 pub struct BitVecUnpack;
@@ -107,5 +137,19 @@ impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
         let sig_ty = generator.find_sig_ty(ty, ctx, expr.span)?;
 
         Ok(generator.from_bitvec(ctx.module_id, rec, sig_ty))
+    }
+
+    fn eval(
+        &self,
+        generator: &mut Generator<'tcx>,
+        args: &[crate::eval_context::ModuleOrItem],
+        output_ty: SignalTy,
+        ctx: &mut EvalContext<'tcx>,
+        _: rustc_span::Span,
+    ) -> Result<ItemId, Error> {
+        utils::args1!(args as rec);
+        let rec = rec.item_id().node_out_id();
+
+        Ok(generator.from_bitvec(ctx.module_id, rec, output_ty))
     }
 }

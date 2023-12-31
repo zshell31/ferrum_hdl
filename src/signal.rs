@@ -533,7 +533,7 @@ mod tests {
 
         let mut r =
             reg::<TestSystem4, Unsigned<3>>(clk, &rst_signal, &0_u8.cast(), |val| {
-                val + 1_u8
+                val + 1
             })
             .simulate();
 
@@ -558,7 +558,7 @@ mod tests {
 
         let mut r =
             reg_en::<_, Unsigned<3>>(clk, &rst_signal, &en_signal, &0_u8.cast(), |val| {
-                val + 1_u8
+                val + 1
             })
             .simulate();
 
@@ -590,7 +590,7 @@ mod tests {
         let (en, en_signal) = Enable::enable_src();
 
         let data = iter::successors::<Unsigned<3>, _>(Some(1_u8.cast()), |val| {
-            Some(val.clone() + 1_u8)
+            Some(val.clone() + 1)
         })
         .into_signal::<TestSystem4>();
 

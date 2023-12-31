@@ -56,7 +56,7 @@ impl Case {
             inputs,
             masks: mask,
             is_default,
-            output: NodeOutput::wire(ty, sym.into()),
+            output: NodeOutput::reg(ty, sym.into(), None),
         }
     }
 

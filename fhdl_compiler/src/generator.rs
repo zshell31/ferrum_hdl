@@ -372,7 +372,11 @@ impl<'tcx> Generator<'tcx> {
             )?;
 
             let top_module = self.top_module.unwrap();
-            self.eval_fn_mir(top_module.hir_id().owner, GenericArgs::empty(), true)?;
+            self.visit_fn_mir(
+                DefId::from(top_module.hir_id().owner),
+                GenericArgs::empty(),
+                true,
+            )?;
             // let item = self.tcx.hir().item(top_module);
             // self.eval_fn_item(item, true, GenericArgs::empty())?;
 

@@ -12,24 +12,35 @@ use crate::{
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub enum BinOp {
-    Add,
-    And,
     BitAnd,
     BitOr,
     BitXor,
+    Add,
+    Sub,
     Div,
+    Mul,
+    Rem,
+    Shl,
+    Shr,
     Eq,
+    Ne,
     Ge,
     Gt,
     Le,
     Lt,
-    Mul,
-    Ne,
+    And,
     Or,
-    Rem,
-    Shl,
-    Shr,
-    Sub,
+}
+
+impl BinOp {
+    pub fn should_convert_operands(&self) -> bool {
+        use BinOp::*;
+
+        matches!(
+            self,
+            BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem | Shl | Shr
+        )
+    }
 }
 
 impl Display for BinOp {

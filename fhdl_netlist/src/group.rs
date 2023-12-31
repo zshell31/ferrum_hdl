@@ -61,6 +61,13 @@ impl ItemId {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    pub fn item_ids(&self) -> impl Iterator<Item = ItemId> {
+        match self {
+            Self::Node(node_out_id) => Either::Left(iter::once((*node_out_id).into())),
+            Self::Group(group) => Either::Right(group.item_ids().iter().copied()),
+        }
+    }
 }
 
 impl From<NodeOutId> for ItemId {

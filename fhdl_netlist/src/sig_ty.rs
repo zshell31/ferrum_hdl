@@ -285,7 +285,6 @@ pub enum NodeTy {
     Usize,
     Unsigned(Width),
     BitVec(Width),
-    Enum(EnumTy),
     Clock,
     ClockDomain,
     Ty(TyId),
@@ -304,7 +303,6 @@ impl Display for NodeTy {
             Self::Usize => "usize".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
             Self::BitVec(n) => format!("bitvec[{n}]").into(),
-            Self::Enum(ty) => format!("enum[{}]", ty.width()).into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
             Self::Ty(idx) => format!("type({idx})").into(),
@@ -344,7 +342,6 @@ impl NodeTy {
             Self::Usize => (usize::BITS as u128).into(),
             Self::Unsigned(n) => *n,
             Self::BitVec(n) => *n,
-            Self::Enum(enum_ty) => enum_ty.width(),
             Self::Clock => 1.into(),
             Self::ClockDomain => 1.into(),
             Self::Ty(idx) => Width::mk_node(*idx),
@@ -383,7 +380,6 @@ impl NodeTy {
             | Self::ClockDomain => false,
             Self::Unsigned(n) => n.is_generic(),
             Self::BitVec(n) => n.is_generic(),
-            Self::Enum(enum_ty) => enum_ty.is_generic(),
             Self::Ty(_) => true,
         }
     }
@@ -404,7 +400,6 @@ impl<R: Resolver> Resolve<R> for NodeTy {
             | NodeTy::ClockDomain => Ok(*self),
             NodeTy::Unsigned(n) => Ok(Self::Unsigned(n.resolve(resolver)?)),
             NodeTy::BitVec(n) => Ok(Self::BitVec(n.resolve(resolver)?)),
-            NodeTy::Enum(ty) => Ok(Self::Enum(ty.resolve(resolver)?)),
             NodeTy::Ty(idx) => {
                 let node_ty = resolver.resolve_node_ty(*idx)?;
                 Ok(node_ty)
@@ -599,8 +594,8 @@ impl EnumTy {
         (idx as u128) & ((1 << self.discr_width()) - 1)
     }
 
-    pub fn prim_ty(&self) -> NodeTy {
-        NodeTy::Enum(*self)
+    pub fn node_ty(&self) -> NodeTy {
+        NodeTy::BitVec(self.width())
     }
 
     pub fn variants(&self) -> &[Named<SignalTy>] {
@@ -638,11 +633,8 @@ pub enum SignalTyKind {
 }
 
 impl From<NodeTy> for SignalTyKind {
-    fn from(prim_ty: NodeTy) -> Self {
-        match prim_ty {
-            NodeTy::Enum(enum_ty) => enum_ty.into(),
-            _ => Self::Node(prim_ty),
-        }
+    fn from(node_ty: NodeTy) -> Self {
+        Self::Node(node_ty)
     }
 }
 
@@ -707,7 +699,7 @@ impl SignalTy {
     }
 
     pub fn node_ty(&self) -> NodeTy {
-        self.opt_node_ty().expect("expected Prim type")
+        self.opt_node_ty().expect("expected Node type")
     }
 
     pub fn opt_array_ty(&self) -> Option<ArrayTy> {

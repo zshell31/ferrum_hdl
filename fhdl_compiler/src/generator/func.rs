@@ -1,8 +1,8 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, iter};
 
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
-    group::ItemId,
+    group::{Group, ItemId},
     net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
     sig_ty::{NodeTy, SignalTy, SignalTyKind},
@@ -122,8 +122,16 @@ impl<'tcx> Generator<'tcx> {
         }
 
         self.idents.for_module(module_id).push_scope();
+        let fn_did = body_id.hir_id.owner.def_id;
+        let mir = self.tcx.optimized_mir(fn_did);
 
-        let mut ctx = EvalContext::new(self.is_primary, generic_args, module_id);
+        let mut ctx = EvalContext::new(
+            self.is_primary,
+            fn_did.into(),
+            generic_args,
+            module_id,
+            mir,
+        );
 
         self.eval_inputs(inputs, &mut ctx)?;
         let item_id = self.eval_expr(body.value, &mut ctx)?;
@@ -281,15 +289,21 @@ impl<'tcx> Generator<'tcx> {
                 )
                 .unwrap(),
             SignalTyKind::Enum(ty) => {
-                let input = Input::new(ty.prim_ty(), None);
-                self.netlist.add_and_get_out(module_id, input).into()
+                let input = Input::new(ty.node_ty(), None);
+                Group::new(
+                    sig_ty,
+                    iter::once(self.netlist.add_and_get_out(module_id, input).into()),
+                )
+                .into()
             }
         }
     }
 
     pub fn is_inlined<T: Into<DefId>>(&self, did: T) -> bool {
+        let did = did.into();
+
         self.tcx
-            .get_attrs(did.into(), RustSymbol::intern("inline"))
+            .get_attrs(did, RustSymbol::intern("inline"))
             .next()
             .is_some()
     }

@@ -4,8 +4,8 @@ use fhdl_netlist::node::BinOp;
 use rustc_const_eval::interpret::Scalar;
 use rustc_hir::{def_id::DefId, BinOpKind, Expr, ExprKind, HirId, Pat};
 use rustc_middle::{
-    mir::ConstValue,
-    ty::{GenericArgsRef, ScalarInt, Ty, TyKind, ValTree},
+    mir::{ConstValue, UnevaluatedConst},
+    ty::{GenericArgsRef, ParamEnv, ScalarInt, Ty, TyCtxt, TyKind, ValTree},
 };
 use rustc_span::symbol::Ident;
 use smallvec::SmallVec;
@@ -78,6 +78,16 @@ pub fn pat_ident(pat: &Pat<'_>) -> Result<Ident, Error> {
     pat.simple_ident()
         .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedIdentifier, pat.span))
         .map_err(Into::into)
+}
+
+pub fn resolve_unevaluated<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    unevaluated: UnevaluatedConst<'tcx>,
+) -> Option<u128> {
+    let param_env = ParamEnv::reveal_all();
+    let value = tcx.const_eval_resolve(param_env, unevaluated, None);
+    let value = value.ok()?;
+    eval_const_val(value)
 }
 
 pub fn eval_const_val(value: ConstValue) -> Option<u128> {

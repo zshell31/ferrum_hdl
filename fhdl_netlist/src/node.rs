@@ -47,7 +47,7 @@ use crate::{
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
 pub enum NetKind {
     Wire,
-    Reg(usize),
+    Reg(Option<usize>),
 }
 
 #[derive(Debug, Clone, Copy, Encodable, Decodable)]
@@ -64,7 +64,7 @@ impl NodeOutput {
         Self::new(ty, NetKind::Wire, sym)
     }
 
-    pub fn reg(ty: NodeTy, sym: Option<Symbol>, init: usize) -> Self {
+    pub fn reg(ty: NodeTy, sym: Option<Symbol>, init: Option<usize>) -> Self {
         Self::new(ty, NetKind::Reg(init), sym)
     }
 

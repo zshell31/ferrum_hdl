@@ -955,7 +955,7 @@ impl<'tcx> Generator<'tcx> {
             generator.eval_expr(field, ctx)
         })?;
 
-        Ok(self.enum_variant_to_bitvec(ctx.module_id, enum_ty, variant_idx, group))
+        Ok(self.enum_variant_to_bitvec(ctx.module_id, enum_ty, variant_idx, Some(group)))
     }
 
     pub fn bin_op(

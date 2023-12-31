@@ -118,6 +118,8 @@ pub enum SpanErrorKind {
     InvalidPattern,
     #[error("cannot extract generic args")]
     CannotExtractGenericArgs,
+    #[error("loops are unsupported")]
+    UnsupportedLoops,
 
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,

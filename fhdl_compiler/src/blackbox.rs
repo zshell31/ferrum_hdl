@@ -34,7 +34,7 @@ pub trait EvalExpr<'tcx> {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         output_ty: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         unimplemented!()
@@ -70,7 +70,7 @@ macro_rules! eval_expr {
                 generator: &mut Generator<'tcx>,
                 args: &[ModuleOrItem],
                 output_ty: SignalTy,
-                ctx: &EvalContext<'tcx>,
+                ctx: &mut EvalContext<'tcx>,
                 span: Span,
             ) -> Result<ItemId, Error> {
                 match self.kind {

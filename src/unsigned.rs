@@ -5,7 +5,7 @@ use std::{
 };
 
 use fhdl_const_func::max_val;
-use fhdl_macros::{blackbox, blackbox_ty};
+use fhdl_macros::{blackbox, blackbox_ty, synth};
 use paste::paste;
 
 use crate::{
@@ -127,11 +127,88 @@ macro_rules! impl_for_unsigned_prim_ty {
                     bitvec.cast()
                 }
             }
+
         )+
     };
 }
 
 impl_for_unsigned_prim_ty!(u8, u16, u32, u64, u128, usize);
+
+impl<const N: usize> PartialEq<u128> for Unsigned<N> {
+    #[synth(inline)]
+    #[inline]
+    fn eq(&self, other: &u128) -> bool {
+        self.eq(&Self::cast_from(*other))
+    }
+}
+
+impl<const N: usize> PartialEq<Unsigned<N>> for u128 {
+    #[synth(inline)]
+    #[inline]
+    fn eq(&self, other: &Unsigned<N>) -> bool {
+        other.eq(self)
+    }
+}
+
+impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
+    fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
+        Some(self.cmp(&Self::cast_from(*other)))
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn lt(&self, other: &u128) -> bool {
+        self.lt(&Self::cast_from(*other))
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn le(&self, other: &u128) -> bool {
+        self.le(&Self::cast_from(*other))
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn gt(&self, other: &u128) -> bool {
+        self.gt(&Self::cast_from(*other))
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn ge(&self, other: &u128) -> bool {
+        self.ge(&Self::cast_from(*other))
+    }
+}
+
+impl<const N: usize> PartialOrd<Unsigned<N>> for u128 {
+    fn partial_cmp(&self, other: &Unsigned<N>) -> Option<Ordering> {
+        other.partial_cmp(self)
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn lt(&self, other: &Unsigned<N>) -> bool {
+        other.lt(self)
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn le(&self, other: &Unsigned<N>) -> bool {
+        other.le(self)
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn gt(&self, other: &Unsigned<N>) -> bool {
+        other.gt(self)
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn ge(&self, other: &Unsigned<N>) -> bool {
+        other.ge(self)
+    }
+}
 
 impl<const N: usize> IsPrimTy for u<N> where Assert<{ N <= 128 }>: IsTrue {}
 
@@ -237,18 +314,6 @@ where
     }
 }
 
-impl<const N: usize> PartialEq<u128> for Unsigned<N> {
-    fn eq(&self, other: &u128) -> bool {
-        self.eq(&Self::cast_from(*other))
-    }
-}
-
-impl<const N: usize> PartialOrd<u128> for Unsigned<N> {
-    fn partial_cmp(&self, other: &u128) -> Option<Ordering> {
-        Some(self.cmp(&Self::cast_from(*other)))
-    }
-}
-
 macro_rules! impl_op {
     ($trait:ident => $method:ident) => {
         paste! {
@@ -298,12 +363,7 @@ macro_rules! impl_ops {
             impl_op!($trait => $method $( => $spec_method)?);
 
             impl_ops_for_prim!($trait => $method =>
-                u8,
-                u16,
-                u32,
-                u64,
-                u128,
-                usize
+                u128
             );
         )+
     };
@@ -344,7 +404,7 @@ macro_rules! impl_shift_ops {
     };
 }
 
-impl_shift_ops!(u8, u16, u32, u64, u128, usize);
+impl_shift_ops!(u128);
 
 impl<const N: usize> Shl<Unsigned<N>> for Unsigned<N>
 where

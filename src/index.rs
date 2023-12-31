@@ -142,7 +142,7 @@ where
         if self.is_max() {
             Self(0_u8.cast())
         } else {
-            Self(self.0 + 1_u8)
+            Self(self.0 + 1)
         }
     }
 
@@ -151,7 +151,7 @@ where
         if self.is_min() {
             Self((N - 1).cast::<Unsigned<_>>())
         } else {
-            Self(self.0 - 1_u8)
+            Self(self.0 - 1)
         }
     }
 

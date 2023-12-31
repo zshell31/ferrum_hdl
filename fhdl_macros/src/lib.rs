@@ -41,11 +41,12 @@ pub fn blackbox_ty(attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn synth(_attr: TokenStream, input: TokenStream) -> TokenStream {
+pub fn synth(attr: TokenStream, input: TokenStream) -> TokenStream {
+    let attr: TokenStream2 = attr.into();
     let input: TokenStream2 = input.into();
 
     quote! {
-        #[fhdl_tool::synth]
+        #[fhdl_tool::synth(#attr)]
         #input
     }
     .into()

@@ -78,21 +78,16 @@ impl Generic {
         }
     }
 
-    fn resolve_const<'tcx>(
+    pub fn resolve_const<'tcx>(
         unevaluated: UnevaluatedConst<'tcx>,
         tcx: TyCtxt<'tcx>,
     ) -> Option<u128> {
         use rustc_middle::mir::UnevaluatedConst;
 
-        let param_env = ParamEnv::reveal_all();
-        let value = tcx.const_eval_resolve(
-            param_env.without_caller_bounds(),
+        utils::resolve_unevaluated(
+            tcx,
             UnevaluatedConst::new(unevaluated.def, unevaluated.args),
-            None,
-        );
-
-        let value = value.ok()?;
-        utils::eval_const_val(value)
+        )
     }
 
     fn from_gen_arg<'tcx>(

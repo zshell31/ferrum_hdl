@@ -61,7 +61,7 @@ impl<'n> Verilog<'n> {
                 self.buffer.write_str(";\n");
             }
 
-            if let NetKind::Reg(init) = &out.kind {
+            if let NetKind::Reg(Some(init)) = &out.kind {
                 let init = self.net_list[node_id].input_by_ind(*init);
                 let node = &self.net_list[init.node_id()];
                 if node.is_const() {

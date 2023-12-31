@@ -1,10 +1,10 @@
-use std::iter::Peekable;
+use std::iter::{self, Peekable};
 
 use either::Either;
 use fhdl_netlist::{
-    group::ItemId,
+    group::{Group, ItemId},
     net_list::{ModuleId, NodeId, NodeOutId},
-    node::{Const, Merger, Splitter},
+    node::{Merger, Splitter},
     sig_ty::{EnumTy, NodeTy, SignalTy, SignalTyKind},
 };
 use smallvec::{smallvec, SmallVec};
@@ -34,9 +34,12 @@ impl CombineOutputs {
         sig_ty: SignalTy,
     ) -> ItemId {
         match sig_ty.kind {
-            SignalTyKind::Node(_) | SignalTyKind::Enum(_) => {
-                self.outputs.next().unwrap().into()
-            }
+            SignalTyKind::Node(_) => self.outputs.next().unwrap().into(),
+            SignalTyKind::Enum(ty) => Group::new(
+                SignalTy::new(ty.into()),
+                iter::once(self.outputs.next().unwrap().into()),
+            )
+            .into(),
             SignalTyKind::Array(ty) => generator
                 .make_array_group(ty, ty.tys(), |generator, sig_ty| {
                     Ok(self.next_output(generator, sig_ty))
@@ -238,28 +241,36 @@ impl<'tcx> Generator<'tcx> {
         module_id: ModuleId,
         enum_ty: EnumTy,
         variant_idx: usize,
-        data_part: ItemId,
+        data_part: Option<ItemId>,
     ) -> ItemId {
         let discr_val = enum_ty.discr_val(variant_idx);
-        let discr_val = self.netlist.add(
-            module_id,
-            Const::new(
-                NodeTy::BitVec(enum_ty.discr_width().into()),
-                discr_val.into(),
-                None,
-            ),
-        );
-        let discr_val = self.netlist[discr_val].only_one_out().node_out_id();
+        let discr_val_ty = NodeTy::BitVec(enum_ty.discr_width().into());
+        let discr_val = self.netlist.const_val(module_id, discr_val_ty, discr_val);
 
-        let inputs = if data_part.is_empty() {
-            Either::Left([discr_val].into_iter())
+        let inputs = if enum_ty.data_width().value() == 0 {
+            Either::Left(iter::once(discr_val))
         } else {
-            let data_part = self.to_bitvec(module_id, data_part);
+            let data_part = match data_part {
+                Some(data_part) => self.to_bitvec(module_id, data_part),
+                None => self
+                    .netlist
+                    .const_zero(module_id, NodeTy::BitVec(enum_ty.data_width())),
+            };
+
             Either::Right([discr_val, data_part].into_iter())
         };
 
-        self.netlist
-            .add_and_get_out(module_id, Merger::new(enum_ty.width(), inputs, false, None))
-            .into()
+        Group::new(
+            SignalTy::new(enum_ty.into()),
+            iter::once(
+                self.netlist
+                    .add_and_get_out(
+                        module_id,
+                        Merger::new(enum_ty.width(), inputs, false, None),
+                    )
+                    .into(),
+            ),
+        )
+        .into()
     }
 }

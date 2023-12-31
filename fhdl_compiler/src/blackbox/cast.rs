@@ -10,7 +10,7 @@ use fhdl_netlist::{
     net_list::ModuleId,
     sig_ty::{ArrayTy, NodeTy, SignalTy, SignalTyKind},
 };
-use rustc_hir::{def_id::DefId, Expr, HirId};
+use rustc_hir::{Expr, HirId};
 use rustc_middle::ty::{GenericArgsRef, TyKind};
 use rustc_span::Span;
 
@@ -334,7 +334,7 @@ impl<'tcx> EvalExpr<'tcx> for Conversion {
         generator: &mut Generator<'tcx>,
         args: &[ModuleOrItem],
         output_ty: SignalTy,
-        ctx: &EvalContext<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
         span: Span,
     ) -> Result<ItemId, Error> {
         utils::args1!(args as from);

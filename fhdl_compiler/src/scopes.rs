@@ -9,6 +9,9 @@ use crate::error::{Error, SpanError, SpanErrorKind};
 
 #[derive(Debug, Clone, Copy)]
 pub enum SymIdent {
+    Closure,
+    Promoted,
+    Part,
     Mux,
     Dff,
     DffEn,
@@ -19,6 +22,9 @@ pub enum SymIdent {
 impl SymIdent {
     pub fn as_str(&self) -> &'static str {
         match self {
+            Self::Closure => "closure",
+            Self::Promoted => "promoted",
+            Self::Part => "part",
             Self::Mux => "mux",
             Self::Dff => "dff",
             Self::DffEn => "dff_en",

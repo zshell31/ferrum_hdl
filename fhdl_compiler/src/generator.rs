@@ -28,15 +28,15 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def_id::{DefId, LocalDefId, LOCAL_CRATE},
-    Expr, HirId, ItemId as HirItemId, ItemKind, Node as HirNode, Ty as HirTy,
+    Expr, HirId, ItemId as HirItemId, ItemKind, Ty as HirTy,
 };
 use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
 use rustc_middle::{
     mir::UnevaluatedConst,
-    ty::{AssocKind, GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
+    ty::{GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
 };
-use rustc_span::{def_id::CrateNum, symbol::Ident, Span};
+use rustc_span::{def_id::CrateNum, Span};
 use serde::Deserialize;
 
 use self::{
@@ -310,86 +310,42 @@ impl<'tcx> Generator<'tcx> {
     fn generate_inner(&mut self) -> Result<(), Error> {
         let crate_name = self.tcx.crate_name(LOCAL_CRATE);
 
-        self.collect_local_trait_impls();
+        let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let name = "top_module";
 
-        let generic_args = GenericArgs::empty();
-        if !self.is_primary {
-            self.print_message(&"Synthesizing", Some(&crate_name.as_str()))?;
+        let path = StdPath::new(&dir).join("generated").join("verilog");
+        fs::create_dir_all(&path)?;
 
-            // for body_id in self.tcx.hir().body_owners() {
-            //     if self
-            //         .metadata
-            //         .find_module_id_by_def_id(body_id.into())
-            //         .is_none()
-            //         && self.is_synth(body_id.into())
-            //     {
-            //         let module_id = match self.tcx.hir().get_by_def_id(body_id) {
-            //             HirNode::Item(item) => {
-            //                 self.eval_fn_item(item, false, generic_args)?
-            //             }
-            //             HirNode::ImplItem(impl_item) => {
-            //                 self.eval_impl_fn_item(impl_item, generic_args)?
-            //             }
-            //             _ => {
-            //                 return Err(SpanError::new(
-            //                     SpanErrorKind::NotSynthItem,
-            //                     self.tcx
-            //                         .def_ident_span(body_id)
-            //                         .unwrap_or_else(|| self.tcx.def_span(body_id)),
-            //                 )
-            //                 .into());
-            //             }
-            //         };
+        let mut path = path.join(name);
+        path.set_extension("v");
 
-            //         self.metadata.add_module_id(body_id, module_id);
-            //     }
-            // }
+        self.print_message(
+            &"Synthesizing",
+            Some(&format!(
+                "{} into verilog {}",
+                crate_name.as_str(),
+                path.to_string_lossy()
+            )),
+        )?;
 
-            // self.netlist.assert();
-            // self.netlist.transform();
-            // self.netlist.reachability();
+        let top_module = self.top_module.unwrap();
+        self.visit_fn_mir(
+            DefId::from(top_module.hir_id().owner),
+            GenericArgs::empty(),
+            true,
+        )?;
+        // let item = self.tcx.hir().item(top_module);
+        // self.eval_fn_item(item, true, GenericArgs::empty())?;
 
-            // self.encode_netlist()?;
+        self.netlist.assert();
+        self.netlist.transform();
+        self.netlist.reachability();
+        self.netlist.set_names();
+        self.netlist.inject_nodes();
 
-            Ok(())
-        } else {
-            let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
-            let name = "top_module";
+        let verilog = Verilog::new(&self.netlist).generate();
 
-            let path = StdPath::new(&dir).join("generated").join("verilog");
-            fs::create_dir_all(&path)?;
-
-            let mut path = path.join(name);
-            path.set_extension("v");
-
-            self.print_message(
-                &"Synthesizing",
-                Some(&format!(
-                    "{} into verilog {}",
-                    crate_name.as_str(),
-                    path.to_string_lossy()
-                )),
-            )?;
-
-            let top_module = self.top_module.unwrap();
-            self.visit_fn_mir(
-                DefId::from(top_module.hir_id().owner),
-                GenericArgs::empty(),
-                true,
-            )?;
-            // let item = self.tcx.hir().item(top_module);
-            // self.eval_fn_item(item, true, GenericArgs::empty())?;
-
-            self.netlist.assert();
-            self.netlist.transform();
-            self.netlist.reachability();
-            self.netlist.set_names();
-            self.netlist.inject_nodes();
-
-            let verilog = Verilog::new(&self.netlist).generate();
-
-            Ok(fs::write(path, verilog)?)
-        }
+        Ok(fs::write(path, verilog)?)
     }
 
     fn print_message(
@@ -416,29 +372,6 @@ impl<'tcx> Generator<'tcx> {
         }
 
         Ok(())
-    }
-
-    fn collect_local_trait_impls(&mut self) {
-        for (trait_id, _) in self.tcx.all_local_trait_impls(()) {
-            if self.crates.is_ferrum_hdl(*trait_id)
-                && self.find_fhdl_tool_attr("cast_from", *trait_id).is_some()
-            {
-                let fn_did = self
-                    .tcx
-                    .associated_items(*trait_id)
-                    .find_by_name_and_kind(
-                        self.tcx,
-                        Ident::from_str("cast_from"),
-                        AssocKind::Fn,
-                        *trait_id,
-                    )
-                    .unwrap()
-                    .def_id;
-
-                self.local_trait_impls
-                    .insert(TraitKind::From, (*trait_id, fn_did));
-            }
-        }
     }
 
     pub fn find_trait_method(&self, trait_kind: TraitKind) -> Option<DefId> {

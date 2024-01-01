@@ -117,7 +117,7 @@ impl<'tcx> Generator<'tcx> {
 
         let module_sym = Symbol::new(name);
         let module_id = self.netlist.add_module(module_sym, top_module);
-        if self.is_inlined(body_id.hir_id.owner.def_id) {
+        if self.is_inlined(body_id.hir_id.owner.def_id.into()) {
             self.netlist[module_id].is_inlined = true;
         }
 
@@ -299,13 +299,12 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    pub fn is_inlined<T: Into<DefId>>(&self, did: T) -> bool {
-        let did = did.into();
-
+    pub fn is_inlined(&self, did: DefId) -> bool {
         self.tcx
             .get_attrs(did, RustSymbol::intern("inline"))
             .next()
             .is_some()
+            || self.find_synth(did).map(|synth| synth.inlined).is_some()
     }
 
     fn eval_fn_inputs(

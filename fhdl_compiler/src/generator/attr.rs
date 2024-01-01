@@ -1,18 +1,22 @@
 use fhdl_blackbox::{BlackboxKind, BlackboxTy};
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
-    tokenstream::{LazyAttrTokenStream, TokenTree},
+    tokenstream::TokenTree,
     AttrArgs, AttrKind, DelimArgs,
 };
 use rustc_hir::def_id::DefId;
 
 use super::Generator;
-use crate::error::Error;
 
 const FHDL_TOOL: &str = "fhdl_tool";
 const SYNTH_ATTR: &str = "synth";
 const BLACKBOX_ATTR: &str = "blackbox";
 const BLACKBOX_TY_ATTR: &str = "blackbox_ty";
+
+#[derive(Debug)]
+pub struct Synth {
+    pub inlined: bool,
+}
 
 impl<'tcx> Generator<'tcx> {
     pub fn find_fhdl_tool_attr<T>(
@@ -29,39 +33,7 @@ impl<'tcx> Generator<'tcx> {
                     && segments[0].ident.as_str() == FHDL_TOOL
                     && segments[1].ident.as_str() == attr_kind
                 {
-                    if attr_kind == SYNTH_ATTR {
-                        println!("{attr:#?}");
-                    }
                     return parse_args(&attr.item.args);
-                    // match &attr.item.args {
-                    //     AttrArgs::Empty => {
-                    //         return Some("");
-                    //     }
-                    //     AttrArgs::Delimited(DelimArgs { tokens, .. }) => {
-                    //         if tokens.is_empty() {
-                    //             return Some("");
-                    //         }
-
-                    //         if tokens.len() == 1 {
-                    //             if let Some(TokenTree::Token(
-                    //                 Token {
-                    //                     kind:
-                    //                         TokenKind::Literal(Lit {
-                    //                             kind: LitKind::Str,
-                    //                             symbol,
-                    //                             ..
-                    //                         }),
-                    //                     ..
-                    //                 },
-                    //                 _,
-                    //             )) = tokens.trees().next()
-                    //             {
-                    //                 return Some(symbol.as_str());
-                    //             }
-                    //         }
-                    //     }
-                    //     _ => {}
-                    // }
                 }
             }
         }
@@ -113,17 +85,35 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    pub fn is_synth(&self, def_id: DefId) -> bool {
-        match self.crates.is_ferrum_hdl_local() {
-            false => {
-                !def_id.is_local()
-                    && self.find_fhdl_tool_attr(SYNTH_ATTR, def_id).is_some()
+    pub fn find_synth(&self, def_id: DefId) -> Option<Synth> {
+        self.find_fhdl_tool_attr(SYNTH_ATTR, def_id, |args| {
+            let mut inlined = false;
+            if let AttrArgs::Delimited(DelimArgs { tokens, .. }) = args {
+                for token in tokens.trees() {
+                    if let TokenTree::Token(
+                        Token {
+                            kind: TokenKind::Ident(symbol, ..),
+                            ..
+                        },
+                        _,
+                    ) = token
+                    {
+                        if symbol.as_str() == "inline" {
+                            inlined = true;
+                        }
+                    }
+                }
             }
-            true => self.find_fhdl_tool_attr(SYNTH_ATTR, def_id).is_some(),
-        }
+
+            Some(Synth { inlined })
+        })
+    }
+
+    pub fn is_synth(&self, def_id: DefId) -> bool {
+        self.find_synth(def_id).is_some()
     }
 
     pub fn is_blackbox_ty(&self, def_id: DefId) -> bool {
-        self.find_fhdl_tool_attr(BLACKBOX_TY_ATTR, def_id).is_some()
+        self.find_blackbox_ty(def_id).is_some()
     }
 }

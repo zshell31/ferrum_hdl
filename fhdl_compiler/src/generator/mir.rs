@@ -22,7 +22,7 @@ use rustc_middle::{
 use rustc_span::Span;
 use rustc_target::abi::FieldIdx;
 
-use super::Generator;
+use super::{Generator, MonoItem};
 use crate::{
     blackbox::bin_op::BinOp,
     error::{Error, SpanError, SpanErrorKind},
@@ -860,7 +860,17 @@ impl<'tcx> Generator<'tcx> {
             || self.is_synth(instance_did)
             || self.is_synth(fn_did)
         {
-            let module_id = self.visit_fn_mir(instance_did, instance_generics, false)?;
+            let mono_item = MonoItem::new(fn_did, fn_generics);
+
+            #[allow(clippy::map_entry)]
+            if !self.evaluated_modules.contains_key(&mono_item) {
+                let module_id =
+                    self.visit_fn_mir(instance_did, instance_generics, false)?;
+
+                self.evaluated_modules.insert(mono_item, module_id);
+            }
+            let module_id = *self.evaluated_modules.get(&mono_item).unwrap();
+
             let module = self.instantiate_module(
                 module_id,
                 args.into_iter().map(ModuleOrItem::item_id),

@@ -398,7 +398,7 @@ impl<'tcx> Generator<'tcx> {
     ) -> ItemId {
         let input_ty = self.item_ty(outer_item_id.get());
         let input = self.make_input_with_sig_ty(input_ty, closure_id);
-        self.assign_names_to_item(ident.as_str(), input);
+        self.assign_names_to_item(ident.as_str(), input, true);
         let local_item_id = self
             .idents
             .for_module(closure_id)

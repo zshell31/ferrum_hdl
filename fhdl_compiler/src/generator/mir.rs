@@ -168,12 +168,12 @@ impl<'tcx> Generator<'tcx> {
                     if let ModuleOrItem::Item(item_id) =
                         ctx.find_local(place.local, span)?
                     {
-                        self.assign_names_to_item(name, item_id);
+                        self.assign_names_to_item(name, item_id, true);
                     }
                 }
                 VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
                     if let Some(item_id) = ctx.find_const(&const_) {
-                        self.assign_names_to_item(name, item_id);
+                        self.assign_names_to_item(name, item_id, true);
                     }
                 }
             }

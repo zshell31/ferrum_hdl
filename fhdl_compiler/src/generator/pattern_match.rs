@@ -28,34 +28,36 @@ use crate::{
 };
 
 impl<'tcx> Generator<'tcx> {
-    pub fn assign_names_to_item(&mut self, ident: &str, item_id: ItemId) {
+    pub fn assign_names_to_item(&mut self, ident: &str, item_id: ItemId, force: bool) {
         match item_id {
             ItemId::Node(node_out_id) => {
                 let sym = Some(Symbol::new(ident));
 
-                self.netlist[node_out_id].sym = sym;
+                if self.netlist[node_out_id].sym.is_none() || force {
+                    self.netlist[node_out_id].sym = sym;
+                }
             }
             ItemId::Group(group) => match group.sig_ty.kind {
                 SignalTyKind::Enum(_)
                 | SignalTyKind::Array(_)
                 | SignalTyKind::Node(_) => {
                     if group.item_ids().len() == 1 {
-                        self.assign_names_to_item(ident, group.item_ids()[0]);
+                        self.assign_names_to_item(ident, group.item_ids()[0], force);
                     } else {
                         for (idx, item_id) in group.item_ids().iter().enumerate() {
                             let ident = format!("{}${}", ident, idx);
-                            self.assign_names_to_item(&ident, *item_id);
+                            self.assign_names_to_item(&ident, *item_id, force);
                         }
                     }
                 }
                 SignalTyKind::Struct(ty) => {
                     if group.item_ids().len() == 1 {
-                        self.assign_names_to_item(ident, group.item_ids()[0]);
+                        self.assign_names_to_item(ident, group.item_ids()[0], force);
                     } else {
                         ty.tys().iter().zip(group.item_ids()).for_each(
                             |(ty, item_id)| {
                                 let ident = format!("{}${}", ident, ty.name);
-                                self.assign_names_to_item(&ident, *item_id);
+                                self.assign_names_to_item(&ident, *item_id, force);
                             },
                         );
                     }
@@ -73,7 +75,7 @@ impl<'tcx> Generator<'tcx> {
         match pat.kind {
             PatKind::Binding(..) => {
                 let ident = utils::pat_ident(pat)?;
-                self.assign_names_to_item(ident.as_str(), item_id);
+                self.assign_names_to_item(ident.as_str(), item_id, true);
 
                 self.idents
                     .for_module(module_id)

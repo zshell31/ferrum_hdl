@@ -27,7 +27,6 @@ use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    scopes::SymIdent,
     utils,
 };
 
@@ -318,18 +317,8 @@ impl<'tcx> Generator<'tcx> {
     }
 
     pub fn eval_outputs(&mut self, prefix: Option<&str>, item_id: ItemId) {
+        self.assign_names_to_item("out", item_id, false);
         for node_out_id in item_id.into_iter() {
-            let out = &mut self.netlist[node_out_id];
-            if out.sym.is_none() {
-                out.sym = match prefix {
-                    Some(prefix) => Some(Symbol::new_from_args(format_args!(
-                        "{}_{}",
-                        prefix,
-                        SymIdent::Out.as_str()
-                    ))),
-                    None => SymIdent::Out.into(),
-                };
-            }
             self.netlist.add_output(node_out_id);
         }
     }

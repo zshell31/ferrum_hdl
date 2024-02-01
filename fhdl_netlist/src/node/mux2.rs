@@ -1,17 +1,13 @@
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    encoding::Wrap,
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub struct Mux2 {
-    inputs: Wrap<[NodeOutIdx; 3]>,
+    inputs: [NodeOutIdx; 3],
     output: NodeOutput,
 }
 
@@ -31,7 +27,7 @@ impl Mux2 {
         sym: impl Into<Option<Symbol>>,
     ) -> Self {
         Self {
-            inputs: [sel.into(), input1.into(), input2.into()].into(),
+            inputs: [sel.into(), input1.into(), input2.into()],
             output: NodeOutput::wire(ty, sym.into()),
         }
     }
@@ -52,15 +48,6 @@ impl WithId<ModuleId, &'_ Mux2> {
     }
 }
 
-impl<R: Resolver> Resolve<R> for Mux2 {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            inputs: self.inputs,
-            output: self.output.resolve(resolver)?,
-        })
-    }
-}
-
 impl From<Mux2> for NodeKind {
     fn from(node: Mux2) -> Self {
         Self::Mux2(node)
@@ -72,11 +59,11 @@ impl IsNode for Mux2 {
     type Outputs = NodeOutput;
 
     fn inputs(&self) -> &Self::Inputs {
-        &*self.inputs
+        &self.inputs
     }
 
     fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut *self.inputs
+        &mut self.inputs
     }
 
     fn outputs(&self) -> &Self::Outputs {
@@ -94,7 +81,7 @@ impl IsNode for Mux2 {
         let input1 = &net_list[inputs.input1];
         let input2 = &net_list[inputs.input2];
 
-        assert_width!(self.output.width(), input1.width());
-        assert_width!(self.output.width(), input2.width());
+        assert_eq!(self.output.width(), input1.width());
+        assert_eq!(self.output.width(), input2.width());
     }
 }

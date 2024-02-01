@@ -1,16 +1,13 @@
 use std::fmt::Debug;
 
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_opt, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::{NodeTy, Width},
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct Merger {
     inputs: Vec<NodeOutIdx>,
     output: NodeOutput,
@@ -19,7 +16,7 @@ pub struct Merger {
 
 impl Merger {
     pub fn new<I>(
-        width: Width,
+        width: u128,
         inputs: I,
         rev: bool,
         sym: impl Into<Option<Symbol>>,
@@ -68,16 +65,6 @@ impl WithId<ModuleId, &'_ Merger> {
     }
 }
 
-impl<R: Resolver> Resolve<R> for Merger {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            inputs: self.inputs.clone(),
-            output: self.output.resolve(resolver)?,
-            rev: self.rev,
-        })
-    }
-}
-
 impl From<Merger> for NodeKind {
     fn from(node: Merger) -> Self {
         Self::Merger(node)
@@ -108,9 +95,9 @@ impl IsNode for Merger {
         let node = WithId::<ModuleId, _>::new(module_id, self);
         let total = node
             .inputs()
-            .map(|input| net_list[input].width().opt_value())
-            .sum::<Option<u128>>();
+            .map(|input| net_list[input].width())
+            .sum::<u128>();
 
-        assert_opt!(total, self.output.width().opt_value());
+        assert_eq!(total, self.output.width());
     }
 }

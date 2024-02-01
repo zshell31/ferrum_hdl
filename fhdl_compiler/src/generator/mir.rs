@@ -2,10 +2,8 @@ use std::{collections::VecDeque, convert::identity, iter, ops::Deref};
 
 use fhdl_netlist::{
     bvm::BitVecMask,
-    group::ItemId,
     net_list::ModuleId,
     node::{Case, Splitter},
-    sig_ty::{NodeTy, SignalTy, SignalTyKind},
     symbol::Symbol,
 };
 use rustc_data_structures::{fx::FxHashSet, graph::WithSuccessors};
@@ -17,17 +15,22 @@ use rustc_middle::{
         ConstValue, Local, LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue,
         StatementKind, TerminatorKind, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
     },
-    ty::{ClosureArgs, GenericArgsRef, InstanceDef, ParamEnv, ParamEnvAnd, TyKind},
+    ty::{
+        ClosureArgs, GenericArgsRef, InstanceDef, List, ParamEnv, ParamEnvAnd, Ty, TyKind,
+    },
 };
 use rustc_span::Span;
 use rustc_target::abi::FieldIdx;
 
-use super::{Generator, MonoItem};
+use super::{
+    item::{CombineOutputs, Group, Item},
+    item_ty::{ItemTy, ItemTyKind},
+    Generator, MonoItem,
+};
 use crate::{
     blackbox::bin_op::BinOp,
     error::{Error, SpanError, SpanErrorKind},
-    eval_context::{Closure, EvalContext, ModuleOrItem, Switch},
-    generator::bitvec::CombineOutputs,
+    eval_context::{Closure, EvalContext, Switch},
     scopes::SymIdent,
     utils,
 };
@@ -92,7 +95,7 @@ impl From<(DefId, Promoted)> for DefIdOrPromoted {
 }
 
 impl<'tcx> Generator<'tcx> {
-    pub fn visit_fn_mir(
+    pub fn visit_fn(
         &mut self,
         fn_did: impl Into<DefIdOrPromoted>,
         fn_generics: GenericArgsRef<'tcx>,
@@ -139,21 +142,20 @@ impl<'tcx> Generator<'tcx> {
             self.netlist[module_id].is_inlined = true;
         }
 
-        let mut ctx =
-            EvalContext::new(self.is_primary, fn_did, fn_generics, module_id, mir);
+        let mut ctx = EvalContext::new(fn_did, fn_generics, module_id, mir);
 
         let inputs = mir
             .local_decls
             .iter_enumerated()
             .skip(1)
             .take(mir.arg_count);
-        let inputs = self.visit_fn_mir_inputs(inputs, &mut ctx)?;
+        let inputs = self.visit_fn_inputs(inputs, &mut ctx)?;
         for var_debug_info in &mir.var_debug_info {
             if let VarDebugInfoContents::Const(ConstOperand { const_, .. }) =
                 var_debug_info.value
             {
                 if let Some(arg_idx) = var_debug_info.argument_index {
-                    ctx.add_const(const_, inputs[(arg_idx - 1) as usize]);
+                    ctx.add_const(const_, inputs[(arg_idx - 1) as usize].clone());
                 }
             }
         }
@@ -165,23 +167,19 @@ impl<'tcx> Generator<'tcx> {
             let span = var_debug_info.source_info.span;
             match var_debug_info.value {
                 VarDebugInfoContents::Place(place) => {
-                    if let ModuleOrItem::Item(item_id) =
-                        ctx.find_local(place.local, span)?
-                    {
-                        self.assign_names_to_item(name, item_id, true);
-                    }
+                    let item = self.visit_place(&place, &ctx, span)?;
+                    self.assign_names_to_item(name, &item, &ctx.locals, true);
                 }
                 VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
-                    if let Some(item_id) = ctx.find_const(&const_) {
-                        self.assign_names_to_item(name, item_id, true);
+                    if let Some(item) = ctx.find_const(&const_) {
+                        self.assign_names_to_item(name, item, &ctx.locals, true);
                     }
                 }
             }
         }
 
-        let span = mir.local_decls[RETURN_PLACE].source_info.span;
-        let output_id = ctx.find_local(RETURN_PLACE, span)?.item_id();
-        self.eval_outputs(None, output_id);
+        let output = ctx.locals.get(RETURN_PLACE);
+        self.visit_fn_output(output, &ctx);
 
         Ok(module_id)
     }
@@ -196,25 +194,34 @@ impl<'tcx> Generator<'tcx> {
         Symbol::new(&name)
     }
 
-    pub fn visit_fn_mir_inputs<'a>(
+    pub fn visit_fn_inputs<'a>(
         &mut self,
         inputs: impl IntoIterator<Item = (Local, &'a LocalDecl<'tcx>)>,
         ctx: &mut EvalContext<'tcx>,
-    ) -> Result<Vec<ItemId>, Error>
+    ) -> Result<Vec<Item<'tcx>>, Error>
     where
         'tcx: 'a,
     {
         inputs
             .into_iter()
             .map(|(local, local_decl)| {
-                let sig_ty =
-                    self.find_sig_ty(local_decl.ty, ctx, local_decl.source_info.span)?;
-                let item_id = self.make_input_with_sig_ty(sig_ty, ctx.module_id);
-                ctx.add_local(local, item_id);
+                let item_ty = self.resolve_ty(
+                    local_decl.ty,
+                    ctx.generic_args,
+                    local_decl.source_info.span,
+                )?;
 
-                Ok(item_id)
+                Ok(self.make_input(local, item_ty, ctx))
             })
             .collect()
+    }
+
+    pub fn visit_fn_output(&mut self, output: &Item<'tcx>, ctx: &EvalContext<'tcx>) {
+        self.assign_names_to_item("out", output, &ctx.locals, false);
+
+        for node_out_id in output.as_nodes(&ctx.locals) {
+            self.netlist.add_output(node_out_id);
+        }
     }
 
     pub fn visit_blocks(
@@ -255,77 +262,42 @@ impl<'tcx> Generator<'tcx> {
                 StatementKind::Assign(assign) => {
                     let rvalue = &assign.1;
 
-                    let mod_or_item: Option<ModuleOrItem> = match rvalue {
+                    let item: Option<Item> = match rvalue {
                         Rvalue::Ref(_, BorrowKind::Shared, place)
                         | Rvalue::Discriminant(place) => {
-                            let mod_or_item = ctx.find_local(place.local, span)?;
-                            Some(match mod_or_item {
-                                ModuleOrItem::Module(mod_id) => mod_id.into(),
-                                ModuleOrItem::Item(item_id) => {
-                                    self.visit_place(place, item_id, ctx, span)?.into()
-                                }
-                            })
+                            Some(self.visit_place(place, ctx, span)?)
                         }
                         Rvalue::Use(operand) => {
                             Some(self.visit_operand(operand, ctx, span)?)
                         }
                         Rvalue::BinaryOp(bin_op, operands)
                         | Rvalue::CheckedBinaryOp(bin_op, operands) => {
-                            let lhs =
-                                self.visit_operand(&operands.0, ctx, span)?.item_id();
-                            let rhs =
-                                self.visit_operand(&operands.1, ctx, span)?.item_id();
+                            let lhs = self.visit_operand(&operands.0, ctx, span)?;
+                            let rhs = self.visit_operand(&operands.1, ctx, span)?;
 
-                            let ty = ctx.instantiate(
+                            let ty = bin_op.ty(
                                 self.tcx,
-                                bin_op.ty(
-                                    self.tcx,
-                                    operands.0.ty(&mir.local_decls, self.tcx),
-                                    operands.1.ty(&mir.local_decls, self.tcx),
-                                ),
+                                operands.0.ty(&mir.local_decls, self.tcx),
+                                operands.1.ty(&mir.local_decls, self.tcx),
                             );
-                            let output_ty = self.find_sig_ty(ty, ctx, span)?;
+                            let output_ty =
+                                self.resolve_ty(ty, ctx.generic_args, span)?;
 
                             let bin_op = BinOp::try_from_op(*bin_op, span)?;
 
                             if let Rvalue::CheckedBinaryOp(_, _) = rvalue {
                                 ctx.add_checked(assign.0.local);
                             }
-                            Some(
-                                bin_op
-                                    .bin_op(self, lhs, rhs, output_ty, ctx, span)?
-                                    .into(),
-                            )
+                            Some(bin_op.bin_op(self, &lhs, &rhs, output_ty, ctx, span)?)
                         }
                         Rvalue::Aggregate(aggregate_kind, fields) => match aggregate_kind
                             .deref()
                         {
                             AggregateKind::Tuple => {
-                                let ty = ctx.instantiate(
-                                    self.tcx,
-                                    rvalue.ty(&mir.local_decls, self.tcx),
-                                );
-                                let sig_ty = self.find_sig_ty(ty, ctx, span)?;
-                                let struct_ty =
-                                    sig_ty.opt_struct_ty().ok_or_else(|| {
-                                        SpanError::new(
-                                            SpanErrorKind::ExpectedStructType,
-                                            span,
-                                        )
-                                    })?;
+                                let ty = rvalue.ty(&mir.local_decls, self.tcx);
+                                let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
 
-                                Some(
-                                    self.make_struct_group(
-                                        struct_ty,
-                                        fields,
-                                        |generator, field| {
-                                            Ok(generator
-                                                .visit_operand(field, ctx, span)?
-                                                .item_id())
-                                        },
-                                    )?
-                                    .into(),
-                                )
+                                Some(self.mk_struct(ty, fields, ctx, span)?)
                             }
                             AggregateKind::Adt(
                                 variant_did,
@@ -336,87 +308,57 @@ impl<'tcx> Generator<'tcx> {
                             ) if field_idx.is_none() => {
                                 let generic_args =
                                     ctx.instantiate(self.tcx, *generic_args);
-                                let ty = self
-                                    .tcx
-                                    .type_of(variant_did)
-                                    .instantiate(self.tcx, generic_args);
+                                let ty = self.type_of(*variant_did, generic_args);
 
-                                let sig_ty = self.find_sig_ty(ty, ctx, span)?;
-                                match sig_ty.kind {
-                                    SignalTyKind::Struct(struct_ty) => Some(
-                                        self.make_struct_group(
-                                            struct_ty,
-                                            fields,
-                                            |generator, field| {
-                                                Ok(generator
-                                                    .visit_operand(field, ctx, span)?
-                                                    .item_id())
-                                            },
-                                        )?
-                                        .into(),
-                                    ),
-                                    SignalTyKind::Enum(enum_ty) => {
+                                let variant_idx = *variant_idx;
+
+                                let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
+
+                                match ty.kind() {
+                                    ItemTyKind::Struct(_) => {
+                                        Some(self.mk_struct(ty, fields, ctx, span)?)
+                                    }
+                                    ItemTyKind::Enum(enum_ty) => {
                                         let data_part = if fields.is_empty() {
                                             None
                                         } else {
-                                            let sig_ty =
-                                                enum_ty.variant(variant_idx.as_usize());
-                                            let struct_ty = sig_ty
-                                                .opt_struct_ty()
-                                                .ok_or_else(|| {
-                                                    SpanError::new(
-                                                        SpanErrorKind::ExpectedStructType,
-                                                        span,
-                                                    )
-                                                })?;
+                                            let ty = enum_ty.by_variant_idx(variant_idx);
 
-                                            Some(self.make_struct_group(
-                                                struct_ty,
-                                                fields,
-                                                |generator, field| {
-                                                    Ok(generator
-                                                        .visit_operand(field, ctx, span)?
-                                                        .item_id())
-                                                },
-                                            )?)
+                                            Some(self.mk_struct(ty, fields, ctx, span)?)
                                         };
 
-                                        Some(
-                                            self.enum_variant_to_bitvec(
-                                                ctx.module_id,
-                                                enum_ty,
-                                                variant_idx.as_usize(),
-                                                data_part,
-                                            )
-                                            .into(),
-                                        )
+                                        Some(self.enum_variant_to_bitvec(
+                                            ctx.module_id,
+                                            data_part,
+                                            ty,
+                                            variant_idx,
+                                            &ctx.locals,
+                                        ))
                                     }
+
                                     _ => None,
                                 }
                             }
                             AggregateKind::Closure(closure_did, closure_generics) => {
-                                Some(
-                                    self.visit_closure(
-                                        *closure_did,
-                                        closure_generics,
-                                        fields,
-                                        ctx,
-                                        span,
-                                    )?
-                                    .into(),
-                                )
+                                Some(self.visit_closure(
+                                    *closure_did,
+                                    closure_generics,
+                                    fields,
+                                    ctx,
+                                    span,
+                                )?)
                             }
                             _ => None,
                         },
                         _ => None,
                     };
 
-                    let mod_or_item = mod_or_item.ok_or_else(|| {
+                    let item = item.ok_or_else(|| {
                         println!("assign ({}): {rvalue:#?}", dump_rvalue_kind(rvalue));
                         SpanError::new(SpanErrorKind::NotSynthExpr, span)
                     })?;
 
-                    self.assign(assign.0.local, mod_or_item, ctx)?;
+                    self.assign(assign.0.local, &item, ctx)?;
                 }
                 _ => {
                     println!("statement: {statement:#?}");
@@ -440,10 +382,10 @@ impl<'tcx> Generator<'tcx> {
                 let ty = ctx.instantiate(self.tcx, const_.ty());
 
                 if let TyKind::FnDef(fn_did, fn_generics) = ty.kind() {
-                    let item_id =
+                    let item =
                         self.resolve_fn_call(*fn_did, fn_generics, args, ctx, *fn_span)?;
 
-                    self.assign(destination.local, item_id.into(), ctx)?;
+                    self.assign(destination.local, &item, ctx)?;
                 } else {
                     println!("terminator: {terminator:#?}");
                     return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
@@ -456,7 +398,7 @@ impl<'tcx> Generator<'tcx> {
             | TerminatorKind::Goto { target }
             | TerminatorKind::Assert { target, .. } => Some(*target),
             TerminatorKind::SwitchInt { discr, targets } => {
-                let discr = self.visit_operand(discr, ctx, span)?.item_id();
+                let discr = self.visit_operand(discr, ctx, span)?;
                 let target_blocks = targets.all_targets();
 
                 let convergent_block = ctx
@@ -501,58 +443,57 @@ impl<'tcx> Generator<'tcx> {
 
                     let width = switch.width;
 
-                    let discr = switch.discr;
-                    let discr = match self.item_ty(switch.discr).kind {
-                        SignalTyKind::Enum(enum_ty) => {
-                            let discr_width = enum_ty.discr_width();
-                            let ty = NodeTy::BitVec(discr_width.into());
-                            let discr = self.to_bitvec(mod_id, discr);
+                    let discr = match switch.discr.ty.kind() {
+                        ItemTyKind::Enum(enum_ty) => {
+                            let discr_ty = enum_ty.discr_ty();
+                            let discr =
+                                self.to_bitvec(mod_id, &switch.discr, &ctx.locals);
 
-                            self.netlist.add_and_get_out(
-                                mod_id,
-                                Splitter::new(discr, [(ty, None)], None, true),
+                            Item::new(
+                                discr_ty,
+                                self.netlist.add_and_get_out(
+                                    mod_id,
+                                    Splitter::new(
+                                        discr.node_out_id(),
+                                        [(discr_ty.node_ty(), None)],
+                                        None,
+                                        true,
+                                    ),
+                                ),
                             )
                         }
-                        _ => self.to_bitvec(mod_id, discr),
+                        _ => self.to_bitvec(mod_id, &switch.discr, &ctx.locals),
                     };
+                    let discr = discr.node_out_id();
 
-                    let output_ty =
-                        self.make_tuple_ty(&switch.locals, |generator, local| {
-                            let ty = mir.local_decls[*local].ty;
-                            let span = mir.local_decls[*local].source_info.span;
-                            let sig_ty = generator.find_sig_ty(ty, ctx, span)?;
-
-                            Ok(sig_ty)
-                        })?;
+                    let output_ty = Ty::new_tup_from_iter(
+                        self.tcx,
+                        switch.locals.iter().map(|local| mir.local_decls[*local].ty),
+                    );
+                    let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
 
                     let default = switch.otherwise().map(|otherwise| {
-                        let otherwise = otherwise.values();
-                        let item_id = self
-                            .make_struct_group(output_ty, otherwise, |_, item_id| {
-                                Ok(*item_id)
-                            })
-                            .unwrap();
+                        let item =
+                            Item::new(output_ty, Group::new(otherwise.values().cloned()));
 
-                        self.to_bitvec(mod_id, item_id)
+                        self.to_bitvec(mod_id, &item, &ctx.locals).node_out_id()
                     });
 
                     let inputs = switch.variants().map(|variant| {
                         let mut mask = BitVecMask::default();
                         mask.set_val(variant.value, width);
 
-                        let item_id = self
-                            .make_struct_group(
-                                output_ty,
-                                variant.locals.values(),
-                                |_, item_id| Ok(*item_id),
-                            )
-                            .unwrap();
-                        let node_out_id = self.to_bitvec(mod_id, item_id);
+                        let item = Item::new(
+                            output_ty,
+                            Group::new(variant.locals.values().cloned()),
+                        );
+
+                        let node_out_id =
+                            self.to_bitvec(mod_id, &item, &ctx.locals).node_out_id();
 
                         (mask, node_out_id)
                     });
 
-                    let output_ty = SignalTy::new(output_ty.into());
                     let case = Case::new(
                         output_ty.to_bitvec(),
                         discr,
@@ -563,8 +504,10 @@ impl<'tcx> Generator<'tcx> {
                     let case = self.netlist.add_and_get_out(mod_id, case);
                     let case = self.from_bitvec(mod_id, case, output_ty);
 
-                    for (local, item_id) in switch.locals.iter().zip(case.item_ids()) {
-                        self.assign(*local, item_id.into(), ctx)?;
+                    for (local, item) in
+                        switch.locals.iter().zip(case.group().items().iter())
+                    {
+                        self.assign(*local, item, ctx)?;
                     }
                 }
 
@@ -582,18 +525,35 @@ impl<'tcx> Generator<'tcx> {
     fn assign(
         &mut self,
         local: Local,
-        mod_or_item: ModuleOrItem,
+        item: &Item<'tcx>,
         ctx: &mut EvalContext<'tcx>,
     ) -> Result<(), Error> {
         match ctx.last_switch() {
             Some(switch) if switch.contains(local) => {
-                switch.add_variant_item_id(local, mod_or_item.item_id());
+                switch.add_variant_item(local, item.clone());
             }
             _ => {
-                ctx.add_local(local, mod_or_item);
+                ctx.locals.place(local, item.clone());
             }
         }
         Ok(())
+    }
+
+    fn mk_struct(
+        &mut self,
+        item_ty: ItemTy<'tcx>,
+        fields: &IndexVec<FieldIdx, Operand<'tcx>>,
+        ctx: &mut EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        Ok(Item::new(
+            item_ty,
+            Group::try_new(
+                fields
+                    .iter()
+                    .map(|field| self.visit_operand(field, ctx, span)),
+            )?,
+        ))
     }
 
     fn visit_operand(
@@ -601,16 +561,10 @@ impl<'tcx> Generator<'tcx> {
         operand: &Operand<'tcx>,
         ctx: &mut EvalContext<'tcx>,
         span: Span,
-    ) -> Result<ModuleOrItem, Error> {
+    ) -> Result<Item<'tcx>, Error> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
-                let local = ctx.find_local(place.local, span)?;
-                match local {
-                    ModuleOrItem::Module(mod_id) => Ok(mod_id.into()),
-                    ModuleOrItem::Item(item_id) => {
-                        self.visit_place(place, item_id, ctx, span).map(Into::into)
-                    }
-                }
+                self.visit_place(place, ctx, span)
             }
             Operand::Constant(value) => {
                 let span = value.span;
@@ -622,54 +576,30 @@ impl<'tcx> Generator<'tcx> {
                             .try_eval_scalar_int(self.tcx, ParamEnv::reveal_all())
                             .and_then(utils::eval_scalar_int)
                         {
-                            let sig_ty =
-                                self.find_sig_ty(const_.ty(), ctx, span)?.node_ty();
-
-                            return Ok(ItemId::from(self.netlist.const_val(
-                                ctx.module_id,
-                                sig_ty,
-                                value,
-                            ))
-                            .into());
+                            return self.mk_const(const_.ty(), value, ctx, span);
                         }
                     }
                     Const::Val(const_value, ty) => match const_value {
                         ConstValue::Scalar(scalar) => {
                             if let Some(value) = utils::eval_scalar(scalar) {
-                                let ty = ctx.instantiate(self.tcx, ty);
-                                let sig_ty = self.find_sig_ty(ty, ctx, span)?.node_ty();
-
-                                return Ok(ItemId::from(self.netlist.const_val(
-                                    ctx.module_id,
-                                    sig_ty,
-                                    value,
-                                ))
-                                .into());
+                                return self.mk_const(ty, value, ctx, span);
                             }
                         }
                         ConstValue::ZeroSized => {
-                            if let Some(item_id) = ctx.find_const(&value.const_) {
-                                return Ok(item_id.into());
+                            if let Some(item) = ctx.find_const(&value.const_) {
+                                return Ok(item.clone());
                             }
 
                             if let TyKind::Closure(closure_did, closure_generics) =
                                 ty.kind()
                             {
-                                let closure_args = ClosureArgs {
-                                    args: closure_generics,
-                                };
-
-                                if closure_args.upvar_tys().is_empty() {
-                                    return Ok(self
-                                        .visit_closure(
-                                            *closure_did,
-                                            closure_generics,
-                                            &IndexVec::new(),
-                                            ctx,
-                                            span,
-                                        )?
-                                        .into());
-                                }
+                                return self.visit_closure(
+                                    *closure_did,
+                                    closure_generics,
+                                    &IndexVec::new(),
+                                    ctx,
+                                    span,
+                                );
                             }
                         }
                         _ => {}
@@ -679,31 +609,21 @@ impl<'tcx> Generator<'tcx> {
                         if let Some(value) =
                             utils::resolve_unevaluated(self.tcx, unevaluated)
                         {
-                            let ty = ctx.instantiate(self.tcx, ty);
-                            let sig_ty = self.find_sig_ty(ty, ctx, span)?.to_bitvec();
-
-                            return Ok(ItemId::from(self.netlist.const_val(
-                                ctx.module_id,
-                                sig_ty,
-                                value,
-                            ))
-                            .into());
+                            return self.mk_const(ty, value, ctx, span);
                         }
 
                         if let Some(promoted) = unevaluated.promoted {
-                            let output_ty = self.find_sig_ty(ty, ctx, span)?;
+                            let output_ty =
+                                self.resolve_ty(ty, ctx.generic_args, span)?;
                             let fn_args = ctx.instantiate(self.tcx, unevaluated.args);
 
-                            let module_id = self.visit_fn_mir(
-                                (ctx.fn_did, promoted),
-                                fn_args,
-                                false,
-                            )?;
+                            let module_id =
+                                self.visit_fn((ctx.fn_did, promoted), fn_args, false)?;
 
                             let module =
                                 self.instantiate_module(module_id, iter::empty(), ctx);
 
-                            return Ok(self.combine_outputs(module, output_ty).into());
+                            return Ok(self.combine_outputs(module, output_ty));
                         }
                     }
                 }
@@ -714,43 +634,62 @@ impl<'tcx> Generator<'tcx> {
         }
     }
 
-    pub fn visit_place(
+    fn mk_const(
         &mut self,
-        place: &Place,
-        mut item_id: ItemId,
+        ty: Ty<'tcx>,
+        value: u128,
         ctx: &EvalContext<'tcx>,
         span: Span,
-    ) -> Result<ItemId, Error> {
+    ) -> Result<Item<'tcx>, Error> {
+        let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
+
+        Ok(Item::new(
+            ty,
+            self.netlist.const_val(ctx.module_id, ty.to_bitvec(), value),
+        ))
+    }
+
+    pub fn visit_place(
+        &mut self,
+        place: &Place<'tcx>,
+        ctx: &EvalContext<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        let mut item = ctx.locals.get(place.local).clone();
+        let ty = place.ty(&ctx.mir.local_decls, self.tcx).ty;
+        let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
+
         for place_elem in place.projection {
-            item_id = match place_elem {
+            item = match place_elem {
                 PlaceElem::ConstantIndex {
                     offset, from_end, ..
                 } => {
-                    let array_ty = self.item_ty(item_id).array_ty();
+                    let array_ty = item_ty.array_ty();
                     let count = array_ty.count() as u64;
                     let offset = if from_end { count - offset } else { offset };
 
-                    item_id.group().by_idx(offset as usize)
+                    item.by_idx(offset as usize).clone()
                 }
-                PlaceElem::Deref | PlaceElem::Subtype(_) => item_id,
+                PlaceElem::Deref => item.deref(&ctx.locals).clone(),
+                PlaceElem::Subtype(_) => item,
                 PlaceElem::Field(idx, _) => {
                     if ctx.is_checked(place.local) {
-                        item_id
+                        item
                     } else {
-                        item_id.group().by_idx(idx.as_usize())
+                        item.by_field_idx(idx).clone()
                     }
                 }
                 PlaceElem::Downcast(_, variant_idx) => {
                     let mod_id = ctx.module_id;
 
-                    let enum_ty = self.item_ty(item_id).enum_ty();
-                    let variant = self.to_bitvec(mod_id, item_id);
+                    let enum_ty = item_ty.enum_ty();
+                    let variant = self.to_bitvec(mod_id, &item, &ctx.locals);
 
                     self.enum_variant_from_bitvec(
                         mod_id,
-                        variant,
+                        variant.node_out_id(),
                         enum_ty,
-                        variant_idx.as_usize(),
+                        variant_idx,
                     )
                 }
                 _ => {
@@ -760,7 +699,7 @@ impl<'tcx> Generator<'tcx> {
             }
         }
 
-        Ok(item_id)
+        Ok(item)
     }
 
     fn find_common_locals(
@@ -823,7 +762,7 @@ impl<'tcx> Generator<'tcx> {
         args: &[Operand<'tcx>],
         ctx: &mut EvalContext<'tcx>,
         span: Span,
-    ) -> Result<ItemId, Error> {
+    ) -> Result<Item<'tcx>, Error> {
         let fn_did = fn_did.into();
         let fn_generics = ctx.instantiate(self.tcx, fn_generics);
 
@@ -853,29 +792,21 @@ impl<'tcx> Generator<'tcx> {
             .map(|arg| self.visit_operand(arg, ctx, span))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let output_ty =
-            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
+        let output_ty = self.fn_output(fn_did, fn_generics, span)?;
 
-        if self.is_local_def_id(instance_did)
-            || self.is_synth(instance_did)
-            || self.is_synth(fn_did)
+        if instance_did.is_local() || self.is_synth(instance_did) || self.is_synth(fn_did)
         {
             let mono_item = MonoItem::new(fn_did, fn_generics);
 
             #[allow(clippy::map_entry)]
             if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id =
-                    self.visit_fn_mir(instance_did, instance_generics, false)?;
+                let module_id = self.visit_fn(instance_did, instance_generics, false)?;
 
                 self.evaluated_modules.insert(mono_item, module_id);
             }
             let module_id = *self.evaluated_modules.get(&mono_item).unwrap();
 
-            let module = self.instantiate_module(
-                module_id,
-                args.into_iter().map(ModuleOrItem::item_id),
-                ctx,
-            );
+            let module = self.instantiate_module(module_id, args.iter(), ctx);
 
             Ok(self.combine_outputs(module, output_ty))
         } else {
@@ -904,59 +835,52 @@ impl<'tcx> Generator<'tcx> {
         captures: &IndexVec<FieldIdx, Operand<'tcx>>,
         ctx: &mut EvalContext<'tcx>,
         span: Span,
-    ) -> Result<ModuleId, Error> {
+    ) -> Result<Item<'tcx>, Error> {
         let closure_generics = ctx.instantiate(self.tcx, closure_generics);
+        let closure_ty = self.type_of(closure_did, closure_generics);
+        let closure_ty = self.resolve_ty(closure_ty, List::empty(), span)?;
+
+        let closure = self.mk_struct(closure_ty, captures, ctx, span)?;
+
+        let closure_id = self.visit_fn(closure_did, closure_generics, false)?;
+        self.netlist[closure_id].is_inlined = true;
+
         let closure_args = ClosureArgs {
             args: closure_generics,
         };
-        let output_ty =
-            self.find_sig_ty(closure_args.sig().skip_binder().output(), ctx, span)?;
-        let closure_id = self.visit_fn_mir(closure_did, closure_generics, false)?;
-        self.netlist[closure_id].is_inlined = true;
-        let closure = Closure {
-            upvars: captures.clone(),
+        let output_ty = self.resolve_ty(
+            closure_args.sig().skip_binder().output(),
+            List::empty(),
+            span,
+        )?;
+        ctx.add_closure(closure_ty, Closure {
+            closure_id,
             output_ty,
-        };
+        });
 
-        ctx.add_closure(closure_id, closure);
-
-        Ok(closure_id)
+        Ok(closure)
     }
 
-    pub fn instantiate_closure_(
+    #[allow(dead_code)]
+    pub fn instantiate_closure(
         &mut self,
-        closure_id: ModuleId,
-        inputs: &[ItemId],
+        closure: &Item<'tcx>,
+        inputs: &[Item<'tcx>],
         ctx: &mut EvalContext<'tcx>,
         span: Span,
-    ) -> Result<ItemId, Error> {
-        let closure = ctx.find_closure(closure_id, span)?;
-        let upvars = closure
-            .upvars
-            .iter()
-            .map(|upvar| {
-                self.visit_operand(upvar, ctx, span)
-                    .map(ModuleOrItem::item_id)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let upvars_ty = self
-            .make_tuple_ty(upvars.iter(), |generator, upvar| {
-                Ok(generator.item_ty(*upvar))
-            })
-            .unwrap();
-
-        let upvars = self
-            .make_struct_group(upvars_ty, upvars, |_, upvar| Ok(upvar))
-            .unwrap();
+    ) -> Result<Item<'tcx>, Error> {
+        let Closure {
+            closure_id,
+            output_ty,
+        } = ctx.find_closure(closure.ty, span)?;
 
         let module = self.instantiate_module(
-            closure_id,
-            iter::once(upvars).chain(inputs.iter().copied()),
+            *closure_id,
+            iter::once(closure).chain(inputs.iter()),
             ctx,
         );
         let mut outputs = CombineOutputs::new(self, module);
-        Ok(outputs.next_output(self, closure.output_ty))
+        Ok(outputs.next_output(*output_ty))
     }
 }
 

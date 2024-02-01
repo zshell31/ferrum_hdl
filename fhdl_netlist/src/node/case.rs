@@ -1,17 +1,14 @@
 use std::fmt::Debug;
 
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     bvm::BitVecMask,
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct Case {
     inputs: Vec<NodeOutIdx>,
     masks: Vec<BitVecMask>,
@@ -90,17 +87,6 @@ impl WithId<ModuleId, &'_ Case> {
     }
 }
 
-impl<R: Resolver> Resolve<R> for Case {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            inputs: self.inputs.clone(),
-            masks: self.masks.resolve(resolver)?,
-            is_default: self.is_default,
-            output: self.output.resolve(resolver)?,
-        })
-    }
-}
-
 impl From<Case> for NodeKind {
     fn from(node: Case) -> Self {
         Self::Case(node)
@@ -131,7 +117,7 @@ impl IsNode for Case {
         let node = WithId::<ModuleId, _>::new(module_id, self);
         let CaseInputs { variant_inputs, .. } = node.inputs();
         for input in variant_inputs {
-            assert_width!(self.output.width(), net_list[input].width());
+            assert_eq!(self.output.width(), net_list[input].width());
         }
     }
 }

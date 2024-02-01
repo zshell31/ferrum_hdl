@@ -9,13 +9,11 @@ mod mod_inst;
 mod mux2;
 mod not;
 mod splitter;
-mod temp_node;
 mod zero_extend;
 
 use std::mem;
 
 use auto_enums::auto_enum;
-use rustc_macros::{Decodable, Encodable};
 
 pub(crate) use self::cons::MultiConst;
 pub use self::{
@@ -30,7 +28,6 @@ pub use self::{
     mux2::{Mux2, Mux2Inputs},
     not::Not,
     splitter::{Indices, Splitter},
-    temp_node::TemplateNode,
     zero_extend::ZeroExtend,
 };
 use crate::{
@@ -39,18 +36,17 @@ use crate::{
         list::ListItem, Idx, InOut, ModuleId, NetList, NodeId, NodeIdx, NodeInId,
         NodeOutId, NodeOutIdx, WithId,
     },
-    resolver::{Resolve, Resolver},
-    sig_ty::{NodeTy, Width},
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub enum NetKind {
     Wire,
     Reg(Option<usize>),
 }
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub struct NodeOutput {
     pub ty: NodeTy,
     pub kind: NetKind,
@@ -81,21 +77,12 @@ impl NodeOutput {
 
 impl NodeOutput {
     #[inline]
-    pub fn width(&self) -> Width {
+    pub fn width(&self) -> u128 {
         self.ty.width()
     }
 }
 
-impl<R: Resolver> Resolve<R> for NodeOutput {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            ty: self.ty.resolve(resolver)?,
-            ..*self
-        })
-    }
-}
-
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct Node {
     pub is_skip: bool,
     pub inject: bool,
@@ -141,13 +128,6 @@ impl Node {
             next: None,
             prev: None,
         }
-    }
-
-    pub fn resolve_kind<R: Resolver>(
-        &self,
-        resolver: &mut R,
-    ) -> Result<NodeKind, R::Error> {
-        self.kind.resolve(resolver)
     }
 
     pub fn kind(&self) -> NodeKindWithId<'_> {
@@ -279,9 +259,6 @@ impl Node {
     }
 
     pub fn only_one_out(&self) -> WithId<NodeOutId, &NodeOutput> {
-        if !self.is_temp_node() {
-            assert_eq!(self.outputs_len(), 1);
-        }
         self.output_by_ind(0)
     }
 
@@ -318,18 +295,9 @@ impl Node {
                 println!("{}start = {:?}", tab, splitter.start(),);
             }
             NodeKindWithId::Const(cons) => {
-                if let (Some(value), Some(width)) =
-                    (cons.value().opt_value(), cons.output().width().opt_value())
-                {
-                    println!("{}const = {}", tab, ConstVal::new(value, width));
-                } else {
-                    println!(
-                        "{}const = {} (width = {})",
-                        tab,
-                        cons.value(),
-                        cons.output().width()
-                    );
-                }
+                let value = cons.value();
+                let width = cons.output().width();
+                println!("{}const = {}", tab, ConstVal::new(value, width));
             }
             _ => {}
         }
@@ -391,10 +359,6 @@ impl Node {
     pub fn is_mod_inst(&self) -> bool {
         matches!(&self.kind, NodeKind::ModInst(_))
     }
-
-    pub fn is_temp_node(&self) -> bool {
-        matches!(&self.kind, NodeKind::TemplateNode(_))
-    }
 }
 
 pub trait IsNode: Into<NodeKind> {
@@ -416,7 +380,7 @@ macro_rules! define_nodes {
     (
         $( $kind:ident => $node:ident ),+ $(,)?
     ) => {
-        #[derive(Debug, Clone, Encodable, Decodable)]
+        #[derive(Debug, Clone)]
         pub enum NodeKind {
             $(
                 $kind($node),
@@ -608,16 +572,6 @@ macro_rules! define_nodes {
             }
         }
 
-        impl<R: Resolver> Resolve<R> for NodeKind {
-            fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-                Ok(match self {
-                    $(
-                        Self::$kind(kind) => Self::$kind(kind.resolve(resolver)?),
-                    )+
-                })
-            }
-        }
-
     };
 }
 
@@ -638,24 +592,6 @@ define_nodes!(
     Not => Not,
     Mux2 => Mux2,
     DFF => DFF,
-    TemplateNode => TemplateNode,
 );
 
 impl NodeKind {}
-
-macro_rules! assert_opt {
-    ($lhs:expr, $rhs:expr) => {
-        if let (Some(lhs), Some(rhs)) = ($lhs, $rhs) {
-            assert_eq!(lhs, rhs);
-        }
-    };
-}
-use assert_opt;
-
-macro_rules! assert_width {
-    ($lhs:expr, $rhs:expr) => {
-        crate::node::assert_opt!($lhs.opt_value(), $rhs.opt_value());
-    };
-}
-
-use assert_width;

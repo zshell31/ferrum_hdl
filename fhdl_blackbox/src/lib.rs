@@ -1,12 +1,3 @@
-#![cfg_attr(feature = "encoding", feature(rustc_private))]
-
-#[cfg(feature = "encoding")]
-extern crate rustc_macros;
-#[cfg(feature = "encoding")]
-extern crate rustc_serialize;
-
-#[cfg(feature = "encoding")]
-use rustc_macros::{Decodable, Encodable};
 use strum::{Display, EnumString};
 
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
@@ -49,17 +40,13 @@ pub enum BlackboxKind {
     OpShr,
 
     CastFrom,
-    Cast,
 
     Index,
 
-    SignalAnd,
     SignalAndThen,
     SignalApply2,
-    SignalEq,
     SignalLift,
     SignalMap,
-    SignalOr,
     SignalReg,
     SignalRegEn,
     SignalValue,
@@ -70,18 +57,7 @@ pub enum BlackboxKind {
     StdClone,
 }
 
-impl BlackboxKind {
-    pub fn is_cast(&self) -> Option<bool> {
-        match self {
-            Self::CastFrom => Some(true),
-            Self::Cast => Some(false),
-            _ => None,
-        }
-    }
-}
-
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "encoding", derive(Encodable, Decodable))]
 pub enum BlackboxTy {
     Signal,
     Wrapped,
@@ -90,7 +66,6 @@ pub enum BlackboxTy {
     Clock,
     Unsigned,
     UnsignedShort,
-    Array,
 }
 
 impl BlackboxTy {

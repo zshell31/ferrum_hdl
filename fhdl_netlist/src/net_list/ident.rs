@@ -4,10 +4,6 @@ use std::{
     ops::{Add, AddAssign},
 };
 
-use rustc_macros::{Decodable, Encodable};
-
-use crate::resolver::{Resolve, Resolver};
-
 pub trait Idx: Debug + Default + Copy + Eq + Hash + 'static {
     fn new(idx: usize) -> Self;
 
@@ -31,7 +27,7 @@ impl Idx for u32 {
 
 macro_rules! idx_type {
     ($name:ident) => {
-        #[derive(Default, Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+        #[derive(Default, Clone, Copy, PartialEq, Eq, Hash)]
         #[repr(transparent)]
         pub struct $name(u32);
 
@@ -86,7 +82,7 @@ macro_rules! idx_type {
 
 macro_rules! composite_type {
     ($name:ident($get_base:ident => $base:ty, $get_idx:ident $( => $idx:ty )? )) => {
-        #[derive(Clone, Copy, PartialEq, Eq, Hash, Encodable, Decodable)]
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name($base, u32);
 
         impl Debug for $name {
@@ -206,13 +202,6 @@ impl Add<usize> for NodeOutId {
     fn add(self, rhs: usize) -> Self::Output {
         let (node_id, idx) = self.split();
         Self::combine(node_id + rhs, idx)
-    }
-}
-
-impl<R: Resolver> Resolve<R> for NodeOutId {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        let module_id = resolver.resolve_module_id(self.node_id().module_id())?;
-        Ok(self.with_module_id(module_id))
     }
 }
 

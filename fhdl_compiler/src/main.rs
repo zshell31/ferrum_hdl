@@ -156,7 +156,8 @@ fn main() {
                 }
                 _ => true,
             };
-        let run_fhdl = !normal_rustc && is_target_crate;
+        let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
+        let run_fhdl = !normal_rustc && is_primary && is_target_crate;
 
         if run_fhdl {
             let mut callbacks = CompilerCallbacks {};

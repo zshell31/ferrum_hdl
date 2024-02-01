@@ -4,57 +4,7 @@ use bumpalo::{
     collections::{vec::Vec as BumpVec, CollectIn},
     Bump,
 };
-use rustc_serialize::{Decodable, Decoder, Encodable, Encoder};
 use smallvec::SmallVec;
-
-use crate::encoding::Wrap;
-
-pub type ArenaValue<T> = Wrap<&'static T>;
-
-impl<T> ArenaValue<T> {
-    pub fn make_value(value: T) -> Self
-    where
-        T: Copy,
-    {
-        Wrap(unsafe { with_arena().alloc(value) })
-    }
-}
-
-impl<E: Encoder, T: 'static + Encodable<E>> Encodable<E> for ArenaValue<T> {
-    fn encode(&self, s: &mut E) {
-        self.0.encode(s)
-    }
-}
-
-impl<D: Decoder, T: 'static + Decodable<D> + Copy> Decodable<D> for ArenaValue<T> {
-    fn decode(d: &mut D) -> Self {
-        Self::make_value(Decodable::decode(d))
-    }
-}
-
-pub type ArenaSlice<T> = Wrap<&'static [T]>;
-
-impl<T> ArenaSlice<T> {
-    pub fn make_slice(values: impl IntoIterator<Item = T>) -> Self
-    where
-        T: Copy,
-    {
-        Wrap(unsafe { with_arena().alloc_from_iter(values) })
-    }
-}
-
-impl<E: Encoder, T: 'static + Encodable<E>> Encodable<E> for ArenaSlice<T> {
-    fn encode(&self, s: &mut E) {
-        self.0.encode(s)
-    }
-}
-
-impl<D: Decoder, T: 'static + Decodable<D> + Copy> Decodable<D> for ArenaSlice<T> {
-    fn decode(d: &mut D) -> Self {
-        let len = d.read_usize();
-        Self::make_slice((0 .. len).map(|_| Decodable::decode(d)))
-    }
-}
 
 #[derive(Default)]
 pub struct Arena(Bump);

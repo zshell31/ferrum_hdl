@@ -1,54 +1,39 @@
-pub mod adt;
-// pub mod arg_matcher;
+pub mod arena;
 pub mod attr;
-pub mod bitvec;
-pub mod closure;
-pub mod expr;
 pub mod func;
-pub mod generic;
-pub mod metadata;
+pub mod item;
+pub mod item_ty;
+pub mod locals;
 pub mod mir;
-pub mod pattern_match;
-pub mod temp_nodes;
-pub mod ty_or_def_id;
 
 use std::{
-    env, error::Error as StdError, fmt::Display, fs, io, path::Path as StdPath, rc::Rc,
+    env, error::Error as StdError, fmt::Display, fs, io, mem::transmute,
+    path::Path as StdPath,
 };
 
+use bumpalo::Bump;
 use cargo_toml::Manifest;
-use fhdl_blackbox::{BlackboxKind, BlackboxTy};
+use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
-    net_list::{ModuleId, NetList},
-    sig_ty::SignalTy,
+    net_list::{ModuleId, NetList, NodeOutId},
+    node::{Splitter, ZeroExtend},
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
-    def_id::{DefId, LocalDefId, LOCAL_CRATE},
-    Expr, HirId, ItemId as HirItemId, ItemKind, Ty as HirTy,
+    def_id::{DefId, LOCAL_CRATE},
+    ItemId as HirItemId, ItemKind,
 };
-use rustc_hir_analysis::{astconv::AstConv, collect::ItemCtxt};
 use rustc_interface::{interface::Compiler, Queries};
-use rustc_middle::{
-    mir::UnevaluatedConst,
-    ty::{GenericArgs, GenericArgsRef, ParamEnv, Ty, TyCtxt},
-};
-use rustc_span::{def_id::CrateNum, Span};
+use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
+use rustc_span::def_id::CrateNum;
 use serde::Deserialize;
 
-use self::{
-    closure::Closure, generic::Generics, metadata::Metadata,
-    ty_or_def_id::TyOrDefIdWithGen,
-};
-use crate::{
-    error::{Error, SpanError, SpanErrorKind},
-    eval_context::EvalContext,
-    scopes::Scopes,
-    utils,
-};
+use self::item_ty::ItemTy;
+use crate::error::{Error, SpanError};
 
 pub struct CompilerCallbacks {}
 
@@ -69,7 +54,11 @@ impl Callbacks for CompilerCallbacks {
             };
 
             if should_be_synthesized {
-                match init_generator(tcx, is_primary) {
+                let arena = Bump::new();
+                // SAFETY: the lifetime of the generator is shorter than the lifetime of the arena.
+                let arena = unsafe { transmute::<&'_ Bump, &'tcx Bump>(&arena) };
+
+                match init_generator(tcx, is_primary, arena) {
                     Ok(mut generator) => {
                         generator.generate();
                         true
@@ -132,15 +121,15 @@ fn should_be_synthesized(is_primary: bool) -> Result<bool, Box<dyn StdError>> {
     }
 }
 
-fn init_generator(tcx: TyCtxt<'_>, is_primary: bool) -> Result<Generator, Error> {
-    let top_module = if is_primary {
-        Some(find_top_module(tcx)?)
-    } else {
-        None
-    };
+fn init_generator<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    is_primary: bool,
+    arena: &'tcx Bump,
+) -> Result<Generator<'tcx>, Error> {
+    let top_module = find_top_module(tcx)?;
     let crates = Crates::find_crates(tcx, is_primary)?;
 
-    Ok(Generator::new(tcx, is_primary, top_module, crates))
+    Ok(Generator::new(tcx, top_module, crates, arena))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -155,11 +144,6 @@ fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
     }
 
     Err(Error::MissingTopModule)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum TraitKind {
-    From,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -233,16 +217,6 @@ impl Crates {
     pub(crate) fn is_ferrum_hdl(&self, def_id: DefId) -> bool {
         def_id.krate == self.ferrum_hdl
     }
-
-    pub(crate) fn is_ferrum_hdl_local(&self) -> bool {
-        self.ferrum_hdl == LOCAL_CRATE
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SigTyInfo<'tcx> {
-    pub sig_ty: SignalTy,
-    pub ty_or_def_id: TyOrDefIdWithGen<'tcx>,
 }
 
 pub struct Settings {
@@ -260,44 +234,32 @@ impl Settings {
 pub struct Generator<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub netlist: NetList,
-    pub idents: Scopes,
     pub settings: Settings,
-    is_primary: bool,
-    top_module: Option<HirItemId>,
+    arena: &'tcx Bump,
+    top_module: HirItemId,
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
-    sig_ty: FxHashMap<TyOrDefIdWithGen<'tcx>, Option<SigTyInfo<'tcx>>>,
-    blackbox_ty: FxHashMap<SignalTy, BlackboxTy>,
-    local_trait_impls: FxHashMap<TraitKind, (DefId, DefId)>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
-    metadata: Metadata<'tcx>,
-    loaded_metadata: FxHashMap<CrateNum, Rc<Metadata<'tcx>>>,
-    closures: FxHashMap<ModuleId, Closure>,
+    item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
 }
 
 impl<'tcx> Generator<'tcx> {
     fn new(
         tcx: TyCtxt<'tcx>,
-        is_primary: bool,
-        top_module: Option<HirItemId>,
+        top_module: HirItemId,
         crates: Crates,
+        arena: &'tcx Bump,
     ) -> Self {
         Self {
             tcx,
             netlist: NetList::new(),
-            idents: Scopes::new(),
             settings: Settings::new(),
+            arena,
             top_module,
-            is_primary,
             crates,
             blackbox: Default::default(),
-            sig_ty: Default::default(),
-            blackbox_ty: Default::default(),
-            local_trait_impls: Default::default(),
             evaluated_modules: Default::default(),
-            metadata: Default::default(),
-            loaded_metadata: Default::default(),
-            closures: Default::default(),
+            item_ty: Default::default(),
         }
     }
 
@@ -328,14 +290,11 @@ impl<'tcx> Generator<'tcx> {
             )),
         )?;
 
-        let top_module = self.top_module.unwrap();
-        self.visit_fn_mir(
-            DefId::from(top_module.hir_id().owner),
+        self.visit_fn(
+            DefId::from(self.top_module.hir_id().owner),
             GenericArgs::empty(),
             true,
         )?;
-        // let item = self.tcx.hir().item(top_module);
-        // self.eval_fn_item(item, true, GenericArgs::empty())?;
 
         self.netlist.assert();
         self.netlist.transform();
@@ -374,12 +333,6 @@ impl<'tcx> Generator<'tcx> {
         Ok(())
     }
 
-    pub fn find_trait_method(&self, trait_kind: TraitKind) -> Option<DefId> {
-        self.local_trait_impls
-            .get(&trait_kind)
-            .map(|(_, fn_did)| *fn_did)
-    }
-
     fn emit_err(&mut self, err: Error) {
         match err {
             Error::Span(SpanError { kind, span }) => {
@@ -392,95 +345,33 @@ impl<'tcx> Generator<'tcx> {
         self.tcx.sess.abort_if_errors();
     }
 
-    pub fn node_type(&self, hir_id: HirId, ctx: &EvalContext<'tcx>) -> Ty<'tcx> {
-        let owner_id = hir_id.owner;
-        let typeck_res = self.tcx.typeck(owner_id);
-        let ty = typeck_res.node_type(hir_id);
-        ctx.instantiate(self.tcx, ty)
+    pub fn type_of(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> Ty<'tcx> {
+        self.tcx.type_of(def_id).instantiate(self.tcx, generics)
     }
 
-    pub fn subst_with(
-        &self,
-        subst: GenericArgsRef<'tcx>,
-        ctx: &EvalContext<'tcx>,
-    ) -> GenericArgsRef<'tcx> {
-        ctx.instantiate(self.tcx, subst)
-    }
-
-    pub fn ast_ty_to_ty(&self, fn_id: LocalDefId, ty: &HirTy<'tcx>) -> Ty<'tcx> {
-        let item_ctx = &ItemCtxt::new(self.tcx, fn_id);
-        let astconv = item_ctx.astconv();
-        astconv.ast_ty_to_ty(ty)
-    }
-
-    pub fn method_call_generics(
-        &mut self,
-        expr: &Expr<'tcx>,
-        ctx: &EvalContext<'tcx>,
-    ) -> Result<Generics, Error> {
-        let fn_did = self
-            .tcx
-            .typeck(expr.hir_id.owner)
-            .type_dependent_def_id(expr.hir_id)
-            .ok_or_else(|| {
-                SpanError::new(SpanErrorKind::ExpectedMethodCall, expr.span)
-            })?;
-        let generic_args = self.extract_generic_args(expr.hir_id, ctx);
-        let ctx = ctx.with_generic_args(generic_args);
-        let ty = self.type_of(fn_did, &ctx);
-        self.eval_generic_args(ty, &ctx, expr.span)
-    }
-
-    pub fn eval_const_val(
-        &self,
-        def_id: DefId,
-        ctx: &EvalContext<'tcx>,
-        span: Option<Span>,
-    ) -> Option<u128> {
-        let const_val = self
-            .tcx
-            .const_eval_resolve(
-                ParamEnv::reveal_all(),
-                UnevaluatedConst::new(def_id, ctx.generic_args),
-                span,
-            )
-            .ok()?;
-
-        utils::eval_const_val(const_val)
-    }
-
-    pub fn maybe_swap_generic_args_for_conversion(
-        &self,
-        from: bool,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> GenericArgsRef<'tcx> {
-        match from {
-            true => generic_args,
-            // Swap generic args for Cast::<Self>::cast<T>() -> CastFrom::<Self = T, T = Self>
-            false => self.tcx.mk_args(&[generic_args[1], generic_args[0]]),
-        }
-    }
-
-    pub fn type_of(&self, def_id: DefId, ctx: &EvalContext<'tcx>) -> Ty<'tcx> {
-        ctx.instantiate_early_binder(self.tcx, self.tcx.type_of(def_id))
-    }
-
-    pub fn local_def_id<T: Into<DefId>>(&self, def_id: T) -> Option<LocalDefId> {
-        let def_id = def_id.into();
-        let local_def_id = def_id.as_local()?;
-
-        match self.crates.is_ferrum_hdl_local() {
-            false => Some(local_def_id),
-            true if self.is_synth(def_id) => Some(local_def_id),
-            _ => None,
-        }
-    }
-
-    pub fn is_local_def_id<T: Into<DefId>>(&self, def_id: T) -> bool {
-        self.local_def_id(def_id).is_some()
-    }
-
+    #[allow(dead_code)]
     pub fn set_mod_name(&mut self, mod_id: ModuleId, name: &str) {
         self.netlist[mod_id].name = Symbol::new(name);
+    }
+
+    pub fn trunc_or_extend(
+        &mut self,
+        mod_id: ModuleId,
+        from: NodeOutId,
+        from_ty: NodeTy,
+        to_ty: NodeTy,
+    ) -> NodeOutId {
+        let from_width = from_ty.width();
+        let to_width = to_ty.width();
+
+        if from_width >= to_width {
+            self.netlist.add_and_get_out(
+                mod_id,
+                Splitter::new(from, [(to_ty, None)], None, false),
+            )
+        } else {
+            self.netlist
+                .add_and_get_out(mod_id, ZeroExtend::new(to_ty, from, None))
+        }
     }
 }

@@ -1,18 +1,15 @@
-use rustc_macros::{Decodable, Encodable};
 use smallvec::SmallVec;
 
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
-    encoding::Wrap,
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct DFF {
-    inputs: Wrap<SmallVec<[NodeOutIdx; 5]>>,
+    inputs: SmallVec<[NodeOutIdx; 5]>,
     en_idx: u8,
     data_idx: u8,
     output: NodeOutput,
@@ -51,7 +48,7 @@ impl DFF {
         }
 
         Self {
-            inputs: inputs.into(),
+            inputs,
             en_idx,
             data_idx,
             output: NodeOutput::reg(ty, sym.into(), Some(2)),
@@ -95,17 +92,6 @@ impl DFF {
         } else {
             None
         }
-    }
-}
-
-impl<R: Resolver> Resolve<R> for DFF {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            inputs: self.inputs.clone(),
-            en_idx: self.en_idx,
-            data_idx: self.data_idx,
-            output: self.output.resolve(resolver)?,
-        })
     }
 }
 
@@ -157,9 +143,9 @@ impl IsNode for DFF {
         let inputs = node.inputs();
 
         let data = &net_list[inputs.data];
-        assert_width!(self.output.width(), data.width());
+        assert_eq!(self.output.width(), data.width());
 
         let rst_val = &net_list[inputs.rst_val];
-        assert_width!(self.output.width(), rst_val.width());
+        assert_eq!(self.output.width(), rst_val.width());
     }
 }

@@ -1,10 +1,7 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    rc::Rc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 use ferrum_hdl::const_functions::clog2;
-use fhdl_netlist::{group::ItemId, net_list::ModuleId, sig_ty::SignalTy};
+use fhdl_netlist::net_list::ModuleId;
 use petgraph::{
     algo::dominators::{simple_fast, Dominators},
     prelude::NodeIndex,
@@ -16,61 +13,32 @@ use rustc_data_structures::{
     graph::WithSuccessors,
 };
 use rustc_hir::def_id::DefId;
-use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        BasicBlock, BasicBlocks, Body, Const as MirConst, Local, Operand, TerminatorKind,
-        START_BLOCK,
+        BasicBlock, BasicBlocks, Body, Const as MirConst, Local as MirLocal,
+        TerminatorKind, START_BLOCK,
     },
     ty::{EarlyBinder, GenericArgsRef, TyCtxt},
 };
 use rustc_span::Span;
-use rustc_target::abi::FieldIdx;
 use rustc_type_ir::fold::TypeFoldable;
 
-use crate::error::{Error, SpanError, SpanErrorKind};
-
-#[derive(Debug, Clone, Copy)]
-pub enum ModuleOrItem {
-    Module(ModuleId),
-    Item(ItemId),
-}
-
-impl ModuleOrItem {
-    pub fn mod_id(self) -> ModuleId {
-        match self {
-            Self::Module(mod_id) => mod_id,
-            _ => panic!("expected module id, not item id"),
-        }
-    }
-
-    pub fn item_id(self) -> ItemId {
-        match self {
-            Self::Item(item_id) => item_id,
-            _ => panic!("exptected item id, not module id"),
-        }
-    }
-}
-
-impl From<ModuleId> for ModuleOrItem {
-    fn from(mod_id: ModuleId) -> Self {
-        Self::Module(mod_id)
-    }
-}
-
-impl From<ItemId> for ModuleOrItem {
-    fn from(item_id: ItemId) -> Self {
-        Self::Item(item_id)
-    }
-}
+use crate::{
+    error::{Error, SpanError, SpanErrorKind},
+    generator::{
+        item::Item,
+        item_ty::ItemTy,
+        locals::{Local, Locals},
+    },
+};
 
 #[derive(Debug, Clone)]
-pub struct Variant {
+pub struct Variant<'tcx> {
     pub value: u128,
-    pub locals: BTreeMap<Local, ItemId>,
+    pub locals: BTreeMap<MirLocal, Item<'tcx>>,
 }
 
-impl Variant {
+impl<'tcx> Variant<'tcx> {
     fn new(value: u128) -> Self {
         Self {
             value,
@@ -80,18 +48,18 @@ impl Variant {
 }
 
 #[derive(Debug, Clone)]
-pub struct Switch {
-    pub locals: BTreeSet<Local>,
-    pub discr: ItemId,
+pub struct Switch<'tcx> {
+    pub locals: BTreeSet<MirLocal>,
+    pub discr: Item<'tcx>,
     pub width: u128,
     targets: usize,
-    variants: Vec<Variant>,
+    variants: Vec<Variant<'tcx>>,
     is_otherwise: bool,
-    otherwise: Option<BTreeMap<Local, ItemId>>,
+    otherwise: Option<BTreeMap<MirLocal, Item<'tcx>>>,
 }
 
-impl Switch {
-    pub fn new(locals: FxHashSet<Local>, discr: ItemId, targets: usize) -> Self {
+impl<'tcx> Switch<'tcx> {
+    pub fn new(locals: FxHashSet<MirLocal>, discr: Item<'tcx>, targets: usize) -> Self {
         Self {
             locals: locals.into_iter().collect(),
             discr,
@@ -103,7 +71,7 @@ impl Switch {
         }
     }
 
-    pub fn contains(&self, local: Local) -> bool {
+    pub fn contains(&self, local: MirLocal) -> bool {
         self.locals.contains(&local)
     }
 
@@ -121,16 +89,12 @@ impl Switch {
         }
     }
 
-    pub fn add_variant_item_id(&mut self, local: Local, item_id: ItemId) {
+    pub fn add_variant_item(&mut self, local: MirLocal, item: Item<'tcx>) {
         assert!(self.locals.contains(&local));
         if self.is_otherwise {
-            self.otherwise.as_mut().unwrap().insert(local, item_id);
+            self.otherwise.as_mut().unwrap().insert(local, item);
         } else {
-            self.variants
-                .last_mut()
-                .unwrap()
-                .locals
-                .insert(local, item_id);
+            self.variants.last_mut().unwrap().locals.insert(local, item);
         }
     }
 
@@ -138,7 +102,7 @@ impl Switch {
         self.variants.len() + self.otherwise.is_some() as usize
     }
 
-    pub fn variants(&self) -> impl Iterator<Item = &Variant> {
+    pub fn variants(&self) -> impl Iterator<Item = &Variant<'tcx>> {
         assert_eq!(self.targets, self.variants_len());
         self.variants.iter().map(|variant| {
             assert_eq!(self.locals.len(), variant.locals.len());
@@ -149,7 +113,7 @@ impl Switch {
         })
     }
 
-    pub fn otherwise(&self) -> Option<&BTreeMap<Local, ItemId>> {
+    pub fn otherwise(&self) -> Option<&BTreeMap<MirLocal, Item<'tcx>>> {
         let otherwise = self.otherwise.as_ref()?;
         assert_eq!(self.locals.len(), otherwise.len());
         for local in &self.locals {
@@ -162,8 +126,8 @@ impl Switch {
 
 #[derive(Debug, Clone)]
 pub struct Closure<'tcx> {
-    pub upvars: IndexVec<FieldIdx, Operand<'tcx>>,
-    pub output_ty: SignalTy,
+    pub closure_id: ModuleId,
+    pub output_ty: ItemTy<'tcx>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -198,29 +162,27 @@ unsafe impl IndexType for BasicBlockWrap {
 
 #[derive(Debug, Clone)]
 pub struct EvalContext<'tcx> {
-    pub is_primary: bool,
     pub generic_args: GenericArgsRef<'tcx>,
     pub module_id: ModuleId,
-    pub locals: FxHashMap<Local, ModuleOrItem>,
+    pub locals: Locals<'tcx>,
     pub mir: &'tcx Body<'tcx>,
     pub fn_did: DefId,
-    checked: FxHashSet<Local>,
-    consts: FxHashMap<MirConst<'tcx>, ItemId>,
-    switches: Vec<Switch>,
-    closures: FxHashMap<ModuleId, Rc<Closure<'tcx>>>,
+    checked: FxHashSet<MirLocal>,
+    consts: FxHashMap<MirConst<'tcx>, Item<'tcx>>,
+    switches: Vec<Switch<'tcx>>,
+    closures: FxHashMap<ItemTy<'tcx>, Closure<'tcx>>,
     post_dominators: Option<Dominators<NodeIndex<BasicBlockWrap>>>,
+    outputs: Vec<Local>,
 }
 
 impl<'tcx> EvalContext<'tcx> {
     pub fn new(
-        is_primary: bool,
         fn_did: DefId,
         generic_args: GenericArgsRef<'tcx>,
         module_id: ModuleId,
         mir: &'tcx Body<'tcx>,
     ) -> Self {
         Self {
-            is_primary,
             generic_args,
             module_id,
             locals: Default::default(),
@@ -231,6 +193,7 @@ impl<'tcx> EvalContext<'tcx> {
             switches: Default::default(),
             closures: Default::default(),
             post_dominators: None,
+            outputs: Default::default(),
         }
     }
 
@@ -240,105 +203,50 @@ impl<'tcx> EvalContext<'tcx> {
         foldable: T,
     ) -> T {
         let binder = EarlyBinder::bind(foldable);
-        self.instantiate_early_binder(tcx, binder)
-    }
-
-    pub fn instantiate_early_binder<T: TypeFoldable<TyCtxt<'tcx>>>(
-        &self,
-        tcx: TyCtxt<'tcx>,
-        binder: EarlyBinder<T>,
-    ) -> T {
-        if self.is_primary {
-            binder.instantiate(tcx, self.generic_args)
-        } else {
-            binder.instantiate_identity()
-        }
-    }
-
-    pub fn with_generic_args(&self, generic_args: GenericArgsRef<'tcx>) -> Self {
-        Self {
-            is_primary: self.is_primary,
-            generic_args,
-            module_id: self.module_id,
-            mir: self.mir,
-            fn_did: self.fn_did,
-            checked: Default::default(),
-            locals: Default::default(),
-            consts: Default::default(),
-            switches: Default::default(),
-            closures: Default::default(),
-            post_dominators: None,
-        }
-    }
-
-    pub fn with_module_id(&self, module_id: ModuleId) -> Self {
-        Self {
-            is_primary: self.is_primary,
-            generic_args: self.generic_args,
-            module_id,
-            mir: self.mir,
-            fn_did: self.fn_did,
-            checked: Default::default(),
-            locals: Default::default(),
-            consts: Default::default(),
-            switches: Default::default(),
-            closures: Default::default(),
-            post_dominators: None,
-        }
-    }
-
-    pub fn add_local(&mut self, local: Local, mod_or_item: impl Into<ModuleOrItem>) {
-        self.locals.insert(local, mod_or_item.into());
-    }
-
-    pub fn find_local(&self, local: Local, span: Span) -> Result<ModuleOrItem, Error> {
-        self.locals.get(&local).copied().ok_or_else(|| {
-            SpanError::new(SpanErrorKind::MissingLocal(local), span).into()
-        })
+        binder.instantiate(tcx, self.generic_args)
     }
 
     #[inline]
-    pub fn add_checked(&mut self, local: Local) {
+    pub fn add_checked(&mut self, local: MirLocal) {
         self.checked.insert(local);
     }
 
     #[inline]
-    pub fn is_checked(&self, local: Local) -> bool {
+    pub fn is_checked(&self, local: MirLocal) -> bool {
         self.checked.contains(&local)
     }
 
-    pub fn add_const(&mut self, const_: MirConst<'tcx>, item_id: ItemId) {
-        self.consts.insert(const_, item_id);
+    pub fn add_const(&mut self, const_: MirConst<'tcx>, item: Item<'tcx>) {
+        self.consts.insert(const_, item);
     }
 
-    pub fn find_const(&self, const_: &MirConst<'tcx>) -> Option<ItemId> {
-        self.consts.get(const_).copied()
+    pub fn find_const(&self, const_: &MirConst<'tcx>) -> Option<&Item<'tcx>> {
+        self.consts.get(const_)
     }
 
-    pub fn push_switch(&mut self, switch: Switch) {
+    pub fn push_switch(&mut self, switch: Switch<'tcx>) {
         self.switches.push(switch)
     }
 
-    pub fn pop_switch(&mut self) -> Option<Switch> {
+    pub fn pop_switch(&mut self) -> Option<Switch<'tcx>> {
         self.switches.pop()
     }
 
-    pub fn last_switch(&mut self) -> Option<&mut Switch> {
+    pub fn last_switch(&mut self) -> Option<&mut Switch<'tcx>> {
         self.switches.last_mut()
     }
 
-    pub fn add_closure(&mut self, module_id: ModuleId, closure: Closure<'tcx>) {
-        self.closures.insert(module_id, Rc::new(closure));
+    pub fn add_closure(&mut self, closure_ty: ItemTy<'tcx>, closure: Closure<'tcx>) {
+        self.closures.insert(closure_ty, closure);
     }
 
     pub fn find_closure(
         &self,
-        module_id: ModuleId,
+        closure_ty: ItemTy<'tcx>,
         span: Span,
-    ) -> Result<Rc<Closure<'tcx>>, Error> {
+    ) -> Result<&Closure<'tcx>, Error> {
         self.closures
-            .get(&module_id)
-            .cloned()
+            .get(&closure_ty)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span).into())
     }
 
@@ -389,5 +297,14 @@ impl<'tcx> EvalContext<'tcx> {
         }
 
         (root.unwrap(), graph)
+    }
+
+    pub fn add_output(&mut self, output: Local) {
+        self.outputs.push(output);
+    }
+
+    #[allow(dead_code)]
+    pub fn outputs(&self) -> &[Local] {
+        self.outputs.as_slice()
     }
 }

@@ -1,16 +1,13 @@
 use std::fmt::{self, Display};
 
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinOp {
     BitAnd,
     BitOr,
@@ -68,7 +65,7 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct BinOpNode {
     bin_op: BinOp,
     inputs: (NodeOutIdx, NodeOutIdx),
@@ -106,16 +103,6 @@ impl WithId<ModuleId, &'_ BinOpNode> {
 
     pub fn right(&self) -> NodeOutId {
         NodeOutId::make(self.id(), self.inputs.1)
-    }
-}
-
-impl<R: Resolver> Resolve<R> for BinOpNode {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            bin_op: self.bin_op,
-            inputs: self.inputs,
-            output: self.output.resolve(resolver)?,
-        })
     }
 }
 
@@ -163,11 +150,11 @@ impl IsNode for BinOpNode {
             | BinOp::Rem
             | BinOp::Shl
             | BinOp::Shr => {
-                assert_width!(self.output.width(), lhs.width());
-                assert_width!(self.output.width(), rhs.width());
+                assert_eq!(self.output.width(), lhs.width());
+                assert_eq!(self.output.width(), rhs.width());
             }
             BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
-                assert_width!(lhs.width(), rhs.width());
+                assert_eq!(lhs.width(), rhs.width());
             }
         }
     }

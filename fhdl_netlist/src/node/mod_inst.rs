@@ -1,14 +1,11 @@
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct ModInst {
     name: Option<Symbol>,
     module_id: ModuleId,
@@ -80,17 +77,6 @@ impl WithId<ModuleId, &'_ ModInst> {
     }
 }
 
-impl<R: Resolver> Resolve<R> for ModInst {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            name: self.name,
-            module_id: resolver.resolve_module_id(self.module_id)?,
-            inputs: self.inputs.clone(),
-            outputs: self.outputs.resolve(resolver)?,
-        })
-    }
-}
-
 impl From<ModInst> for NodeKind {
     fn from(node: ModInst) -> Self {
         Self::ModInst(node)
@@ -124,7 +110,7 @@ impl IsNode for ModInst {
 
         assert_eq!(self.inputs.len(), module.inputs_len());
         for (input, mod_input) in node.inputs().zip(module.inputs()) {
-            assert_width!(
+            assert_eq!(
                 net_list[input].width(),
                 net_list[mod_input].only_one_out().width()
             );
@@ -132,7 +118,7 @@ impl IsNode for ModInst {
 
         assert_eq!(self.outputs.len(), module.outputs_len());
         for (output, mod_output) in self.outputs().iter().zip(module.outputs()) {
-            assert_width!(output.width(), net_list[mod_output].width());
+            assert_eq!(output.width(), net_list[mod_output].width());
         }
     }
 }

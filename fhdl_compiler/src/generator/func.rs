@@ -1,301 +1,87 @@
-use std::{borrow::Cow, iter};
-
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
-    group::{Group, ItemId},
     net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
-    sig_ty::{NodeTy, SignalTy, SignalTyKind},
-    symbol::Symbol,
 };
-use rustc_ast::{Mutability, UintTy};
-use rustc_hir::{
-    def::Res,
-    def_id::{DefId, LocalDefId},
-    BodyId, Expr, FnDecl, FnSig as HirFnSig, ImplItem, ImplItemKind, Item, ItemKind,
-    MutTy, Param, PrimTy as HirPrimTy, QPath, TraitFn, TraitItem, TraitItemKind,
-    Ty as HirTy, TyKind as HirTyKind,
-};
-use rustc_middle::ty::{FnSig, GenericArgsRef, TyKind};
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::{FnSig, GenericArgsRef};
 use rustc_span::{Span, Symbol as RustSymbol};
-use smallvec::SmallVec;
 
 use super::{
-    expr::ExprOrItemId, metadata::resolver::MetadataResolver, Generator, MonoItem,
+    item::{Group, Item, ItemKind},
+    item_ty::{ItemTy, ItemTyKind},
+    locals::Local,
+    Generator,
 };
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
     eval_context::EvalContext,
-    utils,
 };
 
 impl<'tcx> Generator<'tcx> {
-    pub fn fn_sig(&self, def_id: DefId, ctx: &EvalContext<'tcx>) -> FnSig<'tcx> {
+    pub fn fn_sig(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> FnSig<'tcx> {
         let fn_sig = self.tcx.fn_sig(def_id);
-        ctx.instantiate_early_binder(self.tcx, fn_sig).skip_binder()
+        fn_sig.instantiate(self.tcx, generics).skip_binder()
     }
 
-    pub fn eval_fn_item(
+    pub fn make_input(
         &mut self,
-        item: &Item<'tcx>,
-        top_module: bool,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<ModuleId, Error> {
-        if let ItemKind::Fn(HirFnSig { decl, .. }, _, body_id) = item.kind {
-            return self.eval_fn(
-                item.ident.as_str(),
-                decl,
-                body_id,
-                top_module,
-                generic_args,
-            );
-        }
+        local: impl Into<Local>,
+        ty: ItemTy<'tcx>,
+        ctx: &mut EvalContext<'tcx>,
+    ) -> Item<'tcx> {
+        let local = local.into();
+        let mod_id = ctx.module_id;
+        let item = match &ty.kind() {
+            ItemTyKind::Node(node_ty) => {
+                let input = self
+                    .netlist
+                    .add_and_get_out(mod_id, Input::new(*node_ty, None));
 
-        Err(SpanError::new(SpanErrorKind::NotSynthItem, item.span).into())
-    }
-
-    pub fn eval_impl_fn_item(
-        &mut self,
-        impl_item: &ImplItem<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<ModuleId, Error> {
-        let self_ty = self
-            .tcx
-            .hir()
-            .get_parent(impl_item.hir_id())
-            .expect_item()
-            .expect_impl()
-            .self_ty;
-        let ident: Cow<str> = match self_ty.kind {
-            HirTyKind::Path(QPath::Resolved(_, path), ..) => {
-                let prefix = path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.ident.as_str())
-                    .intersperse("$")
-                    .collect::<String>();
-
-                format!("{}${}", prefix, impl_item.ident.as_str()).into()
+                Item::new(ty, ItemKind::Node(input))
             }
-            _ => impl_item.ident.as_str().into(),
+            ItemTyKind::Module(_) => Item::new(ty, ItemKind::Module),
+            ItemTyKind::Ref(ref_ty) => {
+                let local = local.inc();
+                let item = self.make_input(local, *ref_ty, ctx);
+                ctx.locals.place(local, item);
+
+                Item::new(ty, ItemKind::Ref(local))
+            }
+            ItemTyKind::Mut(ref_ty) => {
+                let local = local.inc();
+                let item = self.make_input(local, *ref_ty, ctx);
+                ctx.locals.place(local, item);
+                ctx.add_output(local);
+
+                Item::new(ty, ItemKind::Mut(local))
+            }
+            ItemTyKind::Array(array_ty) => Item::new(
+                ty,
+                ItemKind::Group(Group::new(
+                    array_ty.tys().map(|ty| self.make_input(local, ty, ctx)),
+                )),
+            ),
+            ItemTyKind::Struct(struct_ty) => Item::new(
+                ty,
+                ItemKind::Group(Group::new(
+                    struct_ty.tys().map(|ty| self.make_input(local, ty, ctx)),
+                )),
+            ),
+            ItemTyKind::Enum(_) => {
+                let node_ty = ty.to_bitvec();
+                let input = self
+                    .netlist
+                    .add_and_get_out(mod_id, Input::new(node_ty, None));
+
+                Item::new(ty, ItemKind::Node(input))
+            }
         };
-        if let ImplItemKind::Fn(HirFnSig { decl, .. }, body_id) = impl_item.kind {
-            return self.eval_fn(ident.as_ref(), decl, body_id, false, generic_args);
-        }
 
-        Err(SpanError::new(SpanErrorKind::NotSynthItem, impl_item.span).into())
-    }
+        ctx.locals.place(local, item.clone());
 
-    pub fn eval_trait_fn_item(
-        &mut self,
-        trait_item: &TraitItem<'tcx>,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<ModuleId, Error> {
-        let trait_ = self.tcx.hir().get_parent(trait_item.hir_id()).expect_item();
-        let ident = format!("{}${}", trait_.ident, trait_item.ident);
-        if let TraitItemKind::Fn(HirFnSig { decl, .. }, TraitFn::Provided(body_id)) =
-            trait_item.kind
-        {
-            return self.eval_fn(ident.as_ref(), decl, body_id, false, generic_args);
-        }
-
-        Err(SpanError::new(SpanErrorKind::NotSynthItem, trait_item.span).into())
-    }
-
-    pub fn eval_fn(
-        &mut self,
-        name: &str,
-        fn_decl: &FnDecl<'tcx>,
-        body_id: BodyId,
-        top_module: bool,
-        generic_args: GenericArgsRef<'tcx>,
-    ) -> Result<ModuleId, Error> {
-        let body = self.tcx.hir().body(body_id);
-        let inputs = fn_decl.inputs.iter().zip(body.params.iter());
-
-        let module_sym = Symbol::new(name);
-        let module_id = self.netlist.add_module(module_sym, top_module);
-        if self.is_inlined(body_id.hir_id.owner.def_id.into()) {
-            self.netlist[module_id].is_inlined = true;
-        }
-
-        self.idents.for_module(module_id).push_scope();
-        let fn_did = body_id.hir_id.owner.def_id;
-        let mir = self.tcx.optimized_mir(fn_did);
-
-        let mut ctx = EvalContext::new(
-            self.is_primary,
-            fn_did.into(),
-            generic_args,
-            module_id,
-            mir,
-        );
-
-        self.eval_inputs(inputs, &mut ctx)?;
-        let item_id = self.eval_expr(body.value, &mut ctx)?;
-
-        let prefix = self
-            .tcx
-            .hir()
-            .find_parent(body_id.hir_id)
-            .and_then(|node| node.ident());
-        self.eval_outputs(
-            if !top_module {
-                prefix.as_ref().map(|ident| ident.as_str())
-            } else {
-                None
-            },
-            item_id,
-        );
-
-        self.idents.for_module(module_id).pop_scope();
-
-        Ok(module_id)
-    }
-
-    pub fn eval_inputs<'a>(
-        &mut self,
-        inputs: impl Iterator<Item = (&'a HirTy<'tcx>, &'a Param<'tcx>)>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<Vec<ItemId>, Error>
-    where
-        'tcx: 'a,
-    {
-        inputs
-            .filter_map(|(input, param)| {
-                let ty = self.node_type(param.hir_id, ctx);
-                if let TyKind::Adt(adt, ..) = ty.kind() {
-                    if self.ignore_ty(adt.did()) {
-                        return None;
-                    }
-                }
-
-                let item_id = match self.make_input(input, ctx) {
-                    Ok(item_id) => item_id,
-                    Err(e) => {
-                        return Some(Err(e));
-                    }
-                };
-                if let Err(e) = self.pattern_match(param.pat, item_id, ctx.module_id) {
-                    return Some(Err(e));
-                }
-
-                Some(Ok(item_id))
-            })
-            .collect::<Result<Vec<_>, _>>()
-    }
-
-    fn make_input(
-        &mut self,
-        input: &HirTy<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        match input.kind {
-            HirTyKind::Infer => {
-                let sig_ty =
-                    self.find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?;
-
-                Ok(self.make_input_with_sig_ty(sig_ty, ctx.module_id))
-            }
-            HirTyKind::Path(QPath::Resolved(_, path)) => {
-                let fn_id = input.hir_id.owner.def_id;
-
-                let (is_self_param, sig_ty) = match path.res {
-                    Res::Def(..) => (
-                        false,
-                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)?,
-                    ),
-                    Res::SelfTyAlias { .. } => (
-                        true,
-                        self.find_sig_ty_for_hir_ty(fn_id, input, ctx, input.span)?,
-                    ),
-                    Res::PrimTy(HirPrimTy::Bool) => {
-                        (false, SignalTy::new(NodeTy::Bool.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::U8)) => {
-                        (false, SignalTy::new(NodeTy::U8.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::U16)) => {
-                        (false, SignalTy::new(NodeTy::U16.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::U32)) => {
-                        (false, SignalTy::new(NodeTy::U32.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::U64)) => {
-                        (false, SignalTy::new(NodeTy::U64.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::U128)) => {
-                        (false, SignalTy::new(NodeTy::U128.into()))
-                    }
-                    Res::PrimTy(HirPrimTy::Uint(UintTy::Usize)) => {
-                        (false, SignalTy::new(NodeTy::Usize.into()))
-                    }
-                    _ => panic!("Cannot define def_id for {:?}", path.res),
-                };
-
-                let input = self.make_input_with_sig_ty(sig_ty, ctx.module_id);
-
-                if is_self_param {
-                    self.idents.for_module(ctx.module_id).add_self_ident(input);
-                }
-
-                Ok(input)
-            }
-            HirTyKind::Ref(
-                _,
-                MutTy {
-                    ty,
-                    mutbl: Mutability::Not,
-                },
-            ) => self.make_input(ty, ctx),
-            HirTyKind::Tup(ty) => {
-                let tuple_ty = self
-                    .find_sig_ty(self.node_type(input.hir_id, ctx), ctx, input.span)?
-                    .struct_ty();
-
-                self.make_struct_group(tuple_ty, ty.iter(), |generator, ty| {
-                    generator.make_input(ty, ctx)
-                })
-            }
-            _ => {
-                println!("input: {:#?}", input);
-                Err(SpanError::new(SpanErrorKind::NotSynthInput, input.span).into())
-            }
-        }
-    }
-
-    pub fn make_input_with_sig_ty(
-        &mut self,
-        sig_ty: SignalTy,
-        module_id: ModuleId,
-    ) -> ItemId {
-        match sig_ty.kind {
-            SignalTyKind::Node(prim_ty) => {
-                let input = Input::new(prim_ty, None);
-                self.netlist.add_and_get_out(module_id, input).into()
-            }
-            SignalTyKind::Array(ty) => self
-                .make_array_group(ty, ty.tys(), |generator, ty| {
-                    Ok(generator.make_input_with_sig_ty(ty, module_id))
-                })
-                .unwrap(),
-            SignalTyKind::Struct(ty) => self
-                .make_struct_group(
-                    ty,
-                    ty.tys().iter().map(|ty| ty.inner),
-                    |generator, ty| Ok(generator.make_input_with_sig_ty(ty, module_id)),
-                )
-                .unwrap(),
-            SignalTyKind::Enum(ty) => {
-                let input = Input::new(ty.node_ty(), None);
-                Group::new(
-                    sig_ty,
-                    iter::once(self.netlist.add_and_get_out(module_id, input).into()),
-                )
-                .into()
-            }
-        }
+        item
     }
 
     pub fn is_inlined(&self, did: DefId) -> bool {
@@ -306,161 +92,28 @@ impl<'tcx> Generator<'tcx> {
             || self.find_synth(did).map(|synth| synth.inlined).is_some()
     }
 
-    fn eval_fn_inputs(
-        &mut self,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<SmallVec<[ItemId; 4]>, Error> {
-        args.into_iter()
-            .map(|arg| arg.evaluate(self, ctx))
-            .collect()
-    }
-
-    pub fn eval_outputs(&mut self, prefix: Option<&str>, item_id: ItemId) {
-        self.assign_names_to_item("out", item_id, false);
-        for node_out_id in item_id.into_iter() {
-            self.netlist.add_output(node_out_id);
-        }
-    }
-
     pub fn fn_output<T: Into<DefId>>(
         &mut self,
         fn_did: T,
-        ctx: &EvalContext<'tcx>,
+        generics: GenericArgsRef<'tcx>,
         span: Span,
-    ) -> Result<SignalTy, Error> {
-        let fn_sig = self.fn_sig(fn_did.into(), ctx);
-        self.find_sig_ty(fn_sig.output(), ctx, span)
+    ) -> Result<ItemTy<'tcx>, Error> {
+        let fn_sig = self.fn_sig(fn_did.into(), generics);
+        self.resolve_ty(fn_sig.output(), generics, span)
     }
 
-    pub fn eval_fn_call(
-        &mut self,
-        fn_did: LocalDefId,
-        fn_generics: GenericArgsRef<'tcx>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        let item = self.tcx.hir().expect_item(fn_did);
-
-        let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(fn_did, fn_generics);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_fn_item(item, false, fn_generics)?;
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        } else {
-            let module_id = self.eval_fn_item(item, false, fn_generics)?;
-
-            self.metadata.add_module_id(fn_did, module_id);
-
-            module_id
-        };
-
-        // use fn generics to get output_ty because output_ty is the part of the fn signature
-        let output_ty =
-            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
-        // but ctx.generic_args to evaluate arguments of the function because arguments are is the
-        // part of the caller and may require the generics of the caller
-        let args = self.eval_fn_inputs(args, ctx)?;
-
-        let inst = self.instantiate_module(module_id, args, ctx);
-        Ok(self.combine_outputs(inst, output_ty))
-    }
-
-    pub fn eval_impl_fn_call(
-        &mut self,
-        fn_did: LocalDefId,
-        fn_generics: GenericArgsRef<'tcx>,
-        self_arg: Option<ExprOrItemId<'tcx>>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        let impl_item = self.tcx.hir().expect_impl_item(fn_did);
-
-        let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(fn_did, fn_generics);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_impl_fn_item(impl_item, fn_generics)?;
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        } else {
-            let module_id = self.eval_impl_fn_item(impl_item, fn_generics)?;
-
-            self.metadata.add_module_id(fn_did, module_id);
-
-            module_id
-        };
-
-        // use fn generics to get output_ty because output_ty is the part of the fn signature
-        let output_ty =
-            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
-        // but ctx.generic_args to evaluate arguments of the function because arguments are is the
-        // part of the caller and may require the generics of the caller
-        let inputs = self.eval_fn_inputs(self_arg.into_iter().chain(args), ctx)?;
-
-        let inst = self.instantiate_module(module_id, inputs, ctx);
-        Ok(self.combine_outputs(inst, output_ty))
-    }
-
-    pub fn eval_trait_fn_call(
-        &mut self,
-        fn_did: LocalDefId,
-        fn_generics: GenericArgsRef<'tcx>,
-        args: impl IntoIterator<Item = ExprOrItemId<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        let trait_item = self.tcx.hir().expect_trait_item(fn_did);
-
-        let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(fn_did, fn_generics);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                let module_id = self.eval_trait_fn_item(trait_item, fn_generics)?;
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        } else {
-            let module_id = self.eval_trait_fn_item(trait_item, fn_generics)?;
-
-            self.metadata.add_module_id(fn_did, module_id);
-
-            module_id
-        };
-
-        // use fn generics to get output_ty because output_ty is the part of the fn signature
-        let output_ty =
-            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
-        // but ctx.generic_args to evaluate arguments of the function because arguments are is the
-        // part of the caller and may require the generics of the caller
-        let inputs = self.eval_fn_inputs(args, ctx)?;
-
-        let inst = self.instantiate_module(module_id, inputs, ctx);
-        Ok(self.combine_outputs(inst, output_ty))
-    }
-
-    pub fn instantiate_module(
+    pub fn instantiate_module<'a>(
         &mut self,
         instant_mod_id: ModuleId,
-        inputs: impl IntoIterator<Item = ItemId>,
+        inputs: impl IntoIterator<Item = &'a Item<'tcx>> + 'a,
         ctx: &EvalContext<'tcx>,
-    ) -> NodeId {
-        let inputs = inputs.into_iter().flat_map(|input| input.into_iter());
+    ) -> NodeId
+    where
+        'tcx: 'a,
+    {
+        let inputs = inputs
+            .into_iter()
+            .flat_map(|input| input.as_nodes(&ctx.locals));
 
         let outputs = self
             .netlist
@@ -471,73 +124,6 @@ impl<'tcx> Generator<'tcx> {
         self.netlist.add(ctx.module_id, mod_inst)
 
         // self.combine_node_outputs(node_id, sig_ty)
-    }
-
-    pub fn eval_synth_fn_or_blackbox(
-        &mut self,
-        fn_did: DefId,
-        expr: &'tcx Expr<'tcx>,
-        fn_generics: GenericArgsRef<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        if self.is_synth(fn_did) {
-            self.eval_synth_fn(fn_did, expr, fn_generics, ctx, span)
-        } else {
-            let blackbox = self.find_blackbox(fn_did, span)?;
-            blackbox.eval_expr(self, expr, ctx)
-        }
-    }
-
-    pub fn eval_synth_fn(
-        &mut self,
-        fn_did: DefId,
-        expr: &'tcx Expr<'tcx>,
-        fn_generics: GenericArgsRef<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
-        let krate = fn_did.krate;
-        let metadata = self.find_metadata_for_crate(krate)?;
-
-        let module_id = metadata.find_module_id_by_def_id(fn_did).ok_or_else(|| {
-            SpanError::new(
-                SpanErrorKind::MissingModule(self.tcx.def_path_str(fn_did)),
-                span,
-            )
-        })?;
-
-        let module_id = if self.is_primary {
-            let mono_item = MonoItem::new(fn_did, fn_generics);
-
-            #[allow(clippy::map_entry)]
-            if !self.evaluated_modules.contains_key(&mono_item) {
-                // resolve all types from the imported module using fn_generics
-                let ctx = ctx.with_generic_args(fn_generics);
-                let mut resolver =
-                    MetadataResolver::new(self, &metadata, fn_did, &ctx, span);
-                let module_id = resolver.import_module_from_metadata(module_id)?;
-
-                self.evaluated_modules.insert(mono_item, module_id);
-            }
-
-            *self.evaluated_modules.get(&mono_item).unwrap()
-        } else {
-            panic!("Evaluation synthesizable function for non-primary crate");
-        };
-
-        // use fn generics to get output_ty because output_ty is the part of the fn signature
-        let output_ty =
-            self.fn_output(fn_did, &ctx.with_generic_args(fn_generics), span)?;
-        // but ctx.generic_args to evaluate arguments of the function because arguments are is the
-        // part of the caller and may require the generics of the caller
-        let inputs = self.eval_fn_inputs(
-            utils::expected_call(expr)?.args.into_iter().map(Into::into),
-            ctx,
-        )?;
-
-        let inst = self.instantiate_module(module_id, inputs, ctx);
-        Ok(self.combine_outputs(inst, output_ty))
     }
 
     pub fn find_blackbox(
@@ -573,7 +159,7 @@ impl<'tcx> Generator<'tcx> {
         self.find_blackbox_kind(def_id)
     }
 
-    pub fn is_blackbox(&self, def_id: DefId) -> bool {
-        self.find_blackbox_(def_id).is_some()
-    }
+    // pub fn is_blackbox(&self, def_id: DefId) -> bool {
+    //     self.find_blackbox_(def_id).is_some()
+    // }
 }

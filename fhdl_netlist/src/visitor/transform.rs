@@ -89,13 +89,13 @@ impl<'n> Transform<'n> {
             NodeKind::Not(not) => self.net_list.to_const(not.input()).map(|const_val| {
                 let const_val = !const_val;
                 let output = not.output();
-                Const::new(output.ty, const_val.val.into(), output.sym).into()
+                Const::new(output.ty, const_val.val, output.sym).into()
             }),
             NodeKind::BitNot(bit_not) => {
                 self.net_list.to_const(bit_not.input()).map(|const_val| {
                     let const_val = !const_val;
                     let output = bit_not.output();
-                    Const::new(output.ty, const_val.val.into(), output.sym).into()
+                    Const::new(output.ty, const_val.val, output.sym).into()
                 })
             }
 
@@ -126,7 +126,7 @@ impl<'n> Transform<'n> {
                     };
 
                     let output = bin_op.output();
-                    Some(Const::new(output.ty, const_val.val.into(), output.sym).into())
+                    Some(Const::new(output.ty, const_val.val, output.sym).into())
                 }
                 _ => None,
             },
@@ -138,12 +138,10 @@ impl<'n> Transform<'n> {
                     let indices = splitter.eval_indices(self.net_list);
                     let input = self.net_list.to_const(splitter.input());
 
-                    let tmp = (indices, input);
-                    if let (Some(indices), Some(input)) = tmp {
+                    if let Some(input) = input {
                         let values = indices
                             .map(|(output, index)| {
-                                ConstVal::new(input.val >> index, output.width().value())
-                                    .val
+                                ConstVal::new(input.val >> index, output.width()).val
                             })
                             .collect::<Vec<_>>();
 
@@ -152,7 +150,7 @@ impl<'n> Transform<'n> {
                                 .into(),
                         )
                     } else {
-                        drop(tmp);
+                        drop(indices);
 
                         let input = splitter.input();
 
@@ -214,16 +212,16 @@ impl<'n> Transform<'n> {
 
                 val.map(|const_val| {
                     let output = merger.output();
-                    Const::new(output.ty, const_val.val.into(), output.sym).into()
+                    Const::new(output.ty, const_val.val, output.sym).into()
                 })
             }
 
             NodeKindWithId::ZeroExtend(zero_extend) => {
                 let output = zero_extend.output();
                 match self.net_list.to_const(zero_extend.input()) {
-                    Some(const_val) => Some({
-                        Const::new(output.ty, const_val.val.into(), output.sym).into()
-                    }),
+                    Some(const_val) => {
+                        Some(Const::new(output.ty, const_val.val, output.sym).into())
+                    }
                     None => {
                         if self.net_list[zero_extend.input()].width() == output.width() {
                             self.net_list.reconnect(node_id);

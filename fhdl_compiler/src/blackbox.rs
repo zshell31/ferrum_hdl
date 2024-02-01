@@ -8,35 +8,28 @@ pub mod cast;
 pub mod index;
 pub mod lit;
 pub mod signal;
-pub mod std;
 
 use fhdl_blackbox::BlackboxKind;
-use fhdl_netlist::{group::ItemId, node::BinOp, sig_ty::SignalTy};
-use rustc_hir::{def_id::DefId, Expr};
+use fhdl_netlist::node::BinOp;
+use rustc_hir::def_id::DefId;
 use rustc_span::Span;
 
 use crate::{
     error::Error,
-    eval_context::{EvalContext, ModuleOrItem},
-    generator::Generator,
+    eval_context::EvalContext,
+    generator::{item::Item, item_ty::ItemTy, Generator},
+    utils,
 };
 
 pub trait EvalExpr<'tcx> {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error>;
-
     fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        args: &[ModuleOrItem],
-        output_ty: SignalTy,
-        ctx: &mut EvalContext<'tcx>,
-        span: Span,
-    ) -> Result<ItemId, Error> {
+        _generator: &mut Generator<'tcx>,
+        _args: &[Item<'tcx>],
+        _output_ty: ItemTy<'tcx>,
+        _ctx: &mut EvalContext<'tcx>,
+        _span: Span,
+    ) -> Result<Item<'tcx>, Error> {
         unimplemented!()
     }
 }
@@ -52,27 +45,14 @@ macro_rules! eval_expr {
         $( $blackbox_kind:ident => $eval:expr ),+
     ) => {
         impl<'tcx> Blackbox {
-            pub fn eval_expr(
-                &self,
-                generator: &mut Generator<'tcx>,
-                expr: &'tcx Expr<'tcx>,
-                ctx: &mut EvalContext<'tcx>
-            ) -> Result<ItemId, Error> {
-                match self.kind {
-                    $(
-                        BlackboxKind::$blackbox_kind => $eval.eval_expr(generator, expr, ctx),
-                    )+
-                }
-            }
-
             pub fn eval(
                 &self,
                 generator: &mut Generator<'tcx>,
-                args: &[ModuleOrItem],
-                output_ty: SignalTy,
+                args: &[Item<'tcx>],
+                output_ty: ItemTy<'tcx>,
                 ctx: &mut EvalContext<'tcx>,
                 span: Span,
-            ) -> Result<ItemId, Error> {
+            ) -> Result<Item<'tcx>, Error> {
                 match self.kind {
                     $(
                         BlackboxKind::$blackbox_kind => $eval.eval(generator,  args, output_ty, ctx, span),
@@ -81,6 +61,23 @@ macro_rules! eval_expr {
             }
         }
     };
+}
+
+struct PassReceiver;
+
+impl<'tcx> EvalExpr<'tcx> for PassReceiver {
+    fn eval(
+        &self,
+        _: &mut Generator<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        _: &mut EvalContext<'tcx>,
+        _: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        utils::args!(args as rec);
+
+        Ok(rec.clone())
+    }
 }
 
 eval_expr!(
@@ -122,25 +119,21 @@ eval_expr!(
     OpShl => bin_op::BinOp(BinOp::Shl),
     OpShr => bin_op::BinOp(BinOp::Shr),
 
-    CastFrom => cast::Conversion { from: true },
-    Cast => cast::Conversion { from: true },
+    CastFrom => cast::Conversion,
 
     Index => index::Index,
 
     SignalAndThen => signal::SignalAndThen,
     SignalApply2 => signal::SignalApply2,
-    SignalAnd => signal::SignalOp { op: BinOp::And },
-    SignalEq => signal::SignalOp { op: BinOp::Eq },
-    SignalLift => signal::SignalLift,
+    SignalLift => PassReceiver,
     SignalMap => signal::SignalMap,
-    SignalOr => signal::SignalOp { op: BinOp::Or },
     SignalReg => signal::SignalReg { has_en: false },
     SignalRegEn => signal::SignalReg { has_en: true },
-    SignalValue => signal::SignalValue,
-    SignalWatch => signal::SignalWatch,
+    SignalValue => PassReceiver,
+    SignalWatch => PassReceiver,
 
     UnsignedBit => index::UnsignedBit,
 
-    StdClone => std::StdClone
+    StdClone => PassReceiver
 
 );

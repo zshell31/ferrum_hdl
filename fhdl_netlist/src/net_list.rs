@@ -9,21 +9,20 @@ use std::ops::{Index, IndexMut};
 pub use ident::*;
 pub(crate) use in_out::InOut;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_macros::{Decodable, Encodable};
 pub use with_id::WithId;
 
 pub use self::module::Module;
 use crate::{
     const_val::ConstVal,
     node::{Const, IsNode, Node, NodeKindWithId, NodeKindWithIdMut, NodeOutput},
-    sig_ty::{NodeTy, Width},
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
 pub type Nodes = FxHashMap<NodeId, Node>;
 pub type Links = FxHashSet<NodeId>;
 
-#[derive(Debug, Default, Encodable, Decodable)]
+#[derive(Debug, Default)]
 pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,
@@ -231,13 +230,8 @@ impl NetList {
         self.nodes[node_id].only_one_out().node_out_id()
     }
 
-    pub fn const_val(
-        &mut self,
-        mod_id: ModuleId,
-        ty: NodeTy,
-        val: impl Into<Width>,
-    ) -> NodeOutId {
-        self.add_and_get_out(mod_id, Const::new(ty, val.into(), None))
+    pub fn const_val(&mut self, mod_id: ModuleId, ty: NodeTy, val: u128) -> NodeOutId {
+        self.add_and_get_out(mod_id, Const::new(ty, val, None))
     }
 
     pub fn const_zero(&mut self, mod_id: ModuleId, ty: NodeTy) -> NodeOutId {
@@ -448,15 +442,14 @@ impl NetList {
         use NodeKindWithId as NodeKind;
 
         match self[node_out_id.node_id()].kind() {
-            NodeKind::Const(cons) => Some(ConstVal::new(
-                cons.value().opt_value()?,
-                cons.output().width().opt_value()?,
-            )),
+            NodeKind::Const(cons) => {
+                Some(ConstVal::new(cons.value(), cons.output().width()))
+            }
             NodeKind::MultiConst(multi_cons) => {
                 let out_id = node_out_id.idx();
                 Some(ConstVal::new(
                     multi_cons.values()[out_id],
-                    multi_cons.outputs()[out_id].width().opt_value()?,
+                    multi_cons.outputs()[out_id].width(),
                 ))
             }
             _ => None,
@@ -565,13 +558,7 @@ impl NetList {
             let from = &self.nodes[from];
             let to = &self.nodes[to];
 
-            if let (Some(from_w), Some(to_w)) =
-                (from.width().opt_value(), to.width().opt_value())
-            {
-                from_w == to_w
-            } else {
-                false
-            }
+            from.ty == to.ty
         };
 
         from.inputs_len() == to.outputs_len()

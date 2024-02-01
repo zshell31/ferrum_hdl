@@ -1,5 +1,4 @@
 use derive_where::derive_where;
-use rustc_macros::{Decodable, Encodable};
 
 use crate::net_list::Idx;
 
@@ -39,7 +38,6 @@ pub(crate) trait ListStorage<I: Idx> {
 }
 
 #[derive_where(Debug, Default)]
-#[derive(Encodable, Decodable)]
 pub(crate) struct List<I: Idx> {
     head: Option<I>,
     tail: Option<I>,

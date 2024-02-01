@@ -1,44 +1,28 @@
-use rustc_macros::{Decodable, Encodable};
 use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    encoding::Wrap,
-    net_list::NodeOutIdx,
-    resolver::{Resolve, Resolver},
-    sig_ty::{NodeTy, Width},
-    symbol::Symbol,
-};
+use crate::{net_list::NodeOutIdx, node_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub struct Const {
-    value: Width,
+    value: u128,
     output: NodeOutput,
 }
 
 impl Const {
-    pub fn new(ty: NodeTy, value: Width, sym: Option<Symbol>) -> Self {
+    pub fn new(ty: NodeTy, value: u128, sym: Option<Symbol>) -> Self {
         Self {
             value,
             output: NodeOutput::wire(ty, sym),
         }
     }
 
-    pub fn value(&self) -> &Width {
-        &self.value
+    pub fn value(&self) -> u128 {
+        self.value
     }
 
     pub fn output(&self) -> &NodeOutput {
         &self.output
-    }
-}
-
-impl<R: Resolver> Resolve<R> for Const {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            value: self.value.resolve(resolver)?,
-            output: self.output.resolve(resolver)?,
-        })
     }
 }
 
@@ -69,10 +53,10 @@ impl IsNode for Const {
     }
 }
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone)]
 pub struct MultiConst {
-    values: Wrap<SmallVec<[u128; 1]>>,
-    outputs: Wrap<SmallVec<[NodeOutput; 1]>>,
+    values: SmallVec<[u128; 1]>,
+    outputs: SmallVec<[NodeOutput; 1]>,
 }
 
 impl MultiConst {
@@ -92,15 +76,6 @@ impl MultiConst {
 
     pub fn outputs(&self) -> &[NodeOutput] {
         &self.outputs
-    }
-}
-
-impl<R: Resolver> Resolve<R> for MultiConst {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            values: self.values.resolve(resolver)?,
-            outputs: self.outputs.resolve(resolver)?,
-        })
     }
 }
 

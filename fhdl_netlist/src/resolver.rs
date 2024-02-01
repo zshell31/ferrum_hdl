@@ -2,7 +2,7 @@ use smallvec::{Array, SmallVec};
 
 use crate::{
     net_list::{ModuleId, ParamId, TyId},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
 };
 
 pub trait Resolver {

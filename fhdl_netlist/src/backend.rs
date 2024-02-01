@@ -176,16 +176,11 @@ impl<'n> Verilog<'n> {
                 let outputs = splitter.outputs();
 
                 self.inject_node(module_id, splitter.input(), expr, true);
-                let width = outputs[out_id].width().value();
+                let width = outputs[out_id].width();
 
-                let start: Cow<'_, str> = splitter
-                    .eval_indices(self.net_list)
-                    .map(|mut indices| {
-                        let (_, index) = indices.nth(out_id).unwrap();
-
-                        index.to_string().into()
-                    })
-                    .expect("Cannot evaluate indices for splitter");
+                let mut indices = splitter.eval_indices(self.net_list);
+                let (_, index) = indices.nth(out_id).unwrap();
+                let start: Cow<'_, str> = index.to_string().into();
 
                 if width == 1 {
                     expr.write_fmt(format_args!("[{start}]"));
@@ -238,8 +233,8 @@ fn write_out(buffer: &mut Buffer, out: &NodeOutput) {
         NetKind::Reg(_) => buffer.write_str("reg"),
     };
 
-    if out.ty.width().value() > 1 {
-        buffer.write_fmt(format_args!(" [{}:0]", out.ty.width().value() - 1));
+    if out.ty.width() > 1 {
+        buffer.write_fmt(format_args!(" [{}:0]", out.ty.width() - 1));
     }
 }
 
@@ -329,9 +324,6 @@ impl<'n> Visitor for Verilog<'n> {
 
         let node = &self.net_list[node_id];
         match node.kind() {
-            NodeKind::TemplateNode(_) => {
-                panic!("Cannot generate verilog for TemplateNode");
-            }
             NodeKind::Input(_) => {}
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id();
@@ -423,7 +415,7 @@ impl<'n> Visitor for Verilog<'n> {
                     input: &str,
                     start: u128,
                 ) {
-                    let width = output.width().value();
+                    let width = output.width();
                     let output = output.sym.unwrap();
 
                     buffer.write_tab();
@@ -440,9 +432,7 @@ impl<'n> Visitor for Verilog<'n> {
 
                 let input = self.inject_input(input, false);
 
-                let indices = splitter
-                    .eval_indices(self.net_list)
-                    .expect("Cannot evaluate indices for splitter");
+                let indices = splitter.eval_indices(self.net_list);
 
                 for (output, index) in indices {
                     if !(output.is_skip || output.inject) {
@@ -494,7 +484,7 @@ impl<'n> Visitor for Verilog<'n> {
                     let output = case.output().sym.unwrap();
 
                     let sel_sym = self.inject_input(sel, false);
-                    let sel_width = self.net_list[sel].ty.width().value();
+                    let sel_width = self.net_list[sel].ty.width();
 
                     let has_mask = masks.iter().any(|mask| mask.mask != 0);
 

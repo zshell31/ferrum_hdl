@@ -6,8 +6,6 @@ use std::{
 
 use fhdl_const_func::mask;
 
-use crate::sig_ty::Width;
-
 // TODO: use long arithmetic
 #[derive(Debug, Clone, Copy)]
 pub struct ConstVal {
@@ -21,9 +19,9 @@ impl Display for ConstVal {
     }
 }
 
-impl From<ConstVal> for Width {
+impl From<ConstVal> for u128 {
     fn from(value: ConstVal) -> Self {
-        value.val.into()
+        value.val
     }
 }
 

@@ -1,14 +1,11 @@
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy)]
 pub struct BitNot {
     input: NodeOutIdx,
     output: NodeOutput,
@@ -30,15 +27,6 @@ impl BitNot {
 impl WithId<ModuleId, &'_ BitNot> {
     pub fn input(&self) -> NodeOutId {
         NodeOutId::make(self.id(), self.input)
-    }
-}
-
-impl<R: Resolver> Resolve<R> for BitNot {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            input: self.input,
-            output: self.output.resolve(resolver)?,
-        })
     }
 }
 
@@ -71,6 +59,6 @@ impl IsNode for BitNot {
     fn assert(&self, module_id: ModuleId, net_list: &NetList) {
         let node = WithId::<ModuleId, _>::new(module_id, self);
         let input = &net_list[node.input()];
-        assert_width!(self.output.width(), input.width());
+        assert_eq!(self.output.width(), input.width());
     }
 }

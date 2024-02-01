@@ -1,12 +1,11 @@
 use fhdl_const_func::mask;
-use rustc_macros::{Decodable, Encodable};
 
 use crate::{
     const_val::ConstVal,
     resolver::{Resolve, Resolver},
 };
 
-#[derive(Debug, Clone, Copy, Default, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BitVecMask {
     pub val: u128,
     pub mask: u128,
@@ -36,9 +35,9 @@ impl BitVecMask {
 
         (0 .. width)
             .map(|_| {
-                let ch = if (self.mask & mask) != 0 {
+                let ch = if (self.mask & mask as u128) != 0 {
                     wildcard
-                } else if (self.val & mask) != 0 {
+                } else if (self.val & mask as u128) != 0 {
                     '1'
                 } else {
                     '0'

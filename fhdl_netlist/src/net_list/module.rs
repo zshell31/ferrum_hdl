@@ -2,7 +2,6 @@
 use std::fmt::Debug;
 
 use rustc_data_structures::fx::FxIndexSet;
-use rustc_macros::{Decodable, Encodable};
 
 use super::{
     ident::{NodeId, NodeOutId},
@@ -30,7 +29,7 @@ impl<'n> ListStorage<NodeIdx> for NodeStorage<'n> {
     }
 }
 
-#[derive(Debug, Encodable, Decodable)]
+#[derive(Debug)]
 pub struct Module {
     pub name: Symbol,
     pub is_skip: bool,

@@ -4,10 +4,8 @@
 #![feature(type_alias_impl_trait)]
 
 mod blackbox;
+mod compiler;
 mod error;
-mod eval_context;
-mod generator;
-mod scopes;
 mod utils;
 
 use std::{
@@ -20,7 +18,7 @@ use std::{
 use rustc_driver::Callbacks;
 use rustc_session::{config::ErrorOutputType, EarlyDiagCtxt};
 
-use crate::generator::CompilerCallbacks;
+use crate::compiler::CompilerCallbacks;
 
 extern crate rustc_ast;
 extern crate rustc_const_eval;
@@ -160,6 +158,13 @@ fn main() {
         let run_fhdl = !normal_rustc && is_primary && is_target_crate;
 
         if run_fhdl {
+            // Set options for mir generation
+            args.extend(["-C".into(), "panic=abort".into()]);
+            args.extend(["-Zalways-encode-mir".into()]);
+            args.extend(["-Zmir-opt-level=1".into()]);
+
+            env::set_var("RUST_BACKTRACE", "1");
+
             let mut callbacks = CompilerCallbacks {};
             let compiler = rustc_driver::RunCompiler::new(&args, &mut callbacks);
             compiler.run()

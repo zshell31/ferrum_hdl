@@ -1,9 +1,9 @@
 use bumpalo::collections::{CollectIn, Vec as BumpVec};
 
-use super::Generator;
+use super::Compiler;
 use crate::error::Error;
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     #[inline]
     pub fn alloc<T>(&self, val: T) -> &'tcx T {
         self.arena.alloc(val)
@@ -18,7 +18,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn alloc_from_iter_res_with_gen<T, U>(
         &mut self,
         it: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Result<U, Error>,
+        mut f: impl FnMut(&mut Compiler<'tcx>, T) -> Result<U, Error>,
     ) -> Result<&'tcx [U], Error> {
         let arena = self.arena;
         let v = it
@@ -32,7 +32,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn alloc_from_iter_opt_res_with_gen<T, U>(
         &mut self,
         it: impl IntoIterator<Item = T>,
-        mut f: impl FnMut(&mut Generator<'tcx>, T) -> Option<Result<U, Error>>,
+        mut f: impl FnMut(&mut Compiler<'tcx>, T) -> Option<Result<U, Error>>,
     ) -> Result<&'tcx [U], Error> {
         let arena = self.arena;
         let v = it

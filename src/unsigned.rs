@@ -252,6 +252,13 @@ impl<const N: usize> Unsigned<N> {
     }
 }
 
+impl<const N: usize> Default for Unsigned<N> {
+    #[synth(inline)]
+    fn default() -> Self {
+        0_u8.cast()
+    }
+}
+
 impl<const N: usize> SignalValue for Unsigned<N> {}
 
 impl<const N: usize> IsPrimTy for Unsigned<N> {}

@@ -15,19 +15,18 @@ use rustc_hir::def_id::DefId;
 use rustc_span::Span;
 
 use crate::{
+    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::Error,
-    eval_context::EvalContext,
-    generator::{item::Item, item_ty::ItemTy, Generator},
     utils,
 };
 
 pub trait EvalExpr<'tcx> {
     fn eval(
         &self,
-        _generator: &mut Generator<'tcx>,
+        _compiler: &mut Compiler<'tcx>,
         _args: &[Item<'tcx>],
         _output_ty: ItemTy<'tcx>,
-        _ctx: &mut EvalContext<'tcx>,
+        _ctx: &mut Context<'tcx>,
         _span: Span,
     ) -> Result<Item<'tcx>, Error> {
         unimplemented!()
@@ -47,15 +46,15 @@ macro_rules! eval_expr {
         impl<'tcx> Blackbox {
             pub fn eval(
                 &self,
-                generator: &mut Generator<'tcx>,
+                compiler: &mut Compiler<'tcx>,
                 args: &[Item<'tcx>],
                 output_ty: ItemTy<'tcx>,
-                ctx: &mut EvalContext<'tcx>,
+                ctx: &mut Context<'tcx>,
                 span: Span,
             ) -> Result<Item<'tcx>, Error> {
                 match self.kind {
                     $(
-                        BlackboxKind::$blackbox_kind => $eval.eval(generator,  args, output_ty, ctx, span),
+                        BlackboxKind::$blackbox_kind => $eval.eval(compiler,  args, output_ty, ctx, span),
                     )+
                 }
             }
@@ -68,10 +67,10 @@ struct PassReceiver;
 impl<'tcx> EvalExpr<'tcx> for PassReceiver {
     fn eval(
         &self,
-        _: &mut Generator<'tcx>,
+        _: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
         _: ItemTy<'tcx>,
-        _: &mut EvalContext<'tcx>,
+        _: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec);

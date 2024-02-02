@@ -1,5 +1,4 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
     iter::{self, Peekable},
     rc::Rc,
 };
@@ -15,13 +14,12 @@ use rustc_target::abi::{FieldIdx, VariantIdx};
 
 use super::{
     item_ty::{EnumTy, ItemTy, ItemTyKind},
-    locals::{Local, Locals},
-    Generator,
+    Compiler,
 };
 use crate::error::Error;
 
 #[derive(Debug, Clone)]
-pub struct Group<'tcx>(Rc<RefCell<Vec<Item<'tcx>>>>);
+pub struct Group<'tcx>(Rc<Vec<Item<'tcx>>>);
 
 #[derive(Clone)]
 struct GroupIter<'tcx> {
@@ -46,7 +44,7 @@ impl<'tcx> Iterator for GroupIter<'tcx> {
 
 impl<'tcx> Group<'tcx> {
     pub fn new(items: impl IntoIterator<Item = Item<'tcx>>) -> Self {
-        Self(Rc::new(RefCell::new(items.into_iter().collect())))
+        Self(Rc::new(items.into_iter().collect()))
     }
 
     pub fn try_new(
@@ -57,28 +55,28 @@ impl<'tcx> Group<'tcx> {
         Ok(Self::new(v))
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
-        self.0.borrow().len()
+        self.0.len()
     }
 
-    pub fn by_idx(&self, idx: usize) -> Ref<'_, Item<'tcx>> {
-        Ref::map(self.0.borrow(), |items| &items[idx])
+    #[inline]
+    pub fn by_idx(&self, idx: usize) -> &Item<'tcx> {
+        &self.0[idx]
     }
 
-    pub fn by_field(&self, idx: FieldIdx) -> Ref<'_, Item<'tcx>> {
-        Ref::map(self.0.borrow(), |items| &items[idx.as_usize()])
+    #[inline]
+    pub fn by_field(&self, idx: FieldIdx) -> &Item<'tcx> {
+        self.by_idx(idx.as_usize())
     }
 
-    pub fn by_field_mut(&self, idx: FieldIdx) -> RefMut<'_, Item<'tcx>> {
-        RefMut::map(self.0.borrow_mut(), |items| &mut items[idx.as_usize()])
-    }
-
-    pub fn items(&self) -> Ref<'_, [Item<'tcx>]> {
-        Ref::map(self.0.borrow(), |items| items.as_slice())
+    #[inline]
+    pub fn items(&self) -> &[Item<'tcx>] {
+        self.0.as_slice()
     }
 
     fn into_iter(self) -> GroupIter<'tcx> {
-        let len = self.0.borrow().len();
+        let len = self.len();
         GroupIter {
             group: self,
             idx: 0,
@@ -91,8 +89,6 @@ impl<'tcx> Group<'tcx> {
 pub enum ItemKind<'tcx> {
     Node(NodeOutId),
     Module,
-    Ref(Local),
-    Mut(Local),
     Group(Group<'tcx>),
 }
 
@@ -105,83 +101,6 @@ impl<'tcx> From<NodeOutId> for ItemKind<'tcx> {
 impl<'tcx> From<Group<'tcx>> for ItemKind<'tcx> {
     fn from(group: Group<'tcx>) -> Self {
         Self::Group(group)
-    }
-}
-
-enum StackEl<'tcx> {
-    Item(Option<Item<'tcx>>),
-    Iter(GroupIter<'tcx>),
-}
-
-impl<'tcx> StackEl<'tcx> {
-    fn next(&mut self) -> Option<Item<'tcx>> {
-        match self {
-            Self::Item(item) => item.take(),
-            Self::Iter(iter) => iter.next(),
-        }
-    }
-}
-
-impl<'tcx> From<Item<'tcx>> for StackEl<'tcx> {
-    fn from(item: Item<'tcx>) -> Self {
-        Self::Item(Some(item))
-    }
-}
-
-impl<'tcx> From<Group<'tcx>> for StackEl<'tcx> {
-    fn from(group: Group<'tcx>) -> Self {
-        Self::Iter(group.into_iter())
-    }
-}
-
-pub struct ItemIter<'a, 'tcx>
-where
-    'tcx: 'a,
-{
-    stack: Vec<StackEl<'tcx>>,
-    locals: &'a Locals<'tcx>,
-}
-
-impl<'a, 'tcx> ItemIter<'a, 'tcx>
-where
-    'tcx: 'a,
-{
-    fn new(item: Item<'tcx>, locals: &'a Locals<'tcx>) -> Self {
-        Self {
-            stack: vec![item.into()],
-            locals,
-        }
-    }
-}
-
-impl<'a, 'tcx> Iterator for ItemIter<'a, 'tcx>
-where
-    'tcx: 'a,
-{
-    type Item = NodeOutId;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let item = self.stack.last_mut()?.next();
-
-            if let Some(item) = item {
-                let stack_el = match item.kind {
-                    ItemKind::Node(node_out_id) => {
-                        return Some(node_out_id);
-                    }
-                    ItemKind::Module => {
-                        continue;
-                    }
-                    ItemKind::Ref(local) | ItemKind::Mut(local) => {
-                        self.locals.get(local).clone().into()
-                    }
-                    ItemKind::Group(group) => group.into(),
-                };
-                self.stack.push(stack_el);
-            } else {
-                self.stack.pop();
-            }
-        }
     }
 }
 
@@ -217,39 +136,62 @@ impl<'tcx> Item<'tcx> {
         }
     }
 
-    pub fn by_idx(&self, idx: usize) -> Ref<'_, Item<'tcx>> {
+    pub fn by_idx(&self, idx: usize) -> &Item<'tcx> {
         self.group().by_idx(idx)
     }
 
-    #[allow(dead_code)]
-    pub fn by_field(&self, idx: FieldIdx) -> Ref<'_, Item<'tcx>> {
+    pub fn by_field(&self, idx: FieldIdx) -> &Item<'tcx> {
         self.group().by_field(idx)
     }
 
-    pub fn by_field_idx(&self, idx: FieldIdx) -> RefMut<'_, Item<'tcx>> {
-        self.group().by_field_mut(idx)
-    }
-
-    pub fn deref<'l>(&self, locals: &'l Locals<'tcx>) -> &'l Item<'tcx> {
-        match &self.kind {
-            ItemKind::Ref(local) | ItemKind::Mut(local) => locals.get(*local),
-            _ => panic!("cannot deref non-reference local"),
+    pub fn iter(&self) -> impl Iterator<Item = NodeOutId> + 'tcx {
+        enum StackEl<'tcx> {
+            Item(Option<Item<'tcx>>),
+            Iter(GroupIter<'tcx>),
         }
-    }
 
-    #[allow(dead_code)]
-    pub fn deref_mut<'l>(&self, locals: &'l mut Locals<'tcx>) -> &'l mut Item<'tcx> {
-        match &self.kind {
-            ItemKind::Mut(local) => locals.get_mut(*local),
-            _ => panic!("cannot deref non-reference local"),
+        impl<'tcx> StackEl<'tcx> {
+            fn next(&mut self) -> Option<Item<'tcx>> {
+                match self {
+                    Self::Item(item) => item.take(),
+                    Self::Iter(iter) => iter.next(),
+                }
+            }
         }
-    }
 
-    pub fn as_nodes<'a>(&'a self, locals: &'a Locals<'tcx>) -> ItemIter<'a, 'tcx>
-    where
-        'tcx: 'a,
-    {
-        ItemIter::new(self.clone(), locals)
+        impl<'tcx> From<Item<'tcx>> for StackEl<'tcx> {
+            fn from(item: Item<'tcx>) -> Self {
+                Self::Item(Some(item))
+            }
+        }
+
+        impl<'tcx> From<Group<'tcx>> for StackEl<'tcx> {
+            fn from(group: Group<'tcx>) -> Self {
+                Self::Iter(group.into_iter())
+            }
+        }
+
+        let mut stack: Vec<StackEl<'tcx>> = vec![self.clone().into()];
+
+        iter::from_fn(move || loop {
+            let item = stack.last_mut()?.next();
+
+            if let Some(item) = item {
+                let stack_el = match item.kind {
+                    ItemKind::Node(node_out_id) => {
+                        return Some(node_out_id);
+                    }
+                    ItemKind::Module => {
+                        continue;
+                    }
+                    ItemKind::Group(group) => group.into(),
+                };
+
+                stack.push(stack_el);
+            } else {
+                stack.pop();
+            }
+        })
     }
 }
 
@@ -282,9 +224,9 @@ pub struct CombineOutputs<'a> {
 }
 
 impl<'a> CombineOutputs<'a> {
-    pub fn new(generator: &'a Generator<'_>, node_id: NodeId) -> Self {
+    pub fn new(compiler: &'a Compiler<'_>, node_id: NodeId) -> Self {
         Self {
-            outputs: generator.netlist[node_id].node_out_ids().peekable(),
+            outputs: compiler.netlist[node_id].node_out_ids().peekable(),
         }
     }
 
@@ -294,9 +236,6 @@ impl<'a> CombineOutputs<'a> {
                 Item::new(item_ty, ItemKind::Node(self.outputs.next().unwrap()))
             }
             ItemTyKind::Module(_) => Item::new(item_ty, ItemKind::Module),
-            ItemTyKind::Ref(_) | ItemTyKind::Mut(_) => {
-                todo!()
-            }
             ItemTyKind::Array(ty) => Item::new(
                 item_ty,
                 ItemKind::Group(Group::new(
@@ -320,14 +259,8 @@ impl<'a> CombineOutputs<'a> {
     }
 }
 
-impl<'tcx> Generator<'tcx> {
-    pub fn assign_names_to_item(
-        &mut self,
-        ident: &str,
-        item: &Item,
-        locals: &Locals,
-        force: bool,
-    ) {
+impl<'tcx> Compiler<'tcx> {
+    pub fn assign_names_to_item(&mut self, ident: &str, item: &Item, force: bool) {
         match &item.kind {
             ItemKind::Node(node_out_id) => {
                 let node_out_id = *node_out_id;
@@ -338,32 +271,26 @@ impl<'tcx> Generator<'tcx> {
                 }
             }
             ItemKind::Module => {}
-            ItemKind::Ref(local) | ItemKind::Mut(local) => {
-                let item = locals.get(*local);
-                self.assign_names_to_item(ident, item, locals, force);
-            }
             ItemKind::Group(group) => match item.ty.kind() {
                 ItemTyKind::Node(_) | ItemTyKind::Array(_) | ItemTyKind::Enum(_) => {
                     if group.len() == 1 {
                         let item = group.by_idx(0);
-                        let item = &*item;
-                        self.assign_names_to_item(ident, item, locals, force);
+                        self.assign_names_to_item(ident, item, force);
                     } else {
                         for (idx, item) in group.items().iter().enumerate() {
                             let ident = format!("{}${}", ident, idx);
-                            self.assign_names_to_item(&ident, item, locals, force);
+                            self.assign_names_to_item(&ident, item, force);
                         }
                     }
                 }
                 ItemTyKind::Struct(ty) => {
                     if group.len() == 1 {
                         let item = group.by_idx(0);
-                        let item = &*item;
-                        self.assign_names_to_item(ident, item, locals, force);
+                        self.assign_names_to_item(ident, item, force);
                     } else {
                         for (name, item) in ty.names().zip(group.items().iter()) {
                             let ident = format!("{}${}", ident, name);
-                            self.assign_names_to_item(&ident, item, locals, force);
+                            self.assign_names_to_item(&ident, item, force);
                         }
                     }
                 }
@@ -384,33 +311,25 @@ impl<'tcx> Generator<'tcx> {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    pub fn to_bitvec(
-        &mut self,
-        mod_id: ModuleId,
-        item: &Item<'tcx>,
-        locals: &Locals<'tcx>,
-    ) -> Item<'tcx> {
+    pub fn to_bitvec(&mut self, mod_id: ModuleId, item: &Item<'tcx>) -> Item<'tcx> {
         match &item.kind {
             ItemKind::Node(_) => item.clone(),
             ItemKind::Module => {
                 Item::new(item.ty, self.netlist.const_zero(mod_id, NodeTy::BitVec(0)))
             }
-            ItemKind::Ref(local) | ItemKind::Mut(local) => {
-                let item = locals.get(*local);
-                self.to_bitvec(mod_id, item, locals)
-            }
             ItemKind::Group(group) => {
                 if group.len() == 1 {
                     let item = group.by_idx(0);
-                    self.to_bitvec(mod_id, &item, locals)
+                    self.to_bitvec(mod_id, item)
                 } else {
                     let width = item.width();
 
                     let merger = Merger::new(
                         width,
-                        group.items().iter().map(|item_id| {
-                            self.to_bitvec(mod_id, item_id, locals).node_out_id()
-                        }),
+                        group
+                            .items()
+                            .iter()
+                            .map(|item_id| self.to_bitvec(mod_id, item_id).node_out_id()),
                         false,
                         None,
                     );
@@ -439,9 +358,6 @@ impl<'tcx> Generator<'tcx> {
                 Item::new(item_ty, ItemKind::Node(node_out_id))
             }
             ItemTyKind::Module(_) => Item::new(item_ty, ItemKind::Module),
-            ItemTyKind::Ref(_) | ItemTyKind::Mut(_) => {
-                todo!()
-            }
             ItemTyKind::Array(ty) => {
                 let outputs = if ty.count() == 1 {
                     Either::Left(iter::once(node_out_id))
@@ -521,7 +437,6 @@ impl<'tcx> Generator<'tcx> {
         data_part: Option<Item<'tcx>>,
         enum_ty: ItemTy<'tcx>,
         variant_idx: VariantIdx,
-        locals: &Locals<'tcx>,
     ) -> Item<'tcx> {
         let (discriminant, data_width) = {
             let enum_ty = enum_ty.enum_ty();
@@ -540,9 +455,7 @@ impl<'tcx> Generator<'tcx> {
             Either::Left(iter::once(discriminant))
         } else {
             let data_part = match data_part {
-                Some(data_part) => {
-                    self.to_bitvec(mod_id, &data_part, locals).node_out_id()
-                }
+                Some(data_part) => self.to_bitvec(mod_id, &data_part).node_out_id(),
                 None => self.netlist.const_zero(mod_id, NodeTy::BitVec(data_width)),
             };
 
@@ -565,22 +478,20 @@ mod tests {
         net_list::{Idx, ModuleId, NodeId},
         node_ty::NodeTy,
     };
-    use rustc_middle::mir::Local as MirLocal;
 
     use super::*;
-    use crate::generator::item_ty::ItemTyKind;
+    use crate::compiler::item_ty::ItemTyKind;
 
     #[test]
     fn item_node_iter() {
         let out_id = NodeOutId::new(NodeId::new(ModuleId::new(1), 1), 0);
-        let locals = Locals::default();
 
         assert_eq!(
             Item::new(
                 ItemTy::make(&ItemTyKind::Node(NodeTy::Unsigned(8))),
                 ItemKind::Node(out_id)
             )
-            .as_nodes(&locals)
+            .iter()
             .collect::<Vec<_>>(),
             &[out_id]
         );
@@ -589,56 +500,15 @@ mod tests {
     #[test]
     fn item_module_iter() {
         let module_id = ModuleId::new(1);
-        let locals = Locals::default();
 
         assert_eq!(
             Item::new(
                 ItemTy::make(&ItemTyKind::Module(module_id)),
                 ItemKind::Module
             )
-            .as_nodes(&locals)
+            .iter()
             .collect::<Vec<_>>(),
             &[]
-        );
-    }
-
-    #[test]
-    fn item_ref_iter() {
-        let out_id = NodeOutId::new(NodeId::new(ModuleId::new(1), 1), 0);
-        let ty = ItemTy::make(&ItemTyKind::Node(NodeTy::Unsigned(8)));
-
-        let mut locals = Locals::default();
-        let ref_ty = ItemTyKind::Ref(ty);
-        let local = locals.place(
-            MirLocal::from_u32(0),
-            Item::new(ItemTy::make(&ref_ty), ItemKind::Node(out_id)),
-        );
-
-        assert_eq!(
-            Item::new(ty, ItemKind::Ref(local))
-                .as_nodes(&locals)
-                .collect::<Vec<_>>(),
-            &[out_id]
-        );
-    }
-
-    #[test]
-    fn item_mut_iter() {
-        let out_id = NodeOutId::new(NodeId::new(ModuleId::new(1), 1), 0);
-        let ty = ItemTy::make(&ItemTyKind::Node(NodeTy::Unsigned(8)));
-
-        let mut locals = Locals::default();
-        let ref_ty = ItemTyKind::Mut(ty);
-        let local = locals.place(
-            MirLocal::from_u32(0),
-            Item::new(ItemTy::make(&ref_ty), ItemKind::Node(out_id)),
-        );
-
-        assert_eq!(
-            Item::new(ty, ItemKind::Mut(local))
-                .as_nodes(&locals)
-                .collect::<Vec<_>>(),
-            &[out_id]
         );
     }
 
@@ -650,8 +520,6 @@ mod tests {
         let out_id3 = NodeOutId::new(node_id, 2);
         let out_id4 = NodeOutId::new(node_id, 3);
         let ty = ItemTy::make(&ItemTyKind::Node(NodeTy::Unsigned(8)));
-
-        let locals = Locals::default();
 
         assert_eq!(
             Item::new(
@@ -673,7 +541,7 @@ mod tests {
                     )
                 ]))
             )
-            .as_nodes(&locals)
+            .iter()
             .collect::<Vec<_>>(),
             &[out_id4, out_id2, out_id3, out_id1]
         );
@@ -681,13 +549,12 @@ mod tests {
 
     #[test]
     fn item_empty_group_iter() {
-        let locals = Locals::default();
         assert_eq!(
             Item::new(
                 ItemTy::make(&ItemTyKind::Node(NodeTy::Unsigned(8))),
                 ItemKind::Group(Group::new([]))
             )
-            .as_nodes(&locals)
+            .iter()
             .collect::<Vec<_>>(),
             &[]
         );

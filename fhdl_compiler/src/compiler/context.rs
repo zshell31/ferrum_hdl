@@ -15,8 +15,8 @@ use rustc_data_structures::{
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
-        BasicBlock, BasicBlocks, Body, Const as MirConst, Local as MirLocal,
-        TerminatorKind, START_BLOCK,
+        BasicBlock, BasicBlocks, Body, Const as MirConst, Local, TerminatorKind,
+        START_BLOCK,
     },
     ty::{EarlyBinder, GenericArgsRef, TyCtxt},
 };
@@ -24,18 +24,31 @@ use rustc_span::Span;
 use rustc_type_ir::fold::TypeFoldable;
 
 use crate::{
+    compiler::{item::Item, item_ty::ItemTy},
     error::{Error, SpanError, SpanErrorKind},
-    generator::{
-        item::Item,
-        item_ty::ItemTy,
-        locals::{Local, Locals},
-    },
 };
+
+#[derive(Debug, Default, Clone)]
+pub struct Locals<'tcx>(FxHashMap<Local, Item<'tcx>>);
+
+impl<'tcx> Locals<'tcx> {
+    pub fn place(&mut self, local: Local, item: Item<'tcx>) -> Local {
+        self.0.insert(local, item);
+        local
+    }
+
+    pub fn get(&self, local: Local) -> &Item<'tcx> {
+        match self.0.get(&local) {
+            Some(item) => item,
+            None => panic!("cannot find item for local {local:?}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Variant<'tcx> {
     pub value: u128,
-    pub locals: BTreeMap<MirLocal, Item<'tcx>>,
+    pub locals: BTreeMap<Local, Item<'tcx>>,
 }
 
 impl<'tcx> Variant<'tcx> {
@@ -49,17 +62,17 @@ impl<'tcx> Variant<'tcx> {
 
 #[derive(Debug, Clone)]
 pub struct Switch<'tcx> {
-    pub locals: BTreeSet<MirLocal>,
+    pub locals: BTreeSet<Local>,
     pub discr: Item<'tcx>,
     pub width: u128,
     targets: usize,
     variants: Vec<Variant<'tcx>>,
     is_otherwise: bool,
-    otherwise: Option<BTreeMap<MirLocal, Item<'tcx>>>,
+    otherwise: Option<BTreeMap<Local, Item<'tcx>>>,
 }
 
 impl<'tcx> Switch<'tcx> {
-    pub fn new(locals: FxHashSet<MirLocal>, discr: Item<'tcx>, targets: usize) -> Self {
+    pub fn new(locals: FxHashSet<Local>, discr: Item<'tcx>, targets: usize) -> Self {
         Self {
             locals: locals.into_iter().collect(),
             discr,
@@ -71,7 +84,7 @@ impl<'tcx> Switch<'tcx> {
         }
     }
 
-    pub fn contains(&self, local: MirLocal) -> bool {
+    pub fn contains(&self, local: Local) -> bool {
         self.locals.contains(&local)
     }
 
@@ -89,7 +102,7 @@ impl<'tcx> Switch<'tcx> {
         }
     }
 
-    pub fn add_variant_item(&mut self, local: MirLocal, item: Item<'tcx>) {
+    pub fn add_variant_item(&mut self, local: Local, item: Item<'tcx>) {
         assert!(self.locals.contains(&local));
         if self.is_otherwise {
             self.otherwise.as_mut().unwrap().insert(local, item);
@@ -113,7 +126,7 @@ impl<'tcx> Switch<'tcx> {
         })
     }
 
-    pub fn otherwise(&self) -> Option<&BTreeMap<MirLocal, Item<'tcx>>> {
+    pub fn otherwise(&self) -> Option<&BTreeMap<Local, Item<'tcx>>> {
         let otherwise = self.otherwise.as_ref()?;
         assert_eq!(self.locals.len(), otherwise.len());
         for local in &self.locals {
@@ -161,21 +174,20 @@ unsafe impl IndexType for BasicBlockWrap {
 }
 
 #[derive(Debug, Clone)]
-pub struct EvalContext<'tcx> {
+pub struct Context<'tcx> {
     pub generic_args: GenericArgsRef<'tcx>,
     pub module_id: ModuleId,
     pub locals: Locals<'tcx>,
     pub mir: &'tcx Body<'tcx>,
     pub fn_did: DefId,
-    checked: FxHashSet<MirLocal>,
+    checked: FxHashSet<Local>,
     consts: FxHashMap<MirConst<'tcx>, Item<'tcx>>,
     switches: Vec<Switch<'tcx>>,
     closures: FxHashMap<ItemTy<'tcx>, Closure<'tcx>>,
     post_dominators: Option<Dominators<NodeIndex<BasicBlockWrap>>>,
-    outputs: Vec<Local>,
 }
 
-impl<'tcx> EvalContext<'tcx> {
+impl<'tcx> Context<'tcx> {
     pub fn new(
         fn_did: DefId,
         generic_args: GenericArgsRef<'tcx>,
@@ -193,7 +205,6 @@ impl<'tcx> EvalContext<'tcx> {
             switches: Default::default(),
             closures: Default::default(),
             post_dominators: None,
-            outputs: Default::default(),
         }
     }
 
@@ -207,12 +218,12 @@ impl<'tcx> EvalContext<'tcx> {
     }
 
     #[inline]
-    pub fn add_checked(&mut self, local: MirLocal) {
+    pub fn add_checked(&mut self, local: Local) {
         self.checked.insert(local);
     }
 
     #[inline]
-    pub fn is_checked(&self, local: MirLocal) -> bool {
+    pub fn is_checked(&self, local: Local) -> bool {
         self.checked.contains(&local)
     }
 
@@ -240,13 +251,16 @@ impl<'tcx> EvalContext<'tcx> {
         self.closures.insert(closure_ty, closure);
     }
 
+    pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<&Closure<'tcx>> {
+        self.closures.get(&closure_ty)
+    }
+
     pub fn find_closure(
         &self,
         closure_ty: ItemTy<'tcx>,
         span: Span,
     ) -> Result<&Closure<'tcx>, Error> {
-        self.closures
-            .get(&closure_ty)
+        self.find_closure_opt(closure_ty)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span).into())
     }
 
@@ -297,14 +311,5 @@ impl<'tcx> EvalContext<'tcx> {
         }
 
         (root.unwrap(), graph)
-    }
-
-    pub fn add_output(&mut self, output: Local) {
-        self.outputs.push(output);
-    }
-
-    #[allow(dead_code)]
-    pub fn outputs(&self) -> &[Local] {
-        self.outputs.as_slice()
     }
 }

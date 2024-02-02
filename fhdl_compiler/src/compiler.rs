@@ -1,10 +1,11 @@
 pub mod arena;
 pub mod attr;
+pub mod context;
 pub mod func;
 pub mod item;
 pub mod item_ty;
-pub mod locals;
 pub mod mir;
+mod sym_ident;
 
 use std::{
     env, error::Error as StdError, fmt::Display, fs, io, mem::transmute,
@@ -13,13 +14,13 @@ use std::{
 
 use bumpalo::Bump;
 use cargo_toml::Manifest;
+pub use context::Context;
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::{
     backend::Verilog,
     net_list::{ModuleId, NetList, NodeOutId},
     node::{Splitter, ZeroExtend},
     node_ty::NodeTy,
-    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -27,10 +28,11 @@ use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
     ItemId as HirItemId, ItemKind,
 };
-use rustc_interface::{interface::Compiler, Queries};
+use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
 use rustc_span::def_id::CrateNum;
 use serde::Deserialize;
+pub use sym_ident::SymIdent;
 
 use self::item_ty::ItemTy;
 use crate::error::{Error, SpanError};
@@ -40,7 +42,7 @@ pub struct CompilerCallbacks {}
 impl Callbacks for CompilerCallbacks {
     fn after_analysis<'tcx>(
         &mut self,
-        _compiler: &Compiler,
+        _compiler: &RustCompiler,
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
         let res = queries.global_ctxt().unwrap().enter(|tcx| {
@@ -55,12 +57,12 @@ impl Callbacks for CompilerCallbacks {
 
             if should_be_synthesized {
                 let arena = Bump::new();
-                // SAFETY: the lifetime of the generator is shorter than the lifetime of the arena.
+                // SAFETY: the lifetime of the compiler is shorter than the lifetime of the arena.
                 let arena = unsafe { transmute::<&'_ Bump, &'tcx Bump>(&arena) };
 
-                match init_generator(tcx, is_primary, arena) {
-                    Ok(mut generator) => {
-                        generator.generate();
+                match init_compiler(tcx, is_primary, arena) {
+                    Ok(mut compiler) => {
+                        compiler.generate();
                         true
                     }
                     Err(e) => {
@@ -121,15 +123,15 @@ fn should_be_synthesized(is_primary: bool) -> Result<bool, Box<dyn StdError>> {
     }
 }
 
-fn init_generator<'tcx>(
+fn init_compiler<'tcx>(
     tcx: TyCtxt<'tcx>,
     is_primary: bool,
     arena: &'tcx Bump,
-) -> Result<Generator<'tcx>, Error> {
+) -> Result<Compiler<'tcx>, Error> {
     let top_module = find_top_module(tcx)?;
     let crates = Crates::find_crates(tcx, is_primary)?;
 
-    Ok(Generator::new(tcx, top_module, crates, arena))
+    Ok(Compiler::new(tcx, top_module, crates, arena))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -231,7 +233,7 @@ impl Settings {
     }
 }
 
-pub struct Generator<'tcx> {
+pub struct Compiler<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub netlist: NetList,
     pub settings: Settings,
@@ -243,7 +245,7 @@ pub struct Generator<'tcx> {
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
 }
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     fn new(
         tcx: TyCtxt<'tcx>,
         top_module: HirItemId,
@@ -347,11 +349,6 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn type_of(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> Ty<'tcx> {
         self.tcx.type_of(def_id).instantiate(self.tcx, generics)
-    }
-
-    #[allow(dead_code)]
-    pub fn set_mod_name(&mut self, mod_id: ModuleId, name: &str) {
-        self.netlist[mod_id].name = Symbol::new(name);
     }
 
     pub fn trunc_or_extend(

@@ -4,22 +4,23 @@ use fhdl_netlist::{
     node::{Input, ModInst},
 };
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{FnSig, GenericArgsRef};
+use rustc_middle::{
+    mir::Local,
+    ty::{FnSig, GenericArgsRef},
+};
 use rustc_span::{Span, Symbol as RustSymbol};
 
 use super::{
     item::{Group, Item, ItemKind},
     item_ty::{ItemTy, ItemTyKind},
-    locals::Local,
-    Generator,
+    Compiler, Context,
 };
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
-    eval_context::EvalContext,
 };
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     pub fn fn_sig(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> FnSig<'tcx> {
         let fn_sig = self.tcx.fn_sig(def_id);
         fn_sig.instantiate(self.tcx, generics).skip_binder()
@@ -27,11 +28,10 @@ impl<'tcx> Generator<'tcx> {
 
     pub fn make_input(
         &mut self,
-        local: impl Into<Local>,
+        local: Local,
         ty: ItemTy<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Item<'tcx> {
-        let local = local.into();
         let mod_id = ctx.module_id;
         let item = match &ty.kind() {
             ItemTyKind::Node(node_ty) => {
@@ -42,21 +42,6 @@ impl<'tcx> Generator<'tcx> {
                 Item::new(ty, ItemKind::Node(input))
             }
             ItemTyKind::Module(_) => Item::new(ty, ItemKind::Module),
-            ItemTyKind::Ref(ref_ty) => {
-                let local = local.inc();
-                let item = self.make_input(local, *ref_ty, ctx);
-                ctx.locals.place(local, item);
-
-                Item::new(ty, ItemKind::Ref(local))
-            }
-            ItemTyKind::Mut(ref_ty) => {
-                let local = local.inc();
-                let item = self.make_input(local, *ref_ty, ctx);
-                ctx.locals.place(local, item);
-                ctx.add_output(local);
-
-                Item::new(ty, ItemKind::Mut(local))
-            }
             ItemTyKind::Array(array_ty) => Item::new(
                 ty,
                 ItemKind::Group(Group::new(
@@ -106,14 +91,12 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         instant_mod_id: ModuleId,
         inputs: impl IntoIterator<Item = &'a Item<'tcx>> + 'a,
-        ctx: &EvalContext<'tcx>,
+        ctx: &Context<'tcx>,
     ) -> NodeId
     where
         'tcx: 'a,
     {
-        let inputs = inputs
-            .into_iter()
-            .flat_map(|input| input.as_nodes(&ctx.locals));
+        let inputs = inputs.into_iter().flat_map(|input| input.iter());
 
         let outputs = self
             .netlist

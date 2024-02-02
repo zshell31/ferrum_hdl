@@ -465,6 +465,16 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     })
 }
 
+#[synth(inline)]
+#[inline]
+pub fn reg0<D: ClockDomain, T: SignalValue + Default>(
+    clk: Clock<D>,
+    rst: &Reset<D>,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    reg(clk, rst, &T::default(), comb_fn)
+}
+
 #[blackbox(SignalRegEn)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
@@ -493,6 +503,17 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
             val
         }
     })
+}
+
+#[synth(inline)]
+#[inline]
+pub fn reg_en0<D: ClockDomain, T: SignalValue + Default>(
+    clk: Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    reg_en(clk, rst, en, &T::default(), comb_fn)
 }
 
 pub trait Unbundle {

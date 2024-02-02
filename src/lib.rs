@@ -29,7 +29,7 @@ pub mod prelude {
         const_helpers::{Assert, ConstConstr, IsTrue},
         domain::{clk_divider, hz_to_period, Clock, ClockDomain},
         index::{idx_constr, Idx},
-        signal::{reg, reg_en, Enable, Reset, Signal, SignalValue},
+        signal::{reg, reg0, reg_en, reg_en0, Enable, Reset, Signal, SignalValue},
         simulation::Simulate,
         unsigned::{u, Unsigned},
     };

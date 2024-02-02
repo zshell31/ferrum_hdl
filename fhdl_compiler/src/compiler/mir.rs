@@ -23,15 +23,14 @@ use rustc_span::Span;
 use rustc_target::abi::FieldIdx;
 
 use super::{
+    context::{Closure, Switch},
     item::{CombineOutputs, Group, Item},
     item_ty::{ItemTy, ItemTyKind},
-    Generator, MonoItem,
+    Compiler, Context, MonoItem, SymIdent,
 };
 use crate::{
     blackbox::bin_op::BinOp,
     error::{Error, SpanError, SpanErrorKind},
-    eval_context::{Closure, EvalContext, Switch},
-    scopes::SymIdent,
     utils,
 };
 
@@ -94,7 +93,7 @@ impl From<(DefId, Promoted)> for DefIdOrPromoted {
     }
 }
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     pub fn visit_fn(
         &mut self,
         fn_did: impl Into<DefIdOrPromoted>,
@@ -142,7 +141,7 @@ impl<'tcx> Generator<'tcx> {
             self.netlist[module_id].is_inlined = true;
         }
 
-        let mut ctx = EvalContext::new(fn_did, fn_generics, module_id, mir);
+        let mut ctx = Context::new(fn_did, fn_generics, module_id, mir);
 
         let inputs = mir
             .local_decls
@@ -168,18 +167,18 @@ impl<'tcx> Generator<'tcx> {
             match var_debug_info.value {
                 VarDebugInfoContents::Place(place) => {
                     let item = self.visit_place(&place, &ctx, span)?;
-                    self.assign_names_to_item(name, &item, &ctx.locals, true);
+                    self.assign_names_to_item(name, &item, true);
                 }
                 VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
                     if let Some(item) = ctx.find_const(&const_) {
-                        self.assign_names_to_item(name, item, &ctx.locals, true);
+                        self.assign_names_to_item(name, item, true);
                     }
                 }
             }
         }
 
         let output = ctx.locals.get(RETURN_PLACE);
-        self.visit_fn_output(output, &ctx);
+        self.visit_fn_output(output);
 
         Ok(module_id)
     }
@@ -197,7 +196,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn visit_fn_inputs<'a>(
         &mut self,
         inputs: impl IntoIterator<Item = (Local, &'a LocalDecl<'tcx>)>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Result<Vec<Item<'tcx>>, Error>
     where
         'tcx: 'a,
@@ -216,10 +215,10 @@ impl<'tcx> Generator<'tcx> {
             .collect()
     }
 
-    pub fn visit_fn_output(&mut self, output: &Item<'tcx>, ctx: &EvalContext<'tcx>) {
-        self.assign_names_to_item("out", output, &ctx.locals, false);
+    pub fn visit_fn_output(&mut self, output: &Item<'tcx>) {
+        self.assign_names_to_item("out", output, false);
 
-        for node_out_id in output.as_nodes(&ctx.locals) {
+        for node_out_id in output.iter() {
             self.netlist.add_output(node_out_id);
         }
     }
@@ -229,7 +228,7 @@ impl<'tcx> Generator<'tcx> {
         mir: &Body<'tcx>,
         start: Option<BasicBlock>,
         end: Option<BasicBlock>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Result<(), Error> {
         let mut next = Some(start.unwrap_or(START_BLOCK));
         while let Some(block) = next {
@@ -249,7 +248,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         mir: &Body<'tcx>,
         block: BasicBlock,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Result<Option<BasicBlock>, Error> {
         let basic_blocks = &mir.basic_blocks;
         let block_data = &basic_blocks[block];
@@ -332,7 +331,6 @@ impl<'tcx> Generator<'tcx> {
                                             data_part,
                                             ty,
                                             variant_idx,
-                                            &ctx.locals,
                                         ))
                                     }
 
@@ -446,8 +444,7 @@ impl<'tcx> Generator<'tcx> {
                     let discr = match switch.discr.ty.kind() {
                         ItemTyKind::Enum(enum_ty) => {
                             let discr_ty = enum_ty.discr_ty();
-                            let discr =
-                                self.to_bitvec(mod_id, &switch.discr, &ctx.locals);
+                            let discr = self.to_bitvec(mod_id, &switch.discr);
 
                             Item::new(
                                 discr_ty,
@@ -462,7 +459,7 @@ impl<'tcx> Generator<'tcx> {
                                 ),
                             )
                         }
-                        _ => self.to_bitvec(mod_id, &switch.discr, &ctx.locals),
+                        _ => self.to_bitvec(mod_id, &switch.discr),
                     };
                     let discr = discr.node_out_id();
 
@@ -476,7 +473,7 @@ impl<'tcx> Generator<'tcx> {
                         let item =
                             Item::new(output_ty, Group::new(otherwise.values().cloned()));
 
-                        self.to_bitvec(mod_id, &item, &ctx.locals).node_out_id()
+                        self.to_bitvec(mod_id, &item).node_out_id()
                     });
 
                     let inputs = switch.variants().map(|variant| {
@@ -488,8 +485,7 @@ impl<'tcx> Generator<'tcx> {
                             Group::new(variant.locals.values().cloned()),
                         );
 
-                        let node_out_id =
-                            self.to_bitvec(mod_id, &item, &ctx.locals).node_out_id();
+                        let node_out_id = self.to_bitvec(mod_id, &item).node_out_id();
 
                         (mask, node_out_id)
                     });
@@ -526,7 +522,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         local: Local,
         item: &Item<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Result<(), Error> {
         match ctx.last_switch() {
             Some(switch) if switch.contains(local) => {
@@ -543,7 +539,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         item_ty: ItemTy<'tcx>,
         fields: &IndexVec<FieldIdx, Operand<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         Ok(Item::new(
@@ -559,7 +555,7 @@ impl<'tcx> Generator<'tcx> {
     fn visit_operand(
         &mut self,
         operand: &Operand<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         match operand {
@@ -638,7 +634,7 @@ impl<'tcx> Generator<'tcx> {
         &mut self,
         ty: Ty<'tcx>,
         value: u128,
-        ctx: &EvalContext<'tcx>,
+        ctx: &Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
@@ -652,7 +648,7 @@ impl<'tcx> Generator<'tcx> {
     pub fn visit_place(
         &mut self,
         place: &Place<'tcx>,
-        ctx: &EvalContext<'tcx>,
+        ctx: &Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
@@ -670,20 +666,20 @@ impl<'tcx> Generator<'tcx> {
 
                     item.by_idx(offset as usize).clone()
                 }
-                PlaceElem::Deref => item.deref(&ctx.locals).clone(),
+                PlaceElem::Deref => item.clone(),
                 PlaceElem::Subtype(_) => item,
                 PlaceElem::Field(idx, _) => {
                     if ctx.is_checked(place.local) {
                         item
                     } else {
-                        item.by_field_idx(idx).clone()
+                        item.by_field(idx).clone()
                     }
                 }
                 PlaceElem::Downcast(_, variant_idx) => {
                     let mod_id = ctx.module_id;
 
                     let enum_ty = item_ty.enum_ty();
-                    let variant = self.to_bitvec(mod_id, &item, &ctx.locals);
+                    let variant = self.to_bitvec(mod_id, &item);
 
                     self.enum_variant_from_bitvec(
                         mod_id,
@@ -760,7 +756,7 @@ impl<'tcx> Generator<'tcx> {
         fn_did: impl Into<DefId>,
         fn_generics: GenericArgsRef<'tcx>,
         args: &[Operand<'tcx>],
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let fn_did = fn_did.into();
@@ -833,7 +829,7 @@ impl<'tcx> Generator<'tcx> {
         closure_did: DefId,
         closure_generics: GenericArgsRef<'tcx>,
         captures: &IndexVec<FieldIdx, Operand<'tcx>>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let closure_generics = ctx.instantiate(self.tcx, closure_generics);
@@ -861,12 +857,23 @@ impl<'tcx> Generator<'tcx> {
         Ok(closure)
     }
 
-    #[allow(dead_code)]
+    pub fn set_mod_name(
+        &mut self,
+        closure: &Item<'tcx>,
+        name: &str,
+        ctx: &Context<'tcx>,
+    ) {
+        if let Some(closure) = ctx.find_closure_opt(closure.ty) {
+            let mod_id = closure.closure_id;
+            self.netlist[mod_id].name = Symbol::new(name);
+        }
+    }
+
     pub fn instantiate_closure(
         &mut self,
         closure: &Item<'tcx>,
         inputs: &[Item<'tcx>],
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let Closure {

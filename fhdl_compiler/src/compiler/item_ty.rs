@@ -19,7 +19,7 @@ use rustc_type_ir::{
     UintTy,
 };
 
-use super::Generator;
+use super::Compiler;
 use crate::{
     error::{Error, SpanError, SpanErrorKind},
     utils,
@@ -178,8 +178,6 @@ impl<'tcx> EnumTy<'tcx> {
 pub enum ItemTyKind<'tcx> {
     Node(NodeTy),
     Module(ModuleId),
-    Ref(ItemTy<'tcx>),
-    Mut(ItemTy<'tcx>),
     Array(ArrayTy<'tcx>),
     Struct(StructTy<'tcx>),
     Enum(EnumTy<'tcx>),
@@ -211,7 +209,6 @@ impl<'tcx> ItemTyKind<'tcx> {
         match self {
             Self::Node(ty) => ty.width(),
             Self::Module(_) => 0,
-            Self::Ref(ty) | Self::Mut(ty) => ty.width(),
             Self::Array(ty) => ty.width(),
             Self::Struct(ty) => ty.width(),
             Self::Enum(ty) => ty.width(),
@@ -342,7 +339,7 @@ impl<'tcx> From<u128> for Generic<'tcx> {
     }
 }
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     #[inline]
     pub fn alloc_ty(&self, ty: impl Into<ItemTyKind<'tcx>>) -> ItemTy<'tcx> {
         ItemTy::new(self.alloc(ty.into()))
@@ -403,12 +400,8 @@ impl<'tcx> Generator<'tcx> {
 
                     Some(self.resolve_ty(alias_ty, generics, span)?)
                 }
-                TyKind::Ref(_, ty, mutability) => {
-                    let item_ty = self.resolve_ty(*ty, generics, span)?;
-                    Some(self.alloc_ty(match mutability {
-                        Mutability::Not => ItemTyKind::Ref(item_ty),
-                        Mutability::Mut => ItemTyKind::Mut(item_ty),
-                    }))
+                TyKind::Ref(_, ty, Mutability::Not) => {
+                    Some(self.resolve_ty(*ty, generics, span)?)
                 }
                 TyKind::Closure(_, closure_generics) => {
                     let closure_args = ClosureArgs {
@@ -548,7 +541,7 @@ impl<'tcx> Generator<'tcx> {
                 self.resolve_const(*const_, span).map(Into::into).map(Some)
             }
             TyKind::Adt(adt, generics) if !generics.is_empty() => {
-                // TODO: check
+                // TODO: check if blackbox_ty is ignored
                 let blackbox_ty = self.find_blackbox_ty(adt.did());
 
                 match blackbox_ty {
@@ -610,14 +603,12 @@ impl<'tcx> Generator<'tcx> {
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<StructTy<'tcx>, Error> {
-        let tys = self.alloc_from_iter_res_with_gen(
-            tys.enumerate(),
-            |generator, (ind, ty)| {
-                let item_ty = generator.resolve_ty(ty, generics, span)?;
+        let tys =
+            self.alloc_from_iter_res_with_gen(tys.enumerate(), |compiler, (ind, ty)| {
+                let item_ty = compiler.resolve_ty(ty, generics, span)?;
 
                 Ok(Named::new(item_ty, Symbol::new_from_ind(ind)))
-            },
-        )?;
+            })?;
 
         Ok(StructTy::new(blackbox_ty, tys))
     }
@@ -656,14 +647,14 @@ impl<'tcx> Generator<'tcx> {
         });
 
         let fields =
-            self.alloc_from_iter_opt_res_with_gen(fields, |generator, (sym, ty)| {
+            self.alloc_from_iter_opt_res_with_gen(fields, |compiler, (sym, ty)| {
                 let ignore = match ty.kind() {
-                    TyKind::Adt(adt, _) => generator.ignore_ty(adt.did()),
+                    TyKind::Adt(adt, _) => compiler.ignore_ty(adt.did()),
                     _ => false,
                 };
                 if !ignore {
                     Some(
-                        generator
+                        compiler
                             .resolve_ty(ty, generics, span)
                             .map(|item_ty| Named::new(item_ty, sym)),
                     )
@@ -683,15 +674,15 @@ impl<'tcx> Generator<'tcx> {
         span: Span,
     ) -> Result<EnumTy<'tcx>, Error> {
         let variants =
-            self.alloc_from_iter_res_with_gen(adt.variants(), |generator, variant| {
-                let struct_ty = generator.resolve_struct_ty_(
+            self.alloc_from_iter_res_with_gen(adt.variants(), |compiler, variant| {
+                let struct_ty = compiler.resolve_struct_ty_(
                     None,
                     variant.fields.iter(),
                     adt_generics,
                     generics,
                     span,
                 )?;
-                let item_ty = ItemTy::new(generator.alloc(ItemTyKind::Struct(struct_ty)));
+                let item_ty = ItemTy::new(compiler.alloc(ItemTyKind::Struct(struct_ty)));
 
                 Ok(Named::new(item_ty, Symbol::new(variant.name.as_str())))
             })?;

@@ -6,7 +6,7 @@ use rustc_ast::{
 };
 use rustc_hir::def_id::DefId;
 
-use super::Generator;
+use super::Compiler;
 
 const FHDL_TOOL: &str = "fhdl_tool";
 const SYNTH_ATTR: &str = "synth";
@@ -18,7 +18,7 @@ pub struct Synth {
     pub inlined: bool,
 }
 
-impl<'tcx> Generator<'tcx> {
+impl<'tcx> Compiler<'tcx> {
     pub fn find_fhdl_tool_attr<T>(
         &self,
         attr_kind: &str,

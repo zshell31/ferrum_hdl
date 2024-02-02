@@ -3,27 +3,26 @@ use rustc_span::Span;
 
 use super::EvalExpr;
 use crate::{
+    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::Error,
-    eval_context::EvalContext,
-    generator::{item::Item, item_ty::ItemTy, Generator},
     utils,
 };
 
 pub fn bit_vec_trans<'tcx>(
-    generator: &mut Generator<'tcx>,
+    compiler: &mut Compiler<'tcx>,
     source: &Item<'tcx>,
-    ctx: &EvalContext<'tcx>,
+    ctx: &Context<'tcx>,
     trans: impl FnOnce(
-        &mut Generator<'tcx>,
-        &EvalContext<'tcx>,
+        &mut Compiler<'tcx>,
+        &Context<'tcx>,
         NodeOutId,
     ) -> Result<(NodeOutId, ItemTy<'tcx>), Error>,
 ) -> Result<Item<'tcx>, Error> {
-    let bit_vec = generator.to_bitvec(ctx.module_id, source, &ctx.locals);
+    let bit_vec = compiler.to_bitvec(ctx.module_id, source);
 
-    let (res, item_ty) = trans(generator, ctx, bit_vec.node_out_id())?;
+    let (res, item_ty) = trans(compiler, ctx, bit_vec.node_out_id())?;
 
-    let from = generator.from_bitvec(ctx.module_id, res, item_ty);
+    let from = compiler.from_bitvec(ctx.module_id, res, item_ty);
 
     Ok(from)
 }
@@ -33,20 +32,20 @@ pub struct BitVecShrink;
 impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
     // fn eval_expr(
     //     &self,
-    //     generator: &mut Generator<'tcx>,
+    //     compiler: &mut compiler<'tcx>,
     //     expr: &'tcx Expr<'tcx>,
     //     ctx: &mut EvalContext<'tcx>,
     // ) -> Result<ItemId, Error> {
     //     utils::args!(expr as rec);
 
-    //     let rec = generator.eval_expr(rec, ctx)?;
+    //     let rec = compiler.eval_expr(rec, ctx)?;
 
-    //     let ty = generator.node_type(expr.hir_id, ctx);
-    //     let width = generator.find_sig_ty(ty, ctx, expr.span)?.width();
+    //     let ty = compiler.node_type(expr.hir_id, ctx);
+    //     let width = compiler.find_sig_ty(ty, ctx, expr.span)?.width();
 
-    //     let rec = generator.to_bitvec(ctx.module_id, rec);
+    //     let rec = compiler.to_bitvec(ctx.module_id, rec);
 
-    //     Ok(generator
+    //     Ok(compiler
     //         .netlist
     //         .add_and_get_out(
     //             ctx.module_id,
@@ -61,28 +60,28 @@ pub struct BitVecSlice;
 impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
     fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
+        compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
         output_ty: ItemTy<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec);
         let rec = rec.node_out_id();
 
-        let fn_ty = generator.type_of(ctx.fn_did, ctx.generic_args);
+        let fn_ty = compiler.type_of(ctx.fn_did, ctx.generic_args);
 
-        let start = generator
+        let start = compiler
             .generic_const(fn_ty, 1, ctx.generic_args, span)?
             .unwrap();
 
-        let sym = generator.netlist[rec]
+        let sym = compiler.netlist[rec]
             .sym
             .map(|sym| Symbol::new_from_args(format_args!("{}_slice", sym)));
 
         Ok(Item::new(
             output_ty,
-            generator.netlist.add_and_get_out(
+            compiler.netlist.add_and_get_out(
                 ctx.module_id,
                 Splitter::new(rec, [(output_ty.to_bitvec(), sym)], Some(start), false),
             ),
@@ -95,14 +94,14 @@ pub struct BitVecUnpack;
 impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
     fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
+        compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
         output_ty: ItemTy<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
+        ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec);
 
-        Ok(generator.from_bitvec(ctx.module_id, rec, output_ty))
+        Ok(compiler.from_bitvec(ctx.module_id, rec, output_ty))
     }
 }

@@ -12,7 +12,7 @@ impl BitVal {
 
     // fn add_const<'tcx>(
     //     &self,
-    //     generator: &mut Generator<'tcx>,
+    //     compiler: &mut compiler<'tcx>,
     //     ctx: &EvalContext<'tcx>,
     // ) -> Result<ItemId, Error> {
     //     let value = match self.0 {
@@ -21,7 +21,7 @@ impl BitVal {
     //     };
 
     //     let cons = Const::new(NodeTy::Bit, value.into(), None);
-    //     Ok(generator
+    //     Ok(compiler
     //         .netlist
     //         .add_and_get_out(ctx.module_id, cons)
     //         .into())
@@ -31,10 +31,10 @@ impl BitVal {
 impl<'tcx> EvalExpr<'tcx> for BitVal {
     // fn eval_expr(
     //     &self,
-    //     generator: &mut Generator<'tcx>,
+    //     compiler: &mut compiler<'tcx>,
     //     _: &Expr<'tcx>,
     //     ctx: &mut EvalContext<'tcx>,
     // ) -> Result<ItemId, Error> {
-    //     self.add_const(generator, ctx)
+    //     self.add_const(compiler, ctx)
     // }
 }

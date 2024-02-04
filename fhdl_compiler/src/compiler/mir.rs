@@ -21,13 +21,13 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use rustc_target::abi::FieldIdx;
-use tracing::{debug, error};
+use tracing::error;
 
 use super::{
-    context::{Closure, Switch},
+    context::Switch,
     item::{CombineOutputs, Group, Item},
     item_ty::{ItemTy, ItemTyKind},
-    Compiler, Context, MonoItem, SymIdent,
+    Closure, Compiler, Context, MonoItem, SymIdent,
 };
 use crate::{
     blackbox::bin_op::BinOp,
@@ -103,7 +103,6 @@ impl<'tcx> Compiler<'tcx> {
         top_module: bool,
     ) -> Result<ModuleId, Error> {
         let fn_did = fn_did.into();
-        debug!("visit_fn: {fn_did:?}");
 
         let (fn_did, mir, module_sym, is_inlined) = match fn_did {
             DefIdOrPromoted::DefId(fn_did) => {
@@ -661,13 +660,13 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
         let ty = place.ty(&ctx.mir.local_decls, self.tcx).ty;
-        let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
 
         for place_elem in place.projection {
             item = match place_elem {
                 PlaceElem::ConstantIndex {
                     offset, from_end, ..
                 } => {
+                    let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
                     let array_ty = item_ty.array_ty();
                     let count = array_ty.count() as u64;
                     let offset = if from_end { count - offset } else { offset };
@@ -686,6 +685,7 @@ impl<'tcx> Compiler<'tcx> {
                 PlaceElem::Downcast(_, variant_idx) => {
                     let mod_id = ctx.module_id;
 
+                    let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
                     let enum_ty = item_ty.enum_ty();
                     let variant = self.to_bitvec(mod_id, &item);
 
@@ -860,24 +860,12 @@ impl<'tcx> Compiler<'tcx> {
             List::empty(),
             span,
         )?;
-        ctx.add_closure(closure_ty, Closure {
+        self.add_closure(closure_ty, Closure {
             closure_id,
             output_ty,
         });
 
         Ok(closure)
-    }
-
-    pub fn set_mod_name(
-        &mut self,
-        closure: &Item<'tcx>,
-        name: &str,
-        ctx: &Context<'tcx>,
-    ) {
-        if let Some(closure) = ctx.find_closure_opt(closure.ty) {
-            let mod_id = closure.closure_id;
-            self.netlist[mod_id].name = Symbol::new(name);
-        }
     }
 
     pub fn instantiate_closure(
@@ -890,15 +878,15 @@ impl<'tcx> Compiler<'tcx> {
         let Closure {
             closure_id,
             output_ty,
-        } = ctx.find_closure(closure.ty, span)?;
+        } = self.find_closure(closure.ty, span)?;
 
         let module = self.instantiate_module(
-            *closure_id,
+            closure_id,
             iter::once(closure).chain(inputs.iter()),
             ctx,
         );
         let mut outputs = CombineOutputs::new(self, module);
-        Ok(outputs.next_output(*output_ty))
+        Ok(outputs.next_output(output_ty))
     }
 }
 

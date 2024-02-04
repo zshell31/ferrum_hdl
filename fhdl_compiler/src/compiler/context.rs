@@ -20,13 +20,9 @@ use rustc_middle::{
     },
     ty::{EarlyBinder, GenericArgsRef, TyCtxt},
 };
-use rustc_span::Span;
 use rustc_type_ir::fold::TypeFoldable;
 
-use crate::{
-    compiler::{item::Item, item_ty::ItemTy},
-    error::{Error, SpanError, SpanErrorKind},
-};
+use crate::compiler::item::Item;
 
 #[derive(Debug, Default, Clone)]
 pub struct Locals<'tcx>(FxHashMap<Local, Item<'tcx>>);
@@ -137,12 +133,6 @@ impl<'tcx> Switch<'tcx> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct Closure<'tcx> {
-    pub closure_id: ModuleId,
-    pub output_ty: ItemTy<'tcx>,
-}
-
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 struct BasicBlockWrap(BasicBlock);
@@ -183,7 +173,6 @@ pub struct Context<'tcx> {
     checked: FxHashSet<Local>,
     consts: FxHashMap<MirConst<'tcx>, Item<'tcx>>,
     switches: Vec<Switch<'tcx>>,
-    closures: FxHashMap<ItemTy<'tcx>, Closure<'tcx>>,
     post_dominators: Option<Dominators<NodeIndex<BasicBlockWrap>>>,
 }
 
@@ -203,7 +192,6 @@ impl<'tcx> Context<'tcx> {
             checked: Default::default(),
             consts: Default::default(),
             switches: Default::default(),
-            closures: Default::default(),
             post_dominators: None,
         }
     }
@@ -245,23 +233,6 @@ impl<'tcx> Context<'tcx> {
 
     pub fn last_switch(&mut self) -> Option<&mut Switch<'tcx>> {
         self.switches.last_mut()
-    }
-
-    pub fn add_closure(&mut self, closure_ty: ItemTy<'tcx>, closure: Closure<'tcx>) {
-        self.closures.insert(closure_ty, closure);
-    }
-
-    pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<&Closure<'tcx>> {
-        self.closures.get(&closure_ty)
-    }
-
-    pub fn find_closure(
-        &self,
-        closure_ty: ItemTy<'tcx>,
-        span: Span,
-    ) -> Result<&Closure<'tcx>, Error> {
-        self.find_closure_opt(closure_ty)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span).into())
     }
 
     pub fn immediate_post_dominator(

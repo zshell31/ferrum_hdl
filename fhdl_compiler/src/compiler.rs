@@ -20,6 +20,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NetList, NodeOutId},
     node::{Splitter, ZeroExtend},
     node_ty::NodeTy,
+    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -29,11 +30,11 @@ use rustc_hir::{
 };
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
-use rustc_span::def_id::CrateNum;
+use rustc_span::{def_id::CrateNum, Span};
 pub use sym_ident::SymIdent;
 
-use self::item_ty::ItemTy;
-use crate::error::{Error, SpanError};
+use self::{item::Item, item_ty::ItemTy};
+use crate::error::{Error, SpanError, SpanErrorKind};
 
 pub struct CompilerCallbacks {
     pub args: CompilerArgs,
@@ -107,6 +108,12 @@ impl<'tcx> MonoItem<'tcx> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Closure<'tcx> {
+    pub closure_id: ModuleId,
+    pub output_ty: ItemTy<'tcx>,
+}
+
 struct Crates {
     core: CrateNum,
     std: CrateNum,
@@ -170,6 +177,7 @@ pub struct Compiler<'tcx> {
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
+    closures: FxHashMap<ItemTy<'tcx>, Closure<'tcx>>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -190,6 +198,7 @@ impl<'tcx> Compiler<'tcx> {
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
             item_ty: Default::default(),
+            closures: Default::default(),
         }
     }
 
@@ -306,6 +315,30 @@ impl<'tcx> Compiler<'tcx> {
         } else {
             self.netlist
                 .add_and_get_out(mod_id, ZeroExtend::new(to_ty, from, None))
+        }
+    }
+
+    pub fn add_closure(&mut self, closure_ty: ItemTy<'tcx>, closure: Closure<'tcx>) {
+        self.closures.insert(closure_ty, closure);
+    }
+
+    pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<Closure<'tcx>> {
+        self.closures.get(&closure_ty).copied()
+    }
+
+    pub fn find_closure(
+        &self,
+        closure_ty: ItemTy<'tcx>,
+        span: Span,
+    ) -> Result<Closure<'tcx>, Error> {
+        self.find_closure_opt(closure_ty)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span).into())
+    }
+
+    pub fn set_mod_name(&mut self, closure: &Item<'tcx>, name: &str) {
+        if let Some(closure) = self.find_closure_opt(closure.ty) {
+            let mod_id = closure.closure_id;
+            self.netlist[mod_id].name = Symbol::new(name);
         }
     }
 }

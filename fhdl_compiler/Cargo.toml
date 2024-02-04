@@ -1,22 +1,32 @@
 [package]
 name = "fhdl_compiler"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition.workspace = true
+
+[[bin]]
+name = "cargo-fhdl"
+path = "src/main.rs"
+
+[[bin]]
+name = "fhdl-driver"
+path = "src/driver.rs"
 
 [package.metadata.rust-analyzer]
 rustc_private = true
 
 [dependencies]
 anstream = "0.6.4"
-anstyle = "1.0.4"
-bumpalo = { version = "3.14.0", features = ["collections", "allocator_api"] }
-cargo_toml = "0.19.0"
-either = "1.9.0"
+anstyle = { workspace = true }
+anyhow = { workspace = true }
+bumpalo = { workspace = true, features = ["collections", "allocator_api"] }
+either = { workspace = true }
 ferrum_hdl = { path = "../" }
 fhdl_blackbox = { path = "../fhdl_blackbox" }
+fhdl_cli = { path = "../fhdl_cli" }
 fhdl_netlist = { path = "../fhdl_netlist" }
-if_chain = "1.0.2"
-serde = { version = "1.0", features = ["derive"] }
-smallvec = "1.11.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = "1.0"
+tracing = { version = "0.1", features = ["max_level_trace", "release_max_level_debug"]  }
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 petgraph = "0.6.4"

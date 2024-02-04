@@ -1,7 +1,10 @@
 #![allow(clippy::ptr_arg)]
-use std::fmt::Debug;
+use std::{fmt::Debug, hash::BuildHasherDefault};
 
-use rustc_data_structures::fx::FxIndexSet;
+use indexmap::IndexSet;
+use rustc_hash::FxHasher;
+
+type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
 
 use super::{
     ident::{NodeId, NodeOutId},

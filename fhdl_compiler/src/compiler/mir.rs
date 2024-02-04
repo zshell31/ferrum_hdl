@@ -21,6 +21,7 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use rustc_target::abi::FieldIdx;
+use tracing::{debug, error};
 
 use super::{
     context::{Closure, Switch},
@@ -76,6 +77,7 @@ impl<'b, 'tcx: 'b> Iterator for BranchBlocks<'b, 'tcx> {
     }
 }
 
+#[derive(Debug)]
 pub enum DefIdOrPromoted {
     DefId(DefId),
     Promoted(DefId, Promoted),
@@ -101,11 +103,12 @@ impl<'tcx> Compiler<'tcx> {
         top_module: bool,
     ) -> Result<ModuleId, Error> {
         let fn_did = fn_did.into();
+        debug!("visit_fn: {fn_did:?}");
 
         let (fn_did, mir, module_sym, is_inlined) = match fn_did {
             DefIdOrPromoted::DefId(fn_did) => {
                 let mir = self.tcx.instance_mir(InstanceDef::Item(fn_did));
-                let module_sym = if !self.tcx.is_closure(fn_did) {
+                let module_sym = if !self.tcx.type_of(fn_did).skip_binder().is_closure() {
                     self.module_name(fn_did)
                 } else {
                     SymIdent::Closure.into()
@@ -115,7 +118,7 @@ impl<'tcx> Compiler<'tcx> {
             DefIdOrPromoted::Promoted(fn_did, promoted) => {
                 let promoted_mir = self.tcx.promoted_mir(fn_did);
                 let mir = &promoted_mir[promoted];
-                let module_sym = if !self.tcx.is_closure(fn_did) {
+                let module_sym = if !self.tcx.type_of(fn_did).skip_binder().is_closure() {
                     self.module_name(fn_did)
                 } else {
                     SymIdent::Closure.into()
@@ -352,14 +355,14 @@ impl<'tcx> Compiler<'tcx> {
                     };
 
                     let item = item.ok_or_else(|| {
-                        println!("assign ({}): {rvalue:#?}", dump_rvalue_kind(rvalue));
+                        error!("assign ({}): {rvalue:#?}", dump_rvalue_kind(rvalue));
                         SpanError::new(SpanErrorKind::NotSynthExpr, span)
                     })?;
 
                     self.assign(assign.0.local, &item, ctx)?;
                 }
                 _ => {
-                    println!("statement: {statement:#?}");
+                    error!("statement: {statement:#?}");
                     return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
                 }
             }
@@ -380,12 +383,17 @@ impl<'tcx> Compiler<'tcx> {
                 let ty = ctx.instantiate(self.tcx, const_.ty());
 
                 if let TyKind::FnDef(fn_did, fn_generics) = ty.kind() {
-                    let item =
-                        self.resolve_fn_call(*fn_did, fn_generics, args, ctx, *fn_span)?;
+                    let item = self.resolve_fn_call(
+                        *fn_did,
+                        fn_generics,
+                        args.iter().map(|arg| &arg.node),
+                        ctx,
+                        *fn_span,
+                    )?;
 
                     self.assign(destination.local, &item, ctx)?;
                 } else {
-                    println!("terminator: {terminator:#?}");
+                    error!("terminator: {terminator:#?}");
                     return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
                 }
 
@@ -510,7 +518,7 @@ impl<'tcx> Compiler<'tcx> {
                 Some(convergent_block)
             }
             _ => {
-                println!("terminator: {terminator:#?}");
+                error!("terminator: {terminator:#?}");
                 return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
             }
         };
@@ -624,7 +632,7 @@ impl<'tcx> Compiler<'tcx> {
                     }
                 }
 
-                println!("operand value: {:#?}", value.const_);
+                error!("operand value: {:#?}", value.const_);
                 Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into())
             }
         }
@@ -689,7 +697,7 @@ impl<'tcx> Compiler<'tcx> {
                     )
                 }
                 _ => {
-                    println!("place elem: {place_elem:?} (local: {:?})", place.local);
+                    error!("place elem: {place_elem:?} (local: {:?})", place.local);
                     return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
                 }
             }
@@ -751,14 +759,17 @@ impl<'tcx> Compiler<'tcx> {
         (!has_assign, count, common_locals)
     }
 
-    pub fn resolve_fn_call(
+    pub fn resolve_fn_call<'a>(
         &mut self,
         fn_did: impl Into<DefId>,
         fn_generics: GenericArgsRef<'tcx>,
-        args: &[Operand<'tcx>],
+        args: impl IntoIterator<Item = &'a Operand<'tcx>>,
         ctx: &mut Context<'tcx>,
         span: Span,
-    ) -> Result<Item<'tcx>, Error> {
+    ) -> Result<Item<'tcx>, Error>
+    where
+        'tcx: 'a,
+    {
         let fn_did = fn_did.into();
         let fn_generics = ctx.instantiate(self.tcx, fn_generics);
 
@@ -784,7 +795,7 @@ impl<'tcx> Compiler<'tcx> {
         }
 
         let args = args
-            .iter()
+            .into_iter()
             .map(|arg| self.visit_operand(arg, ctx, span))
             .collect::<Result<Vec<_>, _>>()?;
 

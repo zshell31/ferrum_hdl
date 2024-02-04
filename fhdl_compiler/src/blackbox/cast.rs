@@ -6,6 +6,7 @@ use ferrum_hdl::{
 };
 use fhdl_netlist::{net_list::ModuleId, node_ty::NodeTy};
 use rustc_span::Span;
+use tracing::error;
 
 use super::EvalExpr;
 use crate::{
@@ -57,7 +58,7 @@ impl Conversion {
                 Ok(Self::to_unsigned(module_id, from.clone(), to_ty, compiler))
             }
             _ => {
-                println!("from {:?} => to {:?}", from.ty, to_ty);
+                error!("from {:?} => to {:?}", from.ty, to_ty);
 
                 Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
             }

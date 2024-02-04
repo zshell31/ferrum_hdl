@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use rustc_data_structures::fx::FxHashSet;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 use crate::{

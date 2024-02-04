@@ -8,14 +8,13 @@ pub mod mir;
 mod sym_ident;
 
 use std::{
-    env, error::Error as StdError, fmt::Display, fs, io, mem::transmute,
-    path::Path as StdPath,
+    env, fmt::Display, fs, io, mem::transmute, path::Path as StdPath, time::Instant,
 };
 
 use bumpalo::Bump;
-use cargo_toml::Manifest;
 pub use context::Context;
 use fhdl_blackbox::BlackboxKind;
+use fhdl_cli::CompilerArgs;
 use fhdl_netlist::{
     backend::Verilog,
     net_list::{ModuleId, NetList, NodeOutId},
@@ -31,13 +30,14 @@ use rustc_hir::{
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
 use rustc_span::def_id::CrateNum;
-use serde::Deserialize;
 pub use sym_ident::SymIdent;
 
 use self::item_ty::ItemTy;
 use crate::error::{Error, SpanError};
 
-pub struct CompilerCallbacks {}
+pub struct CompilerCallbacks {
+    pub args: CompilerArgs,
+}
 
 impl Callbacks for CompilerCallbacks {
     fn after_analysis<'tcx>(
@@ -46,32 +46,22 @@ impl Callbacks for CompilerCallbacks {
         queries: &'tcx Queries<'tcx>,
     ) -> Compilation {
         let res = queries.global_ctxt().unwrap().enter(|tcx| {
-            let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
-            let should_be_synthesized = match should_be_synthesized(is_primary) {
-                Ok(should_be_synthesized) => should_be_synthesized,
+            let arena = Bump::new();
+            // SAFETY: the lifetime of the compiler is shorter than the lifetime of the
+            // arena/options.
+            let arena = unsafe { transmute::<&'_ Bump, &'tcx Bump>(&arena) };
+            let args =
+                unsafe { transmute::<&'_ CompilerArgs, &'tcx CompilerArgs>(&self.args) };
+
+            match init_compiler(tcx, args, arena) {
+                Ok(mut compiler) => {
+                    compiler.generate();
+                    true
+                }
                 Err(e) => {
-                    tcx.sess.err(e.to_string());
-                    return false;
+                    tcx.sess.dcx().err(e.to_string());
+                    false
                 }
-            };
-
-            if should_be_synthesized {
-                let arena = Bump::new();
-                // SAFETY: the lifetime of the compiler is shorter than the lifetime of the arena.
-                let arena = unsafe { transmute::<&'_ Bump, &'tcx Bump>(&arena) };
-
-                match init_compiler(tcx, is_primary, arena) {
-                    Ok(mut compiler) => {
-                        compiler.generate();
-                        true
-                    }
-                    Err(e) => {
-                        tcx.sess.err(e.to_string());
-                        false
-                    }
-                }
-            } else {
-                true
             }
         });
 
@@ -83,55 +73,15 @@ impl Callbacks for CompilerCallbacks {
     }
 }
 
-fn should_be_synthesized(is_primary: bool) -> Result<bool, Box<dyn StdError>> {
-    if is_primary {
-        Ok(true)
-    } else {
-        let manifest = env::var_os("CARGO_MANIFEST_DIR")
-            .and_then(|var| var.to_str().map(|var| StdPath::new(var).join("Cargo.toml")))
-            .ok_or("`CARGO_MANIFEST_DIR` is not specified")?;
-
-        let manifest = fs::read(&manifest).map_err(|e| {
-            format!(
-                "Failed to read from `{}`: {}",
-                manifest.to_string_lossy(),
-                e
-            )
-        })?;
-
-        #[allow(dead_code)]
-        #[derive(Deserialize)]
-        struct FhdlMetadata {
-            #[serde(default)]
-            synth: bool,
-        }
-
-        #[allow(dead_code)]
-        #[derive(Deserialize)]
-        struct Metadata {
-            ferrum_hdl: Option<FhdlMetadata>,
-        }
-
-        let manifest = Manifest::<Metadata>::from_slice_with_metadata(&manifest)?;
-
-        Ok(manifest
-            .package
-            .and_then(|package| package.metadata)
-            .and_then(|metadata| metadata.ferrum_hdl)
-            .map(|metadata| metadata.synth)
-            .unwrap_or_default())
-    }
-}
-
 fn init_compiler<'tcx>(
     tcx: TyCtxt<'tcx>,
-    is_primary: bool,
+    args: &'tcx CompilerArgs,
     arena: &'tcx Bump,
 ) -> Result<Compiler<'tcx>, Error> {
     let top_module = find_top_module(tcx)?;
-    let crates = Crates::find_crates(tcx, is_primary)?;
+    let crates = Crates::find_crates(tcx)?;
 
-    Ok(Compiler::new(tcx, top_module, crates, arena))
+    Ok(Compiler::new(tcx, top_module, crates, args, arena))
 }
 
 fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
@@ -164,7 +114,7 @@ struct Crates {
 }
 
 impl Crates {
-    fn find_crates(tcx: TyCtxt<'_>, is_primary: bool) -> Result<Self, Error> {
+    fn find_crates(tcx: TyCtxt<'_>) -> Result<Self, Error> {
         const CORE: &str = "core";
         const STD: &str = "std";
         const FERRUM_HDL: &str = "ferrum_hdl";
@@ -192,18 +142,7 @@ impl Crates {
 
         let core = core.ok_or_else(|| Error::MissingCrate(CORE))?;
         let std = std.ok_or_else(|| Error::MissingCrate(STD))?;
-        let ferrum_hdl = (if is_primary {
-            ferrum_hdl
-        } else {
-            ferrum_hdl.or_else(|| {
-                if tcx.crate_name(LOCAL_CRATE).as_str() == FERRUM_HDL {
-                    Some(LOCAL_CRATE)
-                } else {
-                    None
-                }
-            })
-        })
-        .ok_or_else(|| Error::MissingCrate(FERRUM_HDL))?;
+        let ferrum_hdl = ferrum_hdl.ok_or_else(|| Error::MissingCrate(FERRUM_HDL))?;
 
         Ok(Self {
             core,
@@ -221,22 +160,10 @@ impl Crates {
     }
 }
 
-pub struct Settings {
-    pub trace_eval_expr: bool,
-}
-
-impl Settings {
-    fn new() -> Self {
-        Self {
-            trace_eval_expr: env::var("TRACE_EVAL_EXPR").is_ok(),
-        }
-    }
-}
-
 pub struct Compiler<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub netlist: NetList,
-    pub settings: Settings,
+    pub args: &'tcx CompilerArgs,
     arena: &'tcx Bump,
     top_module: HirItemId,
     crates: Crates,
@@ -250,12 +177,13 @@ impl<'tcx> Compiler<'tcx> {
         tcx: TyCtxt<'tcx>,
         top_module: HirItemId,
         crates: Crates,
+        args: &'tcx CompilerArgs,
         arena: &'tcx Bump,
     ) -> Self {
         Self {
             tcx,
             netlist: NetList::new(),
-            settings: Settings::new(),
+            args,
             arena,
             top_module,
             crates,
@@ -292,6 +220,8 @@ impl<'tcx> Compiler<'tcx> {
             )),
         )?;
 
+        let elapsed = Instant::now();
+
         self.visit_fn(
             DefId::from(self.top_module.hir_id().owner),
             GenericArgs::empty(),
@@ -306,7 +236,14 @@ impl<'tcx> Compiler<'tcx> {
 
         let verilog = Verilog::new(&self.netlist).generate();
 
-        Ok(fs::write(path, verilog)?)
+        fs::write(path, verilog)?;
+
+        self.print_message(
+            &"Synthesized",
+            Some(&format!("in {:.2}s", elapsed.elapsed().as_secs_f32())),
+        )?;
+
+        Ok(())
     }
 
     fn print_message(
@@ -338,13 +275,13 @@ impl<'tcx> Compiler<'tcx> {
     fn emit_err(&mut self, err: Error) {
         match err {
             Error::Span(SpanError { kind, span }) => {
-                self.tcx.sess.span_err(span, kind.to_string());
+                self.tcx.sess.dcx().span_err(span, kind.to_string());
             }
             _ => {
-                self.tcx.sess.err(err.to_string());
+                self.tcx.sess.dcx().err(err.to_string());
             }
         };
-        self.tcx.sess.abort_if_errors();
+        self.tcx.sess.dcx().abort_if_errors();
     }
 
     pub fn type_of(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> Ty<'tcx> {

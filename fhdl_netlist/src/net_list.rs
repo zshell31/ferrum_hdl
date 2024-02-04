@@ -8,7 +8,7 @@ use std::ops::{Index, IndexMut};
 
 pub use ident::*;
 pub(crate) use in_out::InOut;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 pub use with_id::WithId;
 
 pub use self::module::Module;

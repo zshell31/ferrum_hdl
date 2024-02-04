@@ -5,18 +5,32 @@ members = [
   "fhdl_const_func",
   "fhdl_macros",
   "fhdl_netlist",
-  "fhdl_blackbox"
+  "fhdl_blackbox", 
+  "fhdl_cli"
 ]
 
-[package]
-name = "ferrum_hdl"
-version = "0.1.0"
-edition = "2021"
-license = "MIT"
+[workspace.package]
+version = "0.2.0"
 description = "The HDL framework for writing FPGA firmware in Rust"
 repository = "https://github.com/zshell31/ferrum_hdl"
 keywords = ["fpga", "hdl", "verilog", "hardware"]
 authors = ["Evgeny Nosov <evgen3188@gmail.com>"]
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anstyle = "1"
+anyhow = "1"
+bumpalo = "3.14.0"
+either = "1.9.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+strum = { version = "0.26.1", features = ["derive"] }
+
+[package]
+name = "ferrum_hdl"
+version.workspace = true
+edition.workspace = true
 
 [package.metadata.ferrum_hdl]
 synth = true
@@ -35,13 +49,8 @@ crate-type = ["staticlib"]
 
 [dependencies]
 derive-where = "1.2.2"
-dyn-clone = "1.0.13"
 fhdl_const_func = { path = "fhdl_const_func" }
 fhdl_macros = { path = "fhdl_macros" }
-fnv = "1.0.7"
 num-bigint = "0.4.4"
 num-traits = "0.2.17"
 paste = "1.0.14"
-seq-macro = "0.3.5"
-smallvec = "1.11.0"
-strum = { version = "0.25.0", features = ["derive"] }

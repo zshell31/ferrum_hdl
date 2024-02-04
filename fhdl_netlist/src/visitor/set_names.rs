@@ -1,5 +1,5 @@
 use once_cell::sync::Lazy;
-use rustc_data_structures::fx::FxHashMap;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{

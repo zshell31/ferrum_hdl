@@ -1,4 +1,4 @@
-use rustc_data_structures::fx::FxHashSet;
+use rustc_hash::FxHashSet;
 
 use super::Visitor;
 use crate::{

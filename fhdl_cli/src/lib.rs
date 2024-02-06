@@ -1,6 +1,6 @@
 use std::env;
 
-use clap::{Args, Parser};
+use clap::Parser;
 use commands::Commands;
 
 mod commands;
@@ -24,7 +24,7 @@ enum CargoCli {
     Fhdl(FhdlCli),
 }
 
-#[derive(Args)]
+#[derive(Parser)]
 #[command(version, about, long_about = None)]
 #[command(styles = styles::get_styles())]
 struct FhdlCli {
@@ -39,7 +39,16 @@ pub fn run_cli(driver: &'static str, toolchain: String) -> anyhow::Result<()> {
         cargo: env::var("CARGO").unwrap_or("cargo".into()),
     };
 
-    let CargoCli::Fhdl(args) = CargoCli::parse();
+    let args = if env::args()
+        .next()
+        .filter(|bin| bin.ends_with("cargo-fhdl"))
+        .is_some()
+    {
+        let CargoCli::Fhdl(args) = CargoCli::parse();
+        args
+    } else {
+        FhdlCli::parse()
+    };
 
     args.command.run(&env)
 }

@@ -12,11 +12,17 @@ macro_rules! path_str {
     };
 }
 
-pub fn main() {
-    let home = env::var("RUSTUP_HOME").unwrap();
-    let toolchain = env::var("RUSTUP_TOOLCHAIN").unwrap();
-    let lib = path_str!([&home, "toolchains", &toolchain, "lib"]);
+fn find_toolchain() -> Option<(String, String)> {
+    let home = env::var("RUSTUP_HOME").ok()?;
+    let toolchain = env::var("RUSTUP_TOOLCHAIN").ok()?;
 
-    println!("cargo:rustc-link-arg-bin=fhdl-driver=-Wl,-rpath,{lib}");
-    println!("cargo:rustc-env=FHDL_TOOLCHAIN={toolchain}");
+    Some((home, toolchain))
+}
+
+pub fn main() {
+    if let Some((home, toolchain)) = find_toolchain() {
+        let lib = path_str!([&home, "toolchains", &toolchain, "lib"]);
+        println!("cargo:rustc-link-arg-bin=fhdl-driver=-Wl,-rpath,{lib}");
+        println!("cargo:rustc-env=FHDL_TOOLCHAIN={toolchain}");
+    }
 }

@@ -8,6 +8,10 @@ name = "cargo-fhdl"
 path = "src/main.rs"
 
 [[bin]]
+name = "fhdl"
+path = "src/main.rs"
+
+[[bin]]
 name = "fhdl-driver"
 path = "src/driver.rs"
 

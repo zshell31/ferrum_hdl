@@ -144,9 +144,8 @@ fn main() {
 
         if run_fhdl {
             // Set options for mir generation
-            args.extend(["-C".into(), "panic=abort".into()]);
             args.extend(["-Zalways-encode-mir".into()]);
-            args.extend(["-Zmir-opt-level=1".into()]);
+            args.extend(["-Zmir-opt-level=0".into()]);
 
             env::set_var("RUST_BACKTRACE", "1");
 

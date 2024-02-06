@@ -27,10 +27,10 @@ pub mod prelude {
         bitpack::BitPack,
         cast::{Cast, CastFrom},
         const_helpers::{Assert, ConstConstr, IsTrue},
-        domain::{clk_divider, hz_to_period, Clock, ClockDomain},
+        domain::{clk_divider, hz_to_period, Clock, ClockDomain, TestSystem4},
         index::{idx_constr, Idx},
         signal::{reg, reg0, reg_en, reg_en0, Enable, Reset, Signal, SignalValue},
-        simulation::Simulate,
+        simulation::{Simulate, Simulation},
         unsigned::{u, Unsigned},
     };
 }

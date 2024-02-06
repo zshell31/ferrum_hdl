@@ -8,6 +8,9 @@ members = [
   "fhdl_blackbox", 
   "fhdl_cli"
 ]
+exclude = [
+  "templates/simple"
+]
 
 [workspace.package]
 version = "0.2.0"

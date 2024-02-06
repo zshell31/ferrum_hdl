@@ -507,9 +507,7 @@ impl<'tcx> Compiler<'tcx> {
                     let case = self.netlist.add_and_get_out(mod_id, case);
                     let case = self.from_bitvec(mod_id, case, output_ty);
 
-                    for (local, item) in
-                        switch.locals.iter().zip(case.group().items().iter())
-                    {
+                    for (local, item) in switch.locals.iter().zip(case.group().items()) {
                         self.assign(*local, item, ctx)?;
                     }
                 }
@@ -659,15 +657,13 @@ impl<'tcx> Compiler<'tcx> {
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
-        let ty = place.ty(&ctx.mir.local_decls, self.tcx).ty;
 
         for place_elem in place.projection {
             item = match place_elem {
                 PlaceElem::ConstantIndex {
                     offset, from_end, ..
                 } => {
-                    let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
-                    let array_ty = item_ty.array_ty();
+                    let array_ty = item.ty.array_ty();
                     let count = array_ty.count() as u64;
                     let offset = if from_end { count - offset } else { offset };
 
@@ -685,8 +681,7 @@ impl<'tcx> Compiler<'tcx> {
                 PlaceElem::Downcast(_, variant_idx) => {
                     let mod_id = ctx.module_id;
 
-                    let item_ty = self.resolve_ty(ty, ctx.generic_args, span)?;
-                    let enum_ty = item_ty.enum_ty();
+                    let enum_ty = item.ty.enum_ty();
                     let variant = self.to_bitvec(mod_id, &item);
 
                     self.enum_variant_from_bitvec(
@@ -789,10 +784,6 @@ impl<'tcx> Compiler<'tcx> {
                 }
             })
             .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthCall, span))?;
-
-        if !self.tcx.is_mir_available(instance_did) {
-            return Err(SpanError::new(SpanErrorKind::NotSynthCall, span).into());
-        }
 
         let args = args
             .into_iter()

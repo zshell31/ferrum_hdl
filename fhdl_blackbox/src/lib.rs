@@ -6,9 +6,6 @@ pub enum BlackboxKind {
     ArrayReverse,
     ArrayMake,
 
-    BitH,
-    BitL,
-
     BitPackMsb,
     BitPackPack,
     BitPackRepack,
@@ -62,7 +59,6 @@ pub enum BlackboxTy {
     Signal,
     Wrapped,
     BitVec,
-    Bit,
     Clock,
     Unsigned,
     UnsignedShort,

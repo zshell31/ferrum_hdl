@@ -23,20 +23,20 @@ pub struct GenArgs {
 
 #[allow(non_upper_case_globals)]
 const CARGO_dev: &[(&str, &str)] = &[
-    ("CARGO_PROFILE_dev_OPT_LEVEL", "0"),
-    ("CARGO_PROFILE_dev_DEBUG", "full"),
-    ("CARGO_PROFILE_dev_STRIP", "none"),
-    ("CARGO_PROFILE_dev_DEBUG_ASSERTIONS", "false"),
-    ("CARGO_PROFILE_dev_OVERFLOW_CHECKS", "false"),
-    ("CARGO_PROFILE_dev_LTO", "off"),
-    ("CARGO_PROFILE_dev_PANIC", "abort"),
-    ("CARGO_PROFILE_dev_INCREMENTAL", "true"),
+    ("CARGO_PROFILE_DEV_OPT_LEVEL", "0"),
+    ("CARGO_PROFILE_DEV_DEBUG", "full"),
+    ("CARGO_PROFILE_DEV_STRIP", "none"),
+    ("CARGO_PROFILE_DEV_DEBUG_ASSERTIONS", "false"),
+    ("CARGO_PROFILE_DEV_OVERFLOW_CHECKS", "false"),
+    ("CARGO_PROFILE_DEV_LTO", "off"),
+    ("CARGO_PROFILE_DEV_PANIC", "abort"),
+    ("CARGO_PROFILE_DEV_INCREMENTAL", "true"),
 ];
 
 impl GenArgs {
-    fn set_cargo_profile() {
+    fn set_cargo_profile(cmd: &mut Command) {
         for (key, val) in CARGO_dev {
-            env::set_var(*key, *val);
+            cmd.env(*key, *val);
         }
     }
 }
@@ -53,15 +53,21 @@ impl Run for GenArgs {
             .target_directory
             .join(format!("fhdl-{}", &env.toolchain));
 
-        env::set_var("RUSTUP_TOOLCHAIN", &env.toolchain);
-        env::set_var("FHDL_ARGS", serde_json::to_string(&self.compiler_opts)?);
-
-        // Override settings for dev profile
-        Self::set_cargo_profile();
+        let fhdl_args = serde_json::to_string(&self.compiler_opts)?;
 
         let driver = env::current_exe()
             .map_err(|_| anyhow::anyhow!("current executable path invalid"))?
             .with_file_name(env.driver);
+
+        let mut cmd = Command::new(&env.cargo);
+        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
+        cmd.env("RUSTC_WRAPPER", driver)
+            .env("RUSTUP_TOOLCHAIN", &env.toolchain)
+            .env("RUSTC_FLAGS", "-Z always-encode-mir=yes")
+            .env("FHDL_ARGS", fhdl_args);
+
+        // Override settings for dev profile
+        Self::set_cargo_profile(&mut cmd);
 
         let args = [
             if self.lib { "--lib" } else { "" },
@@ -76,16 +82,13 @@ impl Run for GenArgs {
         .into_iter()
         .filter(|arg| !arg.is_empty());
 
-        let mut cmd = Command::new(&env.cargo);
-        cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
-        cmd.env("RUSTC_WRAPPER", driver)
-            .arg("build")
+        cmd.arg("build")
             .args(args)
             .arg("--target-dir")
             .arg(&target_dir);
 
         cmd.status()
-            .map_err(|_| anyhow::anyhow!("failed to run cargo"))?;
+            .map_err(|e| anyhow::anyhow!("failed to run cargo: {e}"))?;
 
         Ok(())
     }

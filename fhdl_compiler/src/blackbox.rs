@@ -1,6 +1,5 @@
 pub mod array;
 pub mod bin_op;
-pub mod bit;
 pub mod bitpack;
 pub mod bitvec;
 pub mod bundle;
@@ -83,10 +82,6 @@ eval_expr!(
     ArrayReverse => array::Reverse,
     ArrayMap => array::Map,
     ArrayMake => array::Make,
-
-
-    BitL => bit::BitVal(false),
-    BitH => bit::BitVal(true),
 
     BitPackPack => bitpack::BitPackPack,
     BitPackRepack => bitpack::BitPackRepack,

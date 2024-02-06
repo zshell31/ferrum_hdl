@@ -72,7 +72,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
         let fn_ty = compiler.type_of(ctx.fn_did, ctx.generic_args);
 
         let start = compiler
-            .generic_const(fn_ty, 1, ctx.generic_args, span)?
+            .generic_const(fn_ty, 0, ctx.generic_args, span)?
             .unwrap();
 
         let sym = compiler.netlist[rec]

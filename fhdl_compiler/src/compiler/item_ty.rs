@@ -468,9 +468,6 @@ impl<'tcx> Compiler<'tcx> {
                         ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::BitVec(val))))
                     })
                 }
-                BlackboxTy::Bit => {
-                    Some(ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::Bit))))
-                }
                 BlackboxTy::Clock => {
                     Some(ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::Clock))))
                 }
@@ -553,6 +550,16 @@ impl<'tcx> Compiler<'tcx> {
                         Some(arg) => self.from_gen_arg(arg, span).map(Some),
                         None => Ok(None),
                     },
+                }
+            }
+            TyKind::FnDef(def_id, generics) => {
+                let fn_generics = &self.tcx.generics_of(def_id).params;
+                match fn_generics
+                    .get(idx)
+                    .and_then(|gen| generics.get(gen.index as usize))
+                {
+                    Some(arg) => self.from_gen_arg(arg, span).map(Some),
+                    None => Ok(None),
                 }
             }
             _ => Ok(None),

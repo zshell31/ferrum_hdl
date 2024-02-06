@@ -143,11 +143,7 @@ fn main() {
         let run_fhdl = !normal_rustc && is_primary && is_target_crate;
 
         if run_fhdl {
-            // Set options for mir generation
-            args.extend(["-Zalways-encode-mir".into()]);
-            args.extend(["-Zmir-opt-level=0".into()]);
-
-            env::set_var("RUST_BACKTRACE", "1");
+            env::set_var("RUST_BACKTRACE", "full");
 
             let fhdl_args = serde_json::from_str(
                 &env::var("FHDL_ARGS").expect("FHDL_ARGS is not set"),

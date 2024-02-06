@@ -372,13 +372,18 @@ impl<'tcx> Compiler<'tcx> {
                         ),
                     );
 
-                    Either::Right(self.netlist[splitter].node_out_ids())
+                    Either::Right(
+                        self.netlist[splitter]
+                            .node_out_ids()
+                            .collect::<Vec<_>>()
+                            .into_iter(),
+                    )
                 };
 
                 Item::new(
                     item_ty,
                     ItemKind::Group(Group::new(
-                        outputs.map(|output| Item::new(ty.ty(), ItemKind::Node(output))),
+                        outputs.map(|output| self.from_bitvec(mod_id, output, ty.ty())),
                     )),
                 )
             }
@@ -396,13 +401,19 @@ impl<'tcx> Compiler<'tcx> {
                         ),
                     );
 
-                    Either::Right(self.netlist[splitter].node_out_ids().zip(ty.tys()))
+                    Either::Right(
+                        self.netlist[splitter]
+                            .node_out_ids()
+                            .zip(ty.tys())
+                            .collect::<Vec<_>>()
+                            .into_iter(),
+                    )
                 };
 
                 Item::new(
                     item_ty,
                     ItemKind::Group(Group::new(
-                        outputs.map(|(output, ty)| Item::new(ty, ItemKind::Node(output))),
+                        outputs.map(|(output, ty)| self.from_bitvec(mod_id, output, ty)),
                     )),
                 )
             }

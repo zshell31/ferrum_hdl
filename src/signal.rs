@@ -22,8 +22,6 @@ use crate::{
 
 pub trait SignalValue: Debug + Clone + 'static {}
 
-impl SignalValue for bool {}
-
 impl<T: SignalValue> SignalValue for Option<T> {}
 
 #[derive_where(Debug, Clone)]
@@ -137,24 +135,6 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 }
 
-impl<D: ClockDomain> Signal<D, bool> {
-    pub fn click(source: &Source<bool>, f: impl FnOnce()) {
-        source.revert();
-        f();
-        source.revert();
-    }
-
-    #[synth]
-    pub fn and(self, other: impl Into<Self>) -> Self {
-        self.apply2(other, |this, other| this && other)
-    }
-
-    #[synth]
-    pub fn or(self, other: impl Into<Self>) -> Self {
-        self.apply2(other, |this, other| this || other)
-    }
-}
-
 impl<D: ClockDomain> Signal<D, Bit> {
     pub fn click(source: &Source<Bit>, f: impl FnOnce()) {
         source.revert();
@@ -261,18 +241,6 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
     }
 }
 
-impl<D: ClockDomain> Wrapped<D, bool> {
-    #[synth]
-    pub fn and(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
-        Signal::from(self).and(other)
-    }
-
-    #[synth]
-    pub fn or(self, other: impl Into<Signal<D, bool>>) -> Signal<D, bool> {
-        Signal::from(self).or(other)
-    }
-}
-
 impl<D: ClockDomain> Wrapped<D, Bit> {
     #[synth]
     pub fn and(self, other: impl Into<Signal<D, Bit>>) -> Signal<D, Bit> {
@@ -308,12 +276,6 @@ impl<T: SignalValue> Source<T> {
 }
 
 impl Source<Bit> {
-    pub fn revert(&self) {
-        self.0.replace_with(|val| !(*val));
-    }
-}
-
-impl Source<bool> {
     pub fn revert(&self) {
         self.0.replace_with(|val| !(*val));
     }

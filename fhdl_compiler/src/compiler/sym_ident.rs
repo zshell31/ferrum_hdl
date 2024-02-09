@@ -10,6 +10,7 @@ pub enum SymIdent {
     DffEn,
     Msb,
     Out,
+    Bit,
 }
 
 impl SymIdent {
@@ -23,6 +24,7 @@ impl SymIdent {
             Self::DffEn => "dff_en",
             Self::Msb => "msb",
             Self::Out => "out",
+            Self::Bit => "bit",
         }
     }
 }

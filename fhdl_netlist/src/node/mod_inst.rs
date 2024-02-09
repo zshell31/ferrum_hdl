@@ -11,6 +11,7 @@ pub struct ModInst {
     module_id: ModuleId,
     inputs: Vec<NodeOutIdx>,
     outputs: Vec<NodeOutput>,
+    inline: bool,
 }
 
 impl ModInst {
@@ -28,6 +29,7 @@ impl ModInst {
                 .into_iter()
                 .map(|(ty, sym)| NodeOutput::wire(ty, sym))
                 .collect(),
+            inline: false,
         }
     }
 
@@ -37,6 +39,10 @@ impl ModInst {
 
     pub fn set_name(&mut self, name: Option<Symbol>) {
         self.name = name;
+    }
+
+    pub fn set_inline(&mut self, inline: bool) {
+        self.inline = inline;
     }
 
     pub fn module_id(&self) -> ModuleId {
@@ -108,7 +114,13 @@ impl IsNode for ModInst {
         let module = &net_list[module_id];
         let node = WithId::<ModuleId, _>::new(target, self);
 
-        assert_eq!(self.inputs.len(), module.inputs_len());
+        assert_eq!(
+            self.inputs.len(),
+            module.inputs_len(),
+            "module {} ({})",
+            module_id,
+            module.name
+        );
         for (input, mod_input) in node.inputs().zip(module.inputs()) {
             assert_eq!(
                 net_list[input].width(),

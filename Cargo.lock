@@ -252,6 +252,7 @@ dependencies = [
  "num-bigint",
  "num-traits",
  "paste",
+ "smallvec",
 ]
 
 [[package]]
@@ -286,6 +287,7 @@ dependencies = [
  "fhdl_blackbox",
  "fhdl_cli",
  "fhdl_netlist",
+ "itertools",
  "petgraph",
  "serde",
  "serde_json",
@@ -325,6 +327,7 @@ dependencies = [
  "once_cell",
  "rustc-hash",
  "smallvec",
+ "tracing",
 ]
 
 [[package]]
@@ -365,6 +368,15 @@ checksum = "824b2ae422412366ba479e8111fd301f7b5faece8149317bb81925979a53f520"
 dependencies = [
  "equivalent",
  "hashbrown",
+]
+
+[[package]]
+name = "itertools"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba291022dbbd398a455acf126c1e341954079855bc60dfdda641363bd6922569"
+dependencies = [
+ "either",
 ]
 
 [[package]]
@@ -605,9 +617,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.11.0"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "62bb4feee49fdd9f707ef802e22365a35de4b7b299de4763d44bfea899442ff9"
+checksum = "e6ecd384b10a64542d77071bd64bd7b231f4ed5940fba55e98c3de13824cf3d7"
 
 [[package]]
 name = "strsim"

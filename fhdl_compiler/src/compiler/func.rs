@@ -10,11 +10,7 @@ use rustc_middle::{
 };
 use rustc_span::{Span, Symbol as RustSymbol};
 
-use super::{
-    item::{Group, Item, ItemKind},
-    item_ty::{ItemTy, ItemTyKind},
-    Compiler, Context,
-};
+use super::{item::Item, item_ty::ItemTy, Compiler, Context};
 use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
@@ -32,37 +28,11 @@ impl<'tcx> Compiler<'tcx> {
         ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
     ) -> Item<'tcx> {
-        let mod_id = ctx.module_id;
-        let item = match &ty.kind() {
-            ItemTyKind::Node(node_ty) => {
-                let input = self
-                    .netlist
-                    .add_and_get_out(mod_id, Input::new(*node_ty, None));
-
-                Item::new(ty, ItemKind::Node(input))
-            }
-            ItemTyKind::Module(_) => Item::new(ty, ItemKind::Module),
-            ItemTyKind::Array(array_ty) => Item::new(
-                ty,
-                ItemKind::Group(Group::new(
-                    array_ty.tys().map(|ty| self.make_input(local, ty, ctx)),
-                )),
-            ),
-            ItemTyKind::Struct(struct_ty) => Item::new(
-                ty,
-                ItemKind::Group(Group::new(
-                    struct_ty.tys().map(|ty| self.make_input(local, ty, ctx)),
-                )),
-            ),
-            ItemTyKind::Enum(_) => {
-                let node_ty = ty.to_bitvec();
-                let input = self
-                    .netlist
-                    .add_and_get_out(mod_id, Input::new(node_ty, None));
-
-                Item::new(ty, ItemKind::Node(input))
-            }
-        };
+        let item = self.mk_item_from_ty(ty, ctx, &|compiler, node_ty, ctx| {
+            compiler
+                .netlist
+                .add_and_get_out(ctx.module_id, Input::new(node_ty, None))
+        });
 
         ctx.locals.place(local, item.clone());
 
@@ -104,9 +74,8 @@ impl<'tcx> Compiler<'tcx> {
             .map(|node_out_id| (self.netlist[node_out_id].ty, None));
 
         let mod_inst = ModInst::new(None, instant_mod_id, inputs, outputs);
-        self.netlist.add(ctx.module_id, mod_inst)
 
-        // self.combine_node_outputs(node_id, sig_ty)
+        self.netlist.add(ctx.module_id, mod_inst)
     }
 
     pub fn find_blackbox(
@@ -142,7 +111,7 @@ impl<'tcx> Compiler<'tcx> {
         self.find_blackbox_kind(def_id)
     }
 
-    // pub fn is_blackbox(&self, def_id: DefId) -> bool {
-    //     self.find_blackbox_(def_id).is_some()
-    // }
+    pub fn fn_name(&self, fn_did: DefId) -> String {
+        self.tcx.def_path_str(fn_did)
+    }
 }

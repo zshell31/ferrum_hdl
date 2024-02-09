@@ -3,6 +3,8 @@ use std::marker::PhantomData;
 use derive_where::derive_where;
 use fhdl_macros::blackbox_ty;
 
+use crate::bit::{self, Bit};
+
 pub const SECOND: usize = 1_000_000_000_000;
 pub const MILLISECOND: usize = 1_000_000_000;
 pub const MICROSECOND: usize = 1_000_000;
@@ -38,15 +40,20 @@ impl ClockDomain for DummySystem {
     const FREQ: usize = 1;
 }
 
+// Clock is made as the non zero sized type to generate the netlist correctly
 #[derive_where(Debug, Clone, Copy)]
 #[blackbox_ty(Clock)]
 pub struct Clock<D: ClockDomain> {
+    _bit: Bit,
     _dom: PhantomData<D>,
 }
 
 impl<D: ClockDomain> Default for Clock<D> {
     fn default() -> Self {
-        Self { _dom: PhantomData }
+        Self {
+            _bit: bit::L,
+            _dom: PhantomData,
+        }
     }
 }
 

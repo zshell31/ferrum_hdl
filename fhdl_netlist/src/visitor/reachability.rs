@@ -47,15 +47,19 @@ impl<'n> Visitor for Reachability<'n> {
             .extend(self.net_list.mod_outputs(module_id));
 
         while let Some(node_out_id) = self.node_out_ids.pop() {
-            if !self.net_list[node_out_id].is_skip {
+            let node_out = &mut self.net_list[node_out_id];
+            if !node_out.skip || node_out.ty.width() == 0 {
                 continue;
             }
 
-            self.net_list[node_out_id].is_skip = false;
-            self.net_list[node_out_id.node_id().module_id()].is_skip = false;
+            node_out.skip = false;
+
             let node_id = node_out_id.node_id();
+            let mod_id = node_id.module_id();
+
+            self.net_list[mod_id].skip = false;
             let node = &mut self.net_list[node_id];
-            node.is_skip = false;
+            node.skip = false;
 
             if let NodeKindWithId::ModInst(mod_inst) = node.kind() {
                 let module_id = mod_inst.module_id();

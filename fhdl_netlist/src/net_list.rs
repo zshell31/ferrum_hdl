@@ -14,7 +14,7 @@ pub use with_id::WithId;
 pub use self::module::Module;
 use crate::{
     const_val::ConstVal,
-    node::{Const, IsNode, Node, NodeKindWithId, NodeKindWithIdMut, NodeOutput},
+    node::{Const, IsNode, Node, NodeKindWithId, NodeKindWithIdMut, NodeOutput, Pass},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -142,7 +142,7 @@ impl NetList {
 
     pub fn add_module(&mut self, name: Symbol, is_top: bool) -> ModuleId {
         let module_id = self.next_mod_id();
-        let module = Module::new(module_id, name);
+        let module = Module::new(module_id, is_top, name);
         self.modules.push(module);
         if is_top {
             self.top_module = Some(module_id);
@@ -358,8 +358,26 @@ impl NetList {
             self.links.get_mut(&new_input).unwrap().insert(*link);
         }
 
-        // use output name for new_input
         if self.modules[module_id].replace_output(input, new_input) {
+            let node_id = new_input.node_id();
+            let node = &self.nodes[node_id];
+
+            // add pass node if node is module input and replace output with it
+            let new_input = if node.is_input() {
+                let module_id = node_id.module_id();
+
+                let pass = self.add_and_get_out(
+                    module_id,
+                    Pass::new(node.only_one_out().ty, new_input, None),
+                );
+                self.modules[module_id].replace_output(new_input, pass);
+
+                pass
+            } else {
+                new_input
+            };
+
+            // use output name for new_input
             let sym = self.nodes[input].sym;
             if sym.is_some() {
                 self.nodes[new_input].sym = sym;
@@ -413,7 +431,7 @@ impl NetList {
             self.modules.len()
         } else {
             self.modules()
-                .filter(|module| self.modules[*module].is_skip)
+                .filter(|module| self.modules[*module].skip)
                 .count()
         }
     }
@@ -423,7 +441,7 @@ impl NetList {
         let mut count = 0;
         while let Some(node_id) = self.next(&mut cursor) {
             if skip {
-                if !self.nodes[node_id].is_skip {
+                if !self.nodes[node_id].skip {
                     count += 1;
                 }
             } else {
@@ -438,7 +456,7 @@ impl NetList {
         self.top_module
     }
 
-    pub(crate) fn to_const(&self, node_out_id: NodeOutId) -> Option<ConstVal> {
+    pub fn to_const(&self, node_out_id: NodeOutId) -> Option<ConstVal> {
         use NodeKindWithId as NodeKind;
 
         match self[node_out_id.node_id()].kind() {

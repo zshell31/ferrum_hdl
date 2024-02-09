@@ -31,7 +31,7 @@ where
         clk,
         &rst,
         &0_u8.cast(),
-        |r: Unsigned<{ blinking_count::<D>() }>| r + 1_u8,
+        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
     )
     .map(|value| (value.clone().msb().cast(), value))
 }

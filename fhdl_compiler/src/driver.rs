@@ -2,6 +2,7 @@
 #![feature(iter_intersperse)]
 #![feature(min_specialization)]
 #![feature(type_alias_impl_trait)]
+#![feature(let_chains)]
 
 mod blackbox;
 mod compiler;

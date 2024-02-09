@@ -11,10 +11,10 @@ use crate::{
 
 static DEFAULT_SYMBOLS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(|| {
     [
-        ("input", "input$"),
-        ("output", "output$"),
-        ("reg", "reg$"),
-        ("self", "self$"),
+        ("input", "_input"),
+        ("output", "_output"),
+        ("reg", "_reg"),
+        ("self", "_self"),
     ]
     .into_iter()
     .collect()
@@ -141,7 +141,7 @@ impl<'n> Visitor for SetNames<'n> {
         let mut cursor = self.net_list.mod_cursor(module_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
-            if node.is_skip {
+            if node.skip {
                 continue;
             }
 

@@ -35,7 +35,8 @@ impl<'n> ListStorage<NodeIdx> for NodeStorage<'n> {
 #[derive(Debug)]
 pub struct Module {
     pub name: Symbol,
-    pub is_skip: bool,
+    pub is_top: bool,
+    pub skip: bool,
     pub is_inlined: bool,
     pub only_inputs: bool,
     module_id: ModuleId,
@@ -45,11 +46,12 @@ pub struct Module {
 }
 
 impl Module {
-    pub(super) fn new(module_id: ModuleId, name: Symbol) -> Self {
+    pub(super) fn new(module_id: ModuleId, is_top: bool, name: Symbol) -> Self {
         Self {
             module_id,
+            is_top,
             name,
-            is_skip: true,
+            skip: true,
             only_inputs: true,
             list: Default::default(),
             inputs: Default::default(),
@@ -200,10 +202,10 @@ impl Module {
 
     pub(crate) fn dump(&self, module_id: ModuleId) {
         println!(
-            "{} {} (is_skip {}, is_inlined {}, head {:?}, tail {:?}, last_idx: {})",
+            "{} {} (skip {}, is_inlined {}, head {:?}, tail {:?}, last_idx: {})",
             module_id.idx(),
             self.name,
-            self.is_skip,
+            self.skip,
             self.is_inlined,
             self.head(),
             self.tail(),

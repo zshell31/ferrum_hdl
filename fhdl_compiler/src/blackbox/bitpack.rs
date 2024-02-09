@@ -1,7 +1,7 @@
 use fhdl_netlist::node::Splitter;
 use rustc_span::Span;
 
-use super::{bitvec, EvalExpr};
+use super::EvalExpr;
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context, SymIdent},
     error::Error,
@@ -56,19 +56,17 @@ impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec);
 
-        bitvec::bit_vec_trans(compiler, rec, ctx, |compiler, ctx, bit_vec| {
-            Ok((
-                compiler.netlist.add_and_get_out(
-                    ctx.module_id,
-                    Splitter::new(
-                        bit_vec,
-                        [(output_ty.node_ty(), SymIdent::Msb)],
-                        None,
-                        true,
-                    ),
-                ),
-                output_ty,
-            ))
-        })
+        let rec = compiler.to_bitvec(ctx.module_id, rec);
+        let msb = compiler.netlist.add_and_get_out(
+            ctx.module_id,
+            Splitter::new(
+                rec.node_out_id(),
+                [(output_ty.node_ty(), SymIdent::Msb)],
+                None,
+                true,
+            ),
+        );
+
+        Ok(compiler.from_bitvec(ctx.module_id, msb, output_ty))
     }
 }

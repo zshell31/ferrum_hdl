@@ -1,4 +1,4 @@
-use fhdl_netlist::{net_list::NodeOutId, node::Splitter, symbol::Symbol};
+use fhdl_netlist::{node::Splitter, symbol::Symbol};
 use rustc_span::Span;
 
 use super::EvalExpr;
@@ -7,25 +7,6 @@ use crate::{
     error::Error,
     utils,
 };
-
-pub fn bit_vec_trans<'tcx>(
-    compiler: &mut Compiler<'tcx>,
-    source: &Item<'tcx>,
-    ctx: &Context<'tcx>,
-    trans: impl FnOnce(
-        &mut Compiler<'tcx>,
-        &Context<'tcx>,
-        NodeOutId,
-    ) -> Result<(NodeOutId, ItemTy<'tcx>), Error>,
-) -> Result<Item<'tcx>, Error> {
-    let bit_vec = compiler.to_bitvec(ctx.module_id, source);
-
-    let (res, item_ty) = trans(compiler, ctx, bit_vec.node_out_id())?;
-
-    let from = compiler.from_bitvec(ctx.module_id, res, item_ty);
-
-    Ok(from)
-}
 
 pub struct BitVecShrink;
 

@@ -185,6 +185,12 @@ impl NodeOutId {
         let node_out_idx = self.into();
         Self::make(module_id, node_out_idx)
     }
+
+    pub fn with_node_id(self, node_id: NodeId) -> Self {
+        let node_out_idx: NodeOutIdx = self.into();
+        let (_, idx) = node_out_idx.split();
+        Self::combine(node_id, idx)
+    }
 }
 
 impl Add<usize> for NodeOutIdx {

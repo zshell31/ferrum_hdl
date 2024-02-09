@@ -39,6 +39,13 @@ impl<'tcx> Locals<'tcx> {
             None => panic!("cannot find item for local {local:?}"),
         }
     }
+
+    pub fn get_mut(&mut self, local: Local) -> &mut Item<'tcx> {
+        match self.0.get_mut(&local) {
+            Some(item) => item,
+            None => panic!("cannot find item for local {local:?}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

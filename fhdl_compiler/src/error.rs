@@ -43,18 +43,15 @@ impl SpanError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpanErrorKind {
-    #[error("cannot find node type for '{0}'")]
-    MissingNodeTy(String),
-
     #[error("expected closure")]
     ExpectedClosure,
-    // #[error("unexpected literal value for prim type {0:?}")]
-    // UnexpectedLitValue(NodeTy),
     #[error("unsupported conversion")]
     UnsupportedConversion,
     #[error("loops are unsupported")]
     UnsupportedLoops,
 
+    #[error("not synthesizable type '{0}'")]
+    NotSynthType(String),
     #[error("not synthesizable generic parameter")]
     NotSynthGenParam,
     #[error("not synthesizable expression")]

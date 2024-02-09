@@ -2,16 +2,15 @@ pub mod array;
 pub mod bin_op;
 pub mod bitpack;
 pub mod bitvec;
-pub mod bundle;
 pub mod cast;
 pub mod index;
-pub mod lit;
 pub mod signal;
 
 use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::node::BinOp;
 use rustc_hir::def_id::DefId;
 use rustc_span::Span;
+use tracing::error;
 
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
@@ -28,6 +27,7 @@ pub trait EvalExpr<'tcx> {
         _ctx: &mut Context<'tcx>,
         _span: Span,
     ) -> Result<Item<'tcx>, Error> {
+        error!("{}", std::any::type_name::<Self>());
         unimplemented!()
     }
 }
@@ -79,9 +79,7 @@ impl<'tcx> EvalExpr<'tcx> for PassReceiver {
 }
 
 eval_expr!(
-    ArrayReverse => array::Reverse,
-    ArrayMap => array::Map,
-    ArrayMake => array::Make,
+    ArrayChain => array::Chain,
 
     BitPackPack => bitpack::BitPackPack,
     BitPackRepack => bitpack::BitPackRepack,
@@ -91,8 +89,8 @@ eval_expr!(
     BitVecSlice => bitvec::BitVecSlice,
     BitVecUnpack => bitvec::BitVecUnpack,
 
-    Bundle => bundle::Bundle,
-    Unbundle => bundle::Unbundle,
+    Bundle => PassReceiver,
+    Unbundle => PassReceiver,
 
     OpEq => bin_op::BinOp(BinOp::Eq),
     OpNe => bin_op::BinOp(BinOp::Ne),
@@ -126,8 +124,5 @@ eval_expr!(
     SignalValue => PassReceiver,
     SignalWatch => PassReceiver,
 
-    UnsignedBit => index::UnsignedBit,
-
     StdClone => PassReceiver
-
 );

@@ -1,13 +1,13 @@
 mod bin_op;
 mod bit_not;
-mod case;
 mod cons;
 mod dff;
 mod input;
 mod merger;
 mod mod_inst;
-mod mux2;
+mod mux;
 mod not;
+mod pass;
 mod splitter;
 mod zero_extend;
 
@@ -19,14 +19,14 @@ pub(crate) use self::cons::MultiConst;
 pub use self::{
     bin_op::{BinOp, BinOpNode},
     bit_not::BitNot,
-    case::{Case, CaseInputs},
     cons::Const,
     dff::{DFFInputs, DFF},
     input::Input,
     merger::Merger,
     mod_inst::ModInst,
-    mux2::{Mux2, Mux2Inputs},
+    mux::{Case, Mux, MuxInputs},
     not::Not,
+    pass::Pass,
     splitter::{Indices, Splitter},
     zero_extend::ZeroExtend,
 };
@@ -51,7 +51,7 @@ pub struct NodeOutput {
     pub ty: NodeTy,
     pub kind: NetKind,
     pub sym: Option<Symbol>,
-    pub is_skip: bool,
+    pub skip: bool,
     pub inject: bool,
 }
 
@@ -69,7 +69,7 @@ impl NodeOutput {
             ty,
             kind,
             sym,
-            is_skip: true,
+            skip: true,
             inject: false,
         }
     }
@@ -84,7 +84,7 @@ impl NodeOutput {
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub is_skip: bool,
+    pub skip: bool,
     pub inject: bool,
     kind: NodeKind,
     module_id: ModuleId,
@@ -121,7 +121,7 @@ impl Node {
 
         Self {
             kind,
-            is_skip: true,
+            skip: true,
             inject: false,
             module_id,
             node_idx,
@@ -273,10 +273,10 @@ impl Node {
 
     pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
         println!(
-            "{}{} (is_skip: {}, inject: {}, prev: {:?}, next: {:?})",
+            "{}{} (skip: {}, inject: {}, prev: {:?}, next: {:?})",
             prefix,
             self.kind.dump(),
-            self.is_skip,
+            self.skip,
             self.inject,
             self.prev.map(|node_id| node_id.idx()),
             self.next.map(|node_id| node_id.idx())
@@ -353,7 +353,7 @@ impl Node {
     }
 
     pub fn is_mux(&self) -> bool {
-        matches!(&self.kind, NodeKind::Mux2(_) | NodeKind::Case(_))
+        matches!(&self.kind, NodeKind::Mux(_))
     }
 
     pub fn is_mod_inst(&self) -> bool {
@@ -580,17 +580,17 @@ impl !Send for NodeKind {}
 
 define_nodes!(
     Input => Input,
+    Pass => Pass,
     ModInst => ModInst,
     Const => Const,
     MultiConst => MultiConst,
     Splitter => Splitter,
     Merger => Merger,
     ZeroExtend => ZeroExtend,
-    Case => Case,
+    Mux => Mux,
     BinOp => BinOpNode,
     BitNot => BitNot,
     Not => Not,
-    Mux2 => Mux2,
     DFF => DFF,
 );
 

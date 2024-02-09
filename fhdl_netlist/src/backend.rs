@@ -5,9 +5,8 @@ use smallvec::SmallVec;
 
 use crate::{
     buffer::Buffer,
-    bvm::BitVecMask,
     net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::{CaseInputs, DFFInputs, Mux2Inputs, NetKind, NodeKindWithId, NodeOutput},
+    node::{Case, DFFInputs, MuxInputs, NetKind, NodeKindWithId, NodeOutput},
     symbol::Symbol,
     visitor::{ParamKind, Visitor},
 };
@@ -46,7 +45,7 @@ impl<'n> Verilog<'n> {
     fn write_local(&mut self, node_out_id: NodeOutId, can_skip: bool) {
         let node_id = node_out_id.node_id();
         let out = &self.net_list[node_out_id];
-        if can_skip && (out.is_skip || out.inject) {
+        if can_skip && (out.skip || out.inject) {
             return;
         }
         let is_input = self.net_list.is_input(node_id);
@@ -210,16 +209,10 @@ fn write_param(
     kind: ParamKind,
 ) {
     let out = &net_list[param];
-    let is_mod_output = net_list.is_output(param);
-    let is_input = net_list[param.node_id()].is_input();
 
     let kind = match kind {
-        ParamKind::Input if !is_mod_output => "input ",
-        ParamKind::Input if is_mod_output => "inout ",
-        ParamKind::Output if !is_input => "output ",
-        _ => {
-            return;
-        }
+        ParamKind::Input => "input ",
+        ParamKind::Output => "output ",
     };
 
     buffer.write_str(kind);
@@ -247,7 +240,7 @@ impl<'n> Visitor for Verilog<'n> {
 
         for module_id in self.net_list.modules() {
             let module = &self.net_list[module_id];
-            if module.is_skip {
+            if module.skip {
                 continue;
             }
             self.visit_module(module_id);
@@ -258,12 +251,20 @@ impl<'n> Visitor for Verilog<'n> {
         self.locals = Default::default();
 
         let module = &self.net_list[mod_id];
+        let is_top = module.is_top;
 
         self.buffer
             .write_fmt(format_args!("module {}\n(\n", module.name));
 
-        let mut inputs = self.net_list.mod_inputs(mod_id).peekable();
         let mut has_inputs = false;
+
+        // Dont skip inputs if module is top
+        let mut inputs = self
+            .net_list
+            .mod_inputs(mod_id)
+            .filter(|input| is_top || !self.net_list[*input].skip)
+            .peekable();
+
         self.buffer.push_tab();
         if inputs.peek().is_some() {
             has_inputs = true;
@@ -272,15 +273,19 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, inputs, |buffer, input| {
-                if !self.net_list[input].is_skip {
-                    buffer.write_tab();
-                    write_param(net_list, buffer, input, ParamKind::Input);
-                }
+                buffer.write_tab();
+                write_param(net_list, buffer, input, ParamKind::Input);
             });
         }
         self.buffer.pop_tab();
 
-        let mut outputs = self.net_list.mod_outputs(mod_id).peekable();
+        // Dont skip outputs if module is top
+        let mut outputs = self
+            .net_list
+            .mod_outputs(mod_id)
+            .filter(|output| is_top || !self.net_list[*output].skip)
+            .peekable();
+
         self.buffer.push_tab();
         if outputs.peek().is_some() {
             if has_inputs {
@@ -291,10 +296,8 @@ impl<'n> Visitor for Verilog<'n> {
 
             let net_list = &self.net_list;
             self.buffer.intersperse(SEP, outputs, |buffer, output| {
-                if !self.net_list[output].is_skip {
-                    buffer.write_tab();
-                    write_param(net_list, buffer, output, ParamKind::Output);
-                }
+                buffer.write_tab();
+                write_param(net_list, buffer, output, ParamKind::Output);
             });
         }
         self.buffer.pop_tab();
@@ -306,7 +309,7 @@ impl<'n> Visitor for Verilog<'n> {
         let mut cursor = self.net_list.mod_cursor(mod_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
-            if node.is_skip || node.inject {
+            if node.skip || node.inject {
                 continue;
             }
 
@@ -325,6 +328,13 @@ impl<'n> Visitor for Verilog<'n> {
         let node = &self.net_list[node_id];
         match node.kind() {
             NodeKind::Input(_) => {}
+            NodeKind::Pass(pass) => {
+                let input = self.inject_input(pass.input(), false);
+                let output = pass.output().sym.unwrap();
+
+                self.buffer
+                    .write_template(format_args!("assign {output} = {input};",));
+            }
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id();
                 let name = mod_inst.name();
@@ -348,7 +358,7 @@ impl<'n> Visitor for Verilog<'n> {
                 for (input, mod_input) in
                     mod_inst.inputs().zip(self.net_list.mod_inputs(module_id))
                 {
-                    if self.net_list[mod_input].is_skip {
+                    if self.net_list[mod_input].skip {
                         continue;
                     }
                     let input_sym = self.inject_input(input, false);
@@ -368,7 +378,7 @@ impl<'n> Visitor for Verilog<'n> {
                         .iter()
                         .zip(self.net_list.mod_outputs(module_id)),
                     |buffer, (output, mod_output)| {
-                        if self.net_list[mod_output].is_skip {
+                        if self.net_list[mod_output].skip {
                             return;
                         }
                         let output_sym = output.sym.unwrap();
@@ -396,7 +406,7 @@ impl<'n> Visitor for Verilog<'n> {
                 for (value, output) in
                     multi_cons.values().iter().zip(multi_cons.outputs())
                 {
-                    if output.is_skip {
+                    if output.skip {
                         continue;
                     }
 
@@ -435,7 +445,7 @@ impl<'n> Visitor for Verilog<'n> {
                 let indices = splitter.eval_indices(self.net_list);
 
                 for (output, index) in indices {
-                    if !(output.is_skip || output.inject) {
+                    if !(output.skip || output.inject) {
                         write_out(&mut self.buffer, output, input.as_ref(), index);
                     }
                 }
@@ -472,21 +482,12 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer
                     .write_template(format_args!("assign {output} = {{ 0, {input} }};"));
             }
-            NodeKind::Case(case) => {
+            NodeKind::Mux(case) => {
                 if !case.is_empty() {
-                    let CaseInputs {
-                        sel,
-                        default,
-                        variant_inputs,
-                        masks,
-                    } = case.inputs();
+                    let MuxInputs { sel, variants } = case.inputs();
 
                     let output = case.output().sym.unwrap();
-
                     let sel_sym = self.inject_input(sel, false);
-                    let sel_width = self.net_list[sel].ty.width();
-
-                    let has_mask = masks.iter().any(|mask| mask.mask != 0);
 
                     self.buffer.write_tab();
                     self.buffer.write_fmt(format_args!("always @(*) begin\n"));
@@ -494,52 +495,30 @@ impl<'n> Visitor for Verilog<'n> {
                     self.buffer.push_tab();
 
                     self.buffer.write_tab();
-
-                    if !has_mask {
-                        self.buffer.write_fmt(format_args!("case ({sel_sym})\n"));
-                    } else {
-                        self.buffer.write_fmt(format_args!("casez ({sel_sym})\n"));
-                    }
+                    self.buffer.write_fmt(format_args!("case ({sel_sym})\n"));
 
                     self.buffer.push_tab();
 
-                    let mut write_case = |mask: BitVecMask, input: NodeOutId| {
-                        let input = self.inject_input(input, false);
+                    for (case, input) in variants {
+                        match case {
+                            Case::Val(case) => {
+                                let input = self.inject_input(input, false);
 
-                        self.buffer.write_tab();
-                        let mask = mask.to_bitstr(sel_width, '?');
+                                self.buffer.write_tab();
+                                self.buffer.write_fmt(format_args!(
+                                    "{case} : {output} = {input};\n",
+                                ));
+                            }
+                            Case::Default => {
+                                let default = self.inject_input(input, false);
 
-                        self.buffer.write_fmt(format_args!(
-                            "{sel_width}'b{mask} : {output} = {input};\n",
-                        ));
-                    };
-
-                    let mut variants = masks.iter().zip(variant_inputs);
-                    for (&mask, input) in variants.by_ref().take(masks.len() - 1) {
-                        write_case(mask, input);
+                                self.buffer.write_tab();
+                                self.buffer.write_fmt(format_args!(
+                                    "default: {output} = {default};\n"
+                                ));
+                            }
+                        }
                     }
-
-                    let (&mask, input) = variants.next().unwrap();
-                    match default {
-                        Some(default) => {
-                            write_case(mask, input);
-
-                            let default = self.inject_input(default, false);
-
-                            self.buffer.write_tab();
-                            self.buffer.write_fmt(format_args!(
-                                "default: {output} = {default};\n"
-                            ));
-                        }
-                        None => {
-                            let default = self.inject_input(input, false);
-
-                            self.buffer.write_tab();
-                            self.buffer.write_fmt(format_args!(
-                                "default: {output} = {default};\n"
-                            ));
-                        }
-                    };
 
                     self.buffer.pop_tab();
 
@@ -575,31 +554,6 @@ impl<'n> Visitor for Verilog<'n> {
                 self.buffer.write_tab();
                 self.buffer.write_fmt(format_args!(
                     "assign {output} = {left} {bin_op} {right};\n\n"
-                ));
-            }
-            NodeKind::Mux2(mux2) => {
-                let Mux2Inputs {
-                    sel,
-                    input1,
-                    input2,
-                } = mux2.inputs();
-
-                let sel = self.inject_input(sel, false);
-                let input1 = self.inject_input(input1, false);
-                let input2 = self.inject_input(input2, false);
-                let output = mux2.output().sym.unwrap();
-
-                self.buffer.write_template(format_args!(
-                    "
-always @(*) begin
-    case ({sel})
-        1'h1:
-            {output} = {input1};
-        default:
-            {output} = {input2};
-    endcase
-end
-"
                 ));
             }
             NodeKind::DFF(dff) => {

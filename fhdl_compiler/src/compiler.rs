@@ -33,7 +33,7 @@ use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
 use rustc_span::{def_id::CrateNum, Span};
 pub use sym_ident::SymIdent;
 
-use self::{item::Item, item_ty::ItemTy};
+use self::{item::Item, item_ty::ItemTy, mir::DefIdOrPromoted};
 use crate::error::{Error, SpanError, SpanErrorKind};
 
 pub struct CompilerCallbacks {
@@ -100,18 +100,23 @@ fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MonoItem<'tcx>(DefId, GenericArgsRef<'tcx>);
+pub struct MonoItem<'tcx>(DefIdOrPromoted, GenericArgsRef<'tcx>);
 
 impl<'tcx> MonoItem<'tcx> {
-    pub fn new<T: Into<DefId>>(item_id: T, generic_args: GenericArgsRef<'tcx>) -> Self {
+    pub fn new<T: Into<DefIdOrPromoted>>(
+        item_id: T,
+        generic_args: GenericArgsRef<'tcx>,
+    ) -> Self {
         Self(item_id.into(), generic_args)
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Closure<'tcx> {
     pub closure_id: ModuleId,
+    pub input_tys: Vec<ItemTy<'tcx>>,
     pub output_ty: ItemTy<'tcx>,
+    pub item: Item<'tcx>,
 }
 
 struct Crates {
@@ -322,15 +327,15 @@ impl<'tcx> Compiler<'tcx> {
         self.closures.insert(closure_ty, closure);
     }
 
-    pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<Closure<'tcx>> {
-        self.closures.get(&closure_ty).copied()
+    pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<&Closure<'tcx>> {
+        self.closures.get(&closure_ty)
     }
 
     pub fn find_closure(
         &self,
         closure_ty: ItemTy<'tcx>,
         span: Span,
-    ) -> Result<Closure<'tcx>, Error> {
+    ) -> Result<&Closure<'tcx>, Error> {
         self.find_closure_opt(closure_ty)
             .ok_or_else(|| SpanError::new(SpanErrorKind::ExpectedClosure, span).into())
     }

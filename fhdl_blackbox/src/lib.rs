@@ -2,9 +2,7 @@ use strum::{Display, EnumString};
 
 #[derive(Display, Debug, Clone, Copy, EnumString, PartialEq, Eq, Hash)]
 pub enum BlackboxKind {
-    ArrayMap,
-    ArrayReverse,
-    ArrayMake,
+    ArrayChain,
 
     BitPackMsb,
     BitPackPack,
@@ -48,8 +46,6 @@ pub enum BlackboxKind {
     SignalRegEn,
     SignalValue,
     SignalWatch,
-
-    UnsignedBit,
 
     StdClone,
 }

@@ -50,7 +50,7 @@ impl<'n> InjectNodes<'n> {
 
         for node_out_id in node.node_out_ids() {
             for link in self.net_list.links(node_out_id) {
-                if !link.is_skip && check(self, link, node_out_id) {
+                if !link.skip && check(self, link, node_out_id) {
                     inject_outs.push(node_out_id);
                 }
             }
@@ -72,7 +72,7 @@ impl<'n> Visitor for InjectNodes<'n> {
     fn visit_modules(&mut self) {
         for module_id in self.net_list.modules() {
             let module = &self.net_list[module_id];
-            if module.is_skip {
+            if module.skip {
                 continue;
             }
             self.visit_module(module_id);
@@ -83,7 +83,7 @@ impl<'n> Visitor for InjectNodes<'n> {
         let mut cursor = self.net_list.mod_cursor(module_id);
         while let Some(node_id) = self.net_list.next(&mut cursor) {
             let node = &self.net_list[node_id];
-            if node.is_skip || !Self::maybe_to_inject(node) {
+            if node.skip || !Self::maybe_to_inject(node) {
                 continue;
             }
 

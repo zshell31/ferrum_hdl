@@ -12,7 +12,6 @@ use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
     cast::{Cast, CastFrom, IsPrimTy},
-    const_functions::bit,
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
@@ -235,16 +234,17 @@ where
 }
 
 impl<const N: usize> Unsigned<N> {
-    #[blackbox(UnsignedBit)]
-    pub fn bit<const M: usize>(&self) -> bool
+    #[synth(inline)]
+    pub fn idx<T>(&self, idx: T) -> bool
     where
-        Assert<{ bit(M, N) }>: IsTrue,
+        Idx<N>: CastFrom<T>,
+        ConstConstr<{ idx_constr(N) }>:,
     {
-        self.0.bit::<M>()
+        self.idx_(idx.cast())
     }
 
     #[blackbox(Index)]
-    pub fn idx(&self, idx: Idx<N>) -> bool
+    fn idx_(&self, idx: Idx<N>) -> bool
     where
         ConstConstr<{ idx_constr(N) }>:,
     {
@@ -370,7 +370,7 @@ macro_rules! impl_ops {
             impl_op!($trait => $method $( => $spec_method)?);
 
             impl_ops_for_prim!($trait => $method =>
-                u128
+                usize
             );
         )+
     };

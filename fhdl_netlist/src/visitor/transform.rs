@@ -1,9 +1,10 @@
 use smallvec::SmallVec;
+use tracing::debug;
 
 use crate::{
     const_val::ConstVal,
     net_list::{ModuleId, NetList, NodeCursor, NodeId},
-    node::{BinOp, CaseInputs, Const, MultiConst, Mux2Inputs, NodeKind, NodeKindWithId},
+    node::{BinOp, Case, Const, MultiConst, MuxInputs, NodeKind, NodeKindWithId},
     visitor::Visitor,
 };
 
@@ -52,6 +53,18 @@ impl<'n> Transform<'n> {
 
         let node = &self.net_list[node_id];
         match node.kind() {
+            NodeKind::Pass(pass) => match self.net_list.to_const(pass.input()) {
+                Some(const_val) => {
+                    let output = pass.output();
+                    Some(Const::new(output.ty, const_val.val(), output.sym).into())
+                }
+                None => {
+                    if !self.net_list.is_output(node.only_one_out().node_out_id()) {
+                        self.net_list.reconnect(node_id);
+                    }
+                    None
+                }
+            },
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id();
 
@@ -61,7 +74,7 @@ impl<'n> Transform<'n> {
                     .map(|node_out_id| {
                         self.net_list
                             .to_const(node_out_id)
-                            .map(|const_val| const_val.val)
+                            .map(|const_val| const_val.val())
                     })
                     .collect::<Option<SmallVec<[_; 8]>>>();
 
@@ -81,6 +94,7 @@ impl<'n> Transform<'n> {
                             || node
                                 .inputs()
                                 .all(|input| self.net_list[input.node_id()].is_const());
+                        debug!("module_id {module_id:?} {}", *should_be_inlined);
 
                         None
                     }
@@ -89,13 +103,13 @@ impl<'n> Transform<'n> {
             NodeKind::Not(not) => self.net_list.to_const(not.input()).map(|const_val| {
                 let const_val = !const_val;
                 let output = not.output();
-                Const::new(output.ty, const_val.val, output.sym).into()
+                Const::new(output.ty, const_val.val(), output.sym).into()
             }),
             NodeKind::BitNot(bit_not) => {
                 self.net_list.to_const(bit_not.input()).map(|const_val| {
                     let const_val = !const_val;
                     let output = bit_not.output();
-                    Const::new(output.ty, const_val.val, output.sym).into()
+                    Const::new(output.ty, const_val.val(), output.sym).into()
                 })
             }
 
@@ -126,7 +140,7 @@ impl<'n> Transform<'n> {
                     };
 
                     let output = bin_op.output();
-                    Some(Const::new(output.ty, const_val.val, output.sym).into())
+                    Some(Const::new(output.ty, const_val.val(), output.sym).into())
                 }
                 _ => None,
             },
@@ -141,7 +155,7 @@ impl<'n> Transform<'n> {
                     if let Some(input) = input {
                         let values = indices
                             .map(|(output, index)| {
-                                ConstVal::new(input.val >> index, output.width()).val
+                                ConstVal::new(input.val() >> index, output.width()).val()
                             })
                             .collect::<Vec<_>>();
 
@@ -212,7 +226,7 @@ impl<'n> Transform<'n> {
 
                 val.map(|const_val| {
                     let output = merger.output();
-                    Const::new(output.ty, const_val.val, output.sym).into()
+                    Const::new(output.ty, const_val.val(), output.sym).into()
                 })
             }
 
@@ -220,7 +234,7 @@ impl<'n> Transform<'n> {
                 let output = zero_extend.output();
                 match self.net_list.to_const(zero_extend.input()) {
                     Some(const_val) => {
-                        Some(Const::new(output.ty, const_val.val, output.sym).into())
+                        Some(Const::new(output.ty, const_val.val(), output.sym).into())
                     }
                     None => {
                         if self.net_list[zero_extend.input()].width() == output.width() {
@@ -232,52 +246,25 @@ impl<'n> Transform<'n> {
                 }
             }
 
-            NodeKind::Mux2(node) => {
-                let Mux2Inputs {
-                    sel,
-                    input1,
-                    input2,
-                } = node.inputs();
+            NodeKind::Mux(node) => {
+                let MuxInputs { sel, variants } = node.inputs();
 
-                if let Some(new_input) = self.net_list.to_const(sel).map(|const_val| {
-                    if const_val.val > 0 {
-                        input1
-                    } else {
-                        input2
-                    }
-                }) {
-                    let out_id =
-                        self.net_list[node_id].only_one_out().node_out_id().idx();
-                    self.net_list
-                        .reconnect_input_by_ind(node_id, out_id, new_input);
-                }
-
-                None
-            }
-
-            NodeKind::Case(node) => {
-                let CaseInputs {
-                    sel,
-                    default,
-                    variant_inputs,
-                    masks,
-                } = node.inputs();
-
-                if let Some(new_input) =
-                    self.net_list.to_const(sel).and_then(|const_val| {
-                        for (mask, variant) in masks.iter().zip(variant_inputs) {
-                            if mask.is_match(const_val) {
-                                return Some(variant);
+                if let Some(new_input) = self.net_list.to_const(sel).and_then(|sel| {
+                    for (case, input) in variants {
+                        match case {
+                            Case::Val(case) => {
+                                if case == sel {
+                                    return Some(input);
+                                }
+                            }
+                            Case::Default => {
+                                return Some(input);
                             }
                         }
+                    }
 
-                        if let Some(default) = default {
-                            return Some(default);
-                        }
-
-                        None
-                    })
-                {
+                    None
+                }) {
                     let out_id =
                         self.net_list[node_id].only_one_out().node_out_id().idx();
                     self.net_list

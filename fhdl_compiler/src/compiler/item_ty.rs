@@ -106,6 +106,10 @@ impl<'tcx> StructTy<'tcx> {
         self.tys.iter().map(|ty| ty.inner)
     }
 
+    pub fn by_idx(&self, idx: usize) -> ItemTy<'tcx> {
+        self.tys[idx].inner
+    }
+
     pub fn width(&self) -> u128 {
         self.tys.iter().map(|ty| ty.width()).sum()
     }
@@ -198,6 +202,13 @@ impl<'tcx> ItemTyKind<'tcx> {
         }
     }
 
+    pub fn struct_ty(&self) -> StructTy<'tcx> {
+        match self {
+            Self::Struct(struct_ty) => *struct_ty,
+            _ => panic!("expected struct ty"),
+        }
+    }
+
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
         match self {
             Self::Enum(enum_ty) => *enum_ty,
@@ -251,35 +262,43 @@ impl<'tcx> From<EnumTy<'tcx>> for ItemTyKind<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ItemTy<'tcx> {
-    internee: Interned<'tcx, ItemTyKind<'tcx>>,
+#[derive(Debug, Clone)]
+pub struct WithTypeInfo<T> {
+    internee: T,
     width: u128,
 }
 
-impl<'tcx> ItemTy<'tcx> {
-    fn new(kind: &'tcx ItemTyKind<'tcx>) -> Self {
-        let width = kind.width();
-        Self {
-            internee: Interned::new_unchecked(kind),
-            width,
-        }
-    }
+impl<T> Deref for WithTypeInfo<T> {
+    type Target = T;
 
-    #[cfg(test)]
-    #[inline]
-    pub fn make(kind: &'tcx ItemTyKind<'tcx>) -> Self {
-        Self::new(kind)
+    fn deref(&self) -> &Self::Target {
+        &self.internee
+    }
+}
+
+impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
+    pub fn new(internee: ItemTyKind<'tcx>) -> Self {
+        let width = internee.width();
+        Self { internee, width }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ItemTy<'tcx>(Interned<'tcx, WithTypeInfo<ItemTyKind<'tcx>>>);
+
+impl<'tcx> ItemTy<'tcx> {
+    pub fn new(kind: &'tcx WithTypeInfo<ItemTyKind<'tcx>>) -> Self {
+        Self(Interned::new_unchecked(kind))
     }
 
     #[inline]
     pub fn kind(&self) -> &ItemTyKind<'tcx> {
-        &(self.internee)
+        &(self.0)
     }
 
     #[inline]
     pub fn width(&self) -> u128 {
-        self.width
+        self.0.width
     }
 
     #[allow(clippy::wrong_self_convention)]
@@ -290,17 +309,22 @@ impl<'tcx> ItemTy<'tcx> {
 
     #[inline]
     pub fn node_ty(&self) -> NodeTy {
-        self.internee.node_ty()
+        self.0.node_ty()
     }
 
     #[inline]
     pub fn array_ty(&self) -> ArrayTy<'tcx> {
-        self.internee.array_ty()
+        self.0.array_ty()
+    }
+
+    #[inline]
+    pub fn struct_ty(&self) -> StructTy<'tcx> {
+        self.0.struct_ty()
     }
 
     #[inline]
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
-        self.internee.enum_ty()
+        self.0.enum_ty()
     }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -342,7 +366,7 @@ impl<'tcx> From<u128> for Generic<'tcx> {
 impl<'tcx> Compiler<'tcx> {
     #[inline]
     pub fn alloc_ty(&self, ty: impl Into<ItemTyKind<'tcx>>) -> ItemTy<'tcx> {
-        ItemTy::new(self.alloc(ty.into()))
+        ItemTy::new(self.alloc(WithTypeInfo::new(ty.into())))
     }
 
     pub fn resolve_ty(
@@ -393,7 +417,7 @@ impl<'tcx> Compiler<'tcx> {
                         )
                         .map_err(|_| {
                             SpanError::new(
-                                SpanErrorKind::MissingNodeTy(ty.to_string()),
+                                SpanErrorKind::NotSynthType(ty.to_string()),
                                 span,
                             )
                         })?;
@@ -423,7 +447,7 @@ impl<'tcx> Compiler<'tcx> {
             let item_ty = match item_ty {
                 Some(item_ty) => item_ty,
                 None => self.find_item_ty(ty, generics, span)?.ok_or_else(|| {
-                    SpanError::new(SpanErrorKind::MissingNodeTy(ty.to_string()), span)
+                    SpanError::new(SpanErrorKind::NotSynthType(ty.to_string()), span)
                 })?,
             };
 
@@ -434,7 +458,7 @@ impl<'tcx> Compiler<'tcx> {
             .get(&ty)
             .copied()
             .ok_or_else(|| {
-                SpanError::new(SpanErrorKind::MissingNodeTy(ty.to_string()), span)
+                SpanError::new(SpanErrorKind::NotSynthType(ty.to_string()), span)
             })
             .map_err(Into::into)
     }
@@ -463,33 +487,27 @@ impl<'tcx> Compiler<'tcx> {
             let item_ty = match blackbox_ty {
                 BlackboxTy::Signal => self.generic_ty(ty, 1, generics, span)?,
                 BlackboxTy::Wrapped => self.generic_ty(ty, 1, generics, span)?,
-                BlackboxTy::BitVec => {
-                    self.generic_const(ty, 0, generics, span)?.map(|val| {
-                        ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::BitVec(val))))
-                    })
-                }
-                BlackboxTy::Clock => {
-                    Some(ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::Clock))))
-                }
-                BlackboxTy::Unsigned => {
-                    self.generic_const(ty, 0, generics, span)?.map(|val| {
-                        ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::Unsigned(val))))
-                    })
-                }
+                BlackboxTy::BitVec => self
+                    .generic_const(ty, 0, generics, span)?
+                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(val)))),
+                BlackboxTy::Clock => Some(self.alloc_ty(ItemTyKind::Node(NodeTy::Clock))),
+                BlackboxTy::Unsigned => self
+                    .generic_const(ty, 0, generics, span)?
+                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(val)))),
                 BlackboxTy::UnsignedShort => {
                     self.generic_const(ty, 0, generics, span)?.map(|val| {
                         let tys = self.alloc_from_iter(
                             iter::once(ItemTyKind::Node(NodeTy::Unsigned(val)))
                                 .enumerate()
                                 .map(|(ind, ty)| {
-                                    let item_ty = ItemTy::new(self.alloc(ty));
+                                    let item_ty = self.alloc_ty(ty);
 
                                     Named::new(item_ty, Symbol::new_from_ind(ind))
                                 }),
                         );
                         let struct_ty = StructTy::new(Some(blackbox_ty), tys);
 
-                        ItemTy::new(self.alloc(ItemTyKind::Struct(struct_ty)))
+                        self.alloc_ty(ItemTyKind::Struct(struct_ty))
                     })
                 }
             };
@@ -689,14 +707,13 @@ impl<'tcx> Compiler<'tcx> {
                     generics,
                     span,
                 )?;
-                let item_ty = ItemTy::new(compiler.alloc(ItemTyKind::Struct(struct_ty)));
+                let item_ty = compiler.alloc_ty(ItemTyKind::Struct(struct_ty));
 
                 Ok(Named::new(item_ty, Symbol::new(variant.name.as_str())))
             })?;
 
         let discr_width = clog2_len(variants.len()) as u128;
-        let discr_ty =
-            ItemTy::new(self.alloc(ItemTyKind::Node(NodeTy::BitVec(discr_width))));
+        let discr_ty = self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(discr_width)));
 
         Ok(EnumTy::new(variants, discr_ty))
     }

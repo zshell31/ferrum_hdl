@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 
 use smallvec::SmallVec;
-use tracing::debug;
 
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
@@ -49,7 +48,6 @@ impl Mux {
         for (case, input) in variants {
             assert!(case.width() != 0);
             cases.push(case);
-            debug!("{:?}", input);
             inputs.push(input.into());
         }
 

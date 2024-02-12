@@ -20,10 +20,16 @@ impl Display for Symbol {
     }
 }
 
+impl AsRef<str> for Symbol {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
 impl Symbol {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: impl AsRef<str>) -> Self {
         // TODO: check duplicates
-        let s = unsafe { with_arena().alloc_str(name) };
+        let s = unsafe { with_arena().alloc_str(name.as_ref()) };
         Self(s)
     }
 
@@ -33,7 +39,7 @@ impl Symbol {
     }
 
     pub fn new_from_ind(ind: usize) -> Self {
-        Self::new(&ind.to_string())
+        Self::new(ind.to_string())
     }
 
     pub fn as_str(&self) -> &'static str {

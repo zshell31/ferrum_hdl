@@ -3,7 +3,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
-    net_list::{ModuleId, NetList, NodeId},
+    net_list::{FxIndexSet, ModuleId, NetList, NodeId},
     node::{NodeKindWithId, NodeKindWithIdMut},
     symbol::Symbol,
     visitor::Visitor,
@@ -24,6 +24,7 @@ pub struct SetNames<'n> {
     net_list: &'n mut NetList,
     idents: FxHashMap<(ModuleId, Symbol), usize>,
     module_idents: FxHashMap<Symbol, usize>,
+    node_ids: FxIndexSet<NodeId>,
 }
 
 impl<'n> SetNames<'n> {
@@ -32,6 +33,7 @@ impl<'n> SetNames<'n> {
             net_list,
             idents: Default::default(),
             module_idents: Default::default(),
+            node_ids: Default::default(),
         }
     }
 
@@ -42,7 +44,7 @@ impl<'n> SetNames<'n> {
     fn ident(sym: Symbol, count: Option<usize>) -> (Symbol, usize) {
         let sym = DEFAULT_SYMBOLS
             .get(sym.as_str())
-            .map(|new_sym| Symbol::new(new_sym))
+            .map(Symbol::new)
             .unwrap_or(sym);
 
         match count {
@@ -138,18 +140,29 @@ impl<'n> Visitor for SetNames<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         self.set_module_name(module_id);
 
-        let mut cursor = self.net_list.mod_cursor(module_id);
-        while let Some(node_id) = self.net_list.next(&mut cursor) {
-            let node = &self.net_list[node_id];
-            if node.skip {
-                continue;
-            }
+        self.node_ids.clear();
 
-            self.visit_node(node_id);
+        self.node_ids.extend(
+            self.net_list
+                .mod_outputs(module_id)
+                .map(|node_out_id| node_out_id.node_id()),
+        );
+
+        let mut idx = 0;
+        while let Some(node_id) = self.node_ids.get_index(idx) {
+            let node_id = *node_id;
+
+            self.set_node_out_names(node_id);
+
+            self.node_ids.extend(
+                self.net_list[node_id]
+                    .inputs()
+                    .map(|node_out_id| node_out_id.node_id()),
+            );
+
+            idx += 1;
         }
     }
 
-    fn visit_node(&mut self, node_id: NodeId) {
-        self.set_node_out_names(node_id);
-    }
+    fn visit_node(&mut self, _: NodeId) {}
 }

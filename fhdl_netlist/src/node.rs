@@ -173,7 +173,9 @@ impl Node {
         NodeId::combine(self.module_id, self.node_idx)
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = WithId<NodeInId, NodeOutId>> + '_ {
+    pub fn inputs(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = WithId<NodeInId, NodeOutId>> + '_ {
         let module_id = self.module_id;
         let node_id = self.node_id();
         InOut::<NodeOutIdx>::items(self.kind.inputs()).map(move |(ind, node_out_idx)| {
@@ -186,7 +188,7 @@ impl Node {
 
     pub fn inputs_mut(
         &mut self,
-    ) -> impl Iterator<Item = WithId<NodeInId, &mut NodeOutIdx>> + '_ {
+    ) -> impl DoubleEndedIterator<Item = WithId<NodeInId, &mut NodeOutIdx>> + '_ {
         let node_id = self.node_id();
         InOut::<NodeOutIdx>::items_mut(self.kind.inputs_mut()).map(
             move |(ind, node_out_id)| {
@@ -217,7 +219,9 @@ impl Node {
         InOut::<NodeOutIdx>::items_len(self.kind.inputs())
     }
 
-    pub fn outputs(&self) -> impl Iterator<Item = WithId<NodeOutId, &NodeOutput>> + '_ {
+    pub fn outputs(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = WithId<NodeOutId, &NodeOutput>> + '_ {
         let node_id = self.node_id();
         InOut::<NodeOutput>::items(self.kind.outputs())
             .map(move |(ind, output)| WithId::new(NodeOutId::new(node_id, ind), output))
@@ -225,7 +229,7 @@ impl Node {
 
     pub fn outputs_mut(
         &mut self,
-    ) -> impl Iterator<Item = WithId<NodeOutId, &mut NodeOutput>> + '_ {
+    ) -> impl DoubleEndedIterator<Item = WithId<NodeOutId, &mut NodeOutput>> + '_ {
         let node_id = self.node_id();
         InOut::<NodeOutput>::items_mut(self.kind.outputs_mut())
             .map(move |(ind, output)| WithId::new(NodeOutId::new(node_id, ind), output))
@@ -248,7 +252,7 @@ impl Node {
         )
     }
 
-    pub fn node_out_ids(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+    pub fn node_out_ids(&self) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
         let node_id = self.node_id();
         InOut::<NodeOutput>::items(self.kind.outputs())
             .map(move |(ind, _)| NodeOutId::new(node_id, ind))
@@ -423,8 +427,8 @@ macro_rules! define_nodes {
                 }
             }
 
-            #[auto_enum(Iterator)]
-            fn items(&self) -> impl Iterator<Item = (usize, &NodeOutIdx)> + '_ {
+            #[auto_enum(DoubleEndedIterator)]
+            fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &NodeOutIdx)> + '_ {
                 match self {
                     $(
                         Self::$kind(node) => InOut::<NodeOutIdx>::items(node.inputs()),
@@ -432,8 +436,8 @@ macro_rules! define_nodes {
                 }
             }
 
-            #[auto_enum(Iterator)]
-            fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut NodeOutIdx)> + '_ {
+            #[auto_enum(DoubleEndedIterator)]
+            fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut NodeOutIdx)> + '_ {
                 match self {
                     $(
                         Self::$kind(node) => InOut::<NodeOutIdx>::items_mut(node.inputs_mut()),
@@ -476,8 +480,8 @@ macro_rules! define_nodes {
                 }
             }
 
-            #[auto_enum(Iterator)]
-            fn items(&self) -> impl Iterator<Item = (usize, &NodeOutput)> + '_ {
+            #[auto_enum(DoubleEndedIterator)]
+            fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &NodeOutput)> + '_ {
                 match self {
                     $(
                         Self::$kind(node) => InOut::<NodeOutput>::items(node.outputs()),
@@ -485,8 +489,8 @@ macro_rules! define_nodes {
                 }
             }
 
-            #[auto_enum(Iterator)]
-            fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut NodeOutput)> + '_ {
+            #[auto_enum(DoubleEndedIterator)]
+            fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut NodeOutput)> + '_ {
                 match self {
                     $(
                         Self::$kind(node) => InOut::<NodeOutput>::items_mut(node.outputs_mut()),

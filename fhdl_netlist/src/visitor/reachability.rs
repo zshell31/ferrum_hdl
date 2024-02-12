@@ -21,7 +21,7 @@ impl<'n> Reachability<'n> {
 
         Self {
             net_list,
-            node_out_ids: Vec::with_capacity(16),
+            node_out_ids: Default::default(),
             modules,
         }
     }

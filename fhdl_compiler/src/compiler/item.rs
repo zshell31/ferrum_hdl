@@ -73,6 +73,12 @@ impl<'tcx> Group<'tcx> {
         Self(Rc::new(RefCell::new(items.into_iter().collect())))
     }
 
+    pub fn new_opt(items: impl IntoIterator<Item = Option<Item<'tcx>>>) -> Option<Self> {
+        let v = items.into_iter().collect::<Option<Vec<_>>>()?;
+
+        Some(Self::new(v))
+    }
+
     pub fn try_new(
         items: impl IntoIterator<Item = Result<Item<'tcx>, Error>>,
     ) -> Result<Self, Error> {
@@ -114,7 +120,6 @@ impl<'tcx> Group<'tcx> {
 #[derive(Debug, Clone)]
 pub enum ItemKind<'tcx> {
     Node(NodeOutId),
-    Module,
     Group(Group<'tcx>),
 }
 
@@ -153,9 +158,6 @@ impl<'tcx> Iterator for ItemIter<'tcx> {
                         match item.kind {
                             ItemKind::Node(node_out_id) => {
                                 return Some(node_out_id);
-                            }
-                            ItemKind::Module => {
-                                continue;
                             }
                             ItemKind::Group(group) => {
                                 stack.push(group.to_iter());
@@ -209,7 +211,6 @@ impl<'tcx> Item<'tcx> {
     pub fn iter(&self) -> ItemIter<'tcx> {
         match &self.kind {
             ItemKind::Node(node_out_id) => ItemIter::Node(Some(*node_out_id)),
-            ItemKind::Module => ItemIter::Node(None),
             ItemKind::Group(group) => ItemIter::Stack(vec![group.to_iter()]),
         }
     }
@@ -217,7 +218,6 @@ impl<'tcx> Item<'tcx> {
     pub fn traverse(&mut self, mut f: impl FnMut(&mut NodeOutId)) -> &mut Self {
         match &mut self.kind {
             ItemKind::Node(node_out_id) => f(node_out_id),
-            ItemKind::Module => {}
             ItemKind::Group(group) => {
                 let mut stack: Vec<GroupIter<'tcx>> = vec![group.to_iter()];
 
@@ -232,7 +232,6 @@ impl<'tcx> Item<'tcx> {
                     if let Some(mut item) = group.next_mut() {
                         match &mut item.kind {
                             ItemKind::Node(node_out_id) => f(node_out_id),
-                            ItemKind::Module => continue,
                             ItemKind::Group(group) => {
                                 cmd = Some(StackCmd::Push(group.to_iter()));
                             }
@@ -299,14 +298,13 @@ impl<'a> CombineOutputs<'a> {
             ItemTyKind::Node(_) => {
                 Item::new(item_ty, ItemKind::Node(self.outputs.next().unwrap()))
             }
-            ItemTyKind::Module(_) => Item::new(item_ty, ItemKind::Module),
             ItemTyKind::Array(ty) => Item::new(
                 item_ty,
                 ItemKind::Group(Group::new(
                     ty.tys().map(|item_ty| self.next_output(item_ty)),
                 )),
             ),
-            ItemTyKind::Struct(ty) => Item::new(
+            ItemTyKind::Struct(ty) | ItemTyKind::Closure(_, ty) => Item::new(
                 item_ty,
                 ItemKind::Group(Group::new(
                     ty.tys().map(|item_ty| self.next_output(item_ty)),
@@ -323,6 +321,14 @@ impl<'a> CombineOutputs<'a> {
     }
 }
 
+fn tuple_field_name(ident: impl AsRef<str>, idx: usize) -> String {
+    format!("{}${}", ident.as_ref(), idx)
+}
+
+fn struct_field_name(ident: impl AsRef<str>, name: impl AsRef<str>) -> String {
+    format!("{}${}", ident.as_ref(), name.as_ref())
+}
+
 impl<'tcx> Compiler<'tcx> {
     pub fn assign_names_to_item(&mut self, ident: &str, item: &Item, force: bool) {
         match &item.kind {
@@ -334,7 +340,6 @@ impl<'tcx> Compiler<'tcx> {
                     self.netlist[node_out_id].sym = sym;
                 }
             }
-            ItemKind::Module => {}
             ItemKind::Group(group) => match item.ty.kind() {
                 ItemTyKind::Node(_) | ItemTyKind::Array(_) | ItemTyKind::Enum(_) => {
                     if group.len() == 1 {
@@ -342,7 +347,7 @@ impl<'tcx> Compiler<'tcx> {
                         self.assign_names_to_item(ident, &item, force);
                     } else {
                         for (idx, item) in group.items().iter().enumerate() {
-                            let ident = format!("{}${}", ident, idx);
+                            let ident = tuple_field_name(ident, idx);
                             self.assign_names_to_item(&ident, item, force);
                         }
                     }
@@ -353,7 +358,7 @@ impl<'tcx> Compiler<'tcx> {
                         self.assign_names_to_item(ident, &item, force);
                     } else {
                         for (name, item) in ty.names().zip(group.items().iter()) {
-                            let ident = format!("{}${}", ident, name);
+                            let ident = struct_field_name(ident, name);
                             self.assign_names_to_item(&ident, item, force);
                         }
                     }
@@ -378,9 +383,6 @@ impl<'tcx> Compiler<'tcx> {
     pub fn to_bitvec(&mut self, mod_id: ModuleId, item: &Item<'tcx>) -> Item<'tcx> {
         match &item.kind {
             ItemKind::Node(_) => item.clone(),
-            ItemKind::Module => {
-                Item::new(item.ty, self.netlist.const_zero(mod_id, NodeTy::BitVec(0)))
-            }
             ItemKind::Group(group) => {
                 if group.len() == 1 {
                     let item = group.by_idx(0);
@@ -417,11 +419,12 @@ impl<'tcx> Compiler<'tcx> {
         let item_width = item_ty.width();
         assert_eq!(node_width, item_width);
 
+        let sym = self.netlist[node_out_id].sym;
+
         match item_ty.kind() {
             ItemTyKind::Node(_) | ItemTyKind::Enum(_) => {
                 Item::new(item_ty, ItemKind::Node(node_out_id))
             }
-            ItemTyKind::Module(_) => Item::new(item_ty, ItemKind::Module),
             ItemTyKind::Array(ty) => {
                 let outputs = if ty.count() == 1 {
                     Either::Left(iter::once(node_out_id))
@@ -430,7 +433,12 @@ impl<'tcx> Compiler<'tcx> {
                         mod_id,
                         Splitter::new(
                             node_out_id,
-                            ty.tys().map(|_| (ty.ty().to_bitvec(), None)),
+                            ty.tys().enumerate().map(|(idx, _)| {
+                                let ident = sym
+                                    .map(|sym| Symbol::new(tuple_field_name(sym, idx)));
+
+                                (ty.ty().to_bitvec(), ident)
+                            }),
                             None,
                             true,
                         ),
@@ -451,7 +459,7 @@ impl<'tcx> Compiler<'tcx> {
                     )),
                 )
             }
-            ItemTyKind::Struct(ty) => {
+            ItemTyKind::Struct(ty) | ItemTyKind::Closure(_, ty) => {
                 let outputs = if ty.len() == 1 {
                     Either::Left(iter::once(node_out_id).zip(ty.tys()))
                 } else {
@@ -459,7 +467,12 @@ impl<'tcx> Compiler<'tcx> {
                         mod_id,
                         Splitter::new(
                             node_out_id,
-                            ty.tys().map(|ty| (ty.to_bitvec(), None)),
+                            ty.named_tys().map(|ty| {
+                                let ident = sym.map(|sym| {
+                                    Symbol::new(struct_field_name(sym, ty.name))
+                                });
+                                (ty.to_bitvec(), ident)
+                            }),
                             None,
                             true,
                         ),
@@ -550,36 +563,51 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         ty: ItemTy<'tcx>,
         ctx: &Context<'tcx>,
-        mk_node: &impl Fn(&mut Compiler<'tcx>, NodeTy, &Context<'tcx>) -> NodeOutId,
-    ) -> Item<'tcx> {
-        match &ty.kind() {
+        mk_node: &impl Fn(&mut Compiler<'tcx>, NodeTy, &Context<'tcx>) -> Option<NodeOutId>,
+    ) -> Option<Item<'tcx>> {
+        Some(match &ty.kind() {
             ItemTyKind::Node(node_ty) => {
-                let node_out_id = mk_node(self, *node_ty, ctx);
+                let node_out_id = mk_node(self, *node_ty, ctx)?;
                 Item::new(ty, ItemKind::Node(node_out_id))
             }
-            ItemTyKind::Module(_) => Item::new(ty, ItemKind::Module),
             ItemTyKind::Array(array_ty) => Item::new(
                 ty,
-                ItemKind::Group(Group::new(
+                ItemKind::Group(Group::new_opt(
                     array_ty
                         .tys()
                         .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
-                )),
+                )?),
             ),
-            ItemTyKind::Struct(struct_ty) => Item::new(
-                ty,
-                ItemKind::Group(Group::new(
-                    struct_ty
-                        .tys()
-                        .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
-                )),
-            ),
+            ItemTyKind::Struct(struct_ty) | ItemTyKind::Closure(_, struct_ty) => {
+                Item::new(
+                    ty,
+                    ItemKind::Group(Group::new_opt(
+                        struct_ty
+                            .tys()
+                            .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
+                    )?),
+                )
+            }
             ItemTyKind::Enum(_) => {
                 let node_ty = ty.to_bitvec();
-                let node_out_id = mk_node(self, node_ty, ctx);
+                let node_out_id = mk_node(self, node_ty, ctx)?;
                 Item::new(ty, ItemKind::Node(node_out_id))
             }
-        }
+        })
+    }
+
+    pub fn mk_zero_sized_val(
+        &mut self,
+        ty: ItemTy<'tcx>,
+        ctx: &Context<'tcx>,
+    ) -> Option<Item<'tcx>> {
+        self.mk_item_from_ty(ty, ctx, &|compiler, node_ty, ctx| {
+            if node_ty.is_zero_sized() {
+                Some(compiler.netlist.const_zero(ctx.module_id, node_ty))
+            } else {
+                None
+            }
+        })
     }
 
     pub fn to_const(&self, item: &Item<'tcx>) -> Option<u128> {
@@ -620,24 +648,6 @@ mod tests {
             .iter()
             .collect::<Vec<_>>(),
             &[NodeOutId::new(new_node_id, 0)]
-        );
-    }
-
-    #[test]
-    fn item_module_iter() {
-        let module_id = ModuleId::new(1);
-
-        assert_eq!(
-            Item::new(
-                ItemTy::new(&WithTypeInfo::new(ItemTyKind::Module(module_id))),
-                ItemKind::Module
-            )
-            .traverse(|node_out_id| {
-                *node_out_id = node_out_id.with_node_id(NodeId::new(module_id, 1));
-            })
-            .iter()
-            .collect::<Vec<_>>(),
-            &[]
         );
     }
 

@@ -5,7 +5,7 @@ use std::{
 
 use ferrum_hdl::const_functions::clog2_len;
 use fhdl_blackbox::BlackboxTy;
-use fhdl_netlist::{net_list::ModuleId, node_ty::NodeTy, symbol::Symbol};
+use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{
@@ -106,6 +106,10 @@ impl<'tcx> StructTy<'tcx> {
         self.tys.iter().map(|ty| ty.inner)
     }
 
+    pub fn named_tys(&self) -> impl Iterator<Item = Named<ItemTy<'tcx>>> {
+        self.tys.iter().copied()
+    }
+
     pub fn by_idx(&self, idx: usize) -> ItemTy<'tcx> {
         self.tys[idx].inner
     }
@@ -181,9 +185,9 @@ impl<'tcx> EnumTy<'tcx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemTyKind<'tcx> {
     Node(NodeTy),
-    Module(ModuleId),
     Array(ArrayTy<'tcx>),
     Struct(StructTy<'tcx>),
+    Closure(DefId, StructTy<'tcx>),
     Enum(EnumTy<'tcx>),
 }
 
@@ -209,6 +213,10 @@ impl<'tcx> ItemTyKind<'tcx> {
         }
     }
 
+    pub fn is_closure_ty(&self) -> bool {
+        matches!(self, Self::Closure(_, _))
+    }
+
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
         match self {
             Self::Enum(enum_ty) => *enum_ty,
@@ -219,9 +227,10 @@ impl<'tcx> ItemTyKind<'tcx> {
     pub fn width(&self) -> u128 {
         match self {
             Self::Node(ty) => ty.width(),
-            Self::Module(_) => 0,
+            // Self::Module(_) => 0,
             Self::Array(ty) => ty.width(),
             Self::Struct(ty) => ty.width(),
+            Self::Closure(_, ty) => ty.width(),
             Self::Enum(ty) => ty.width(),
         }
     }
@@ -231,13 +240,6 @@ impl<'tcx> From<NodeTy> for ItemTyKind<'tcx> {
     #[inline]
     fn from(node_ty: NodeTy) -> Self {
         Self::Node(node_ty)
-    }
-}
-
-impl<'tcx> From<ModuleId> for ItemTyKind<'tcx> {
-    #[inline]
-    fn from(module_id: ModuleId) -> Self {
-        Self::Module(module_id)
     }
 }
 
@@ -320,6 +322,11 @@ impl<'tcx> ItemTy<'tcx> {
     #[inline]
     pub fn struct_ty(&self) -> StructTy<'tcx> {
         self.0.struct_ty()
+    }
+
+    #[inline]
+    pub fn is_closure_ty(&self) -> bool {
+        self.0.is_closure_ty()
     }
 
     #[inline]
@@ -427,12 +434,24 @@ impl<'tcx> Compiler<'tcx> {
                 TyKind::Ref(_, ty, Mutability::Not) => {
                     Some(self.resolve_ty(*ty, generics, span)?)
                 }
-                TyKind::Closure(_, closure_generics) => {
+                TyKind::FnDef(fn_did, _) => {
+                    let struct_ty =
+                        self.resolve_tuple_ty(None, iter::empty(), List::empty(), span)?;
+
+                    Some(self.alloc_ty(ItemTyKind::Closure(*fn_did, struct_ty)))
+                }
+                TyKind::Closure(closure_did, closure_generics) => {
                     let closure_args = ClosureArgs {
                         args: closure_generics,
                     };
-                    let upvars_ty = closure_args.tupled_upvars_ty();
-                    Some(self.resolve_ty(upvars_ty, generics, span)?)
+                    let struct_ty = self.resolve_tuple_ty(
+                        None,
+                        closure_args.upvar_tys().iter(),
+                        closure_generics,
+                        span,
+                    )?;
+
+                    Some(self.alloc_ty(ItemTyKind::Closure(*closure_did, struct_ty)))
                 }
                 TyKind::Array(ty, const_) => {
                     let item_ty = self.resolve_ty(*ty, generics, span)?;

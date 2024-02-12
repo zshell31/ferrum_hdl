@@ -328,7 +328,11 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     pub fn find_closure_opt(&self, closure_ty: ItemTy<'tcx>) -> Option<&Closure<'tcx>> {
-        self.closures.get(&closure_ty)
+        if closure_ty.is_closure_ty() {
+            self.closures.get(&closure_ty)
+        } else {
+            None
+        }
     }
 
     pub fn find_closure(

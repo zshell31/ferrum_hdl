@@ -46,6 +46,14 @@ impl NodeTy {
         }
     }
 
+    pub fn is_zero_sized(&self) -> bool {
+        match self {
+            Self::Bit => false,
+            Self::Unsigned(n) | Self::BitVec(n) => *n == 0,
+            Self::Clock | Self::ClockDomain => true,
+        }
+    }
+
     pub fn ty_for_bin_expr(lhs: NodeTy, rhs: NodeTy) -> Option<NodeTy> {
         use NodeTy::*;
 

@@ -1,15 +1,8 @@
 #![allow(clippy::ptr_arg)]
-use std::{fmt::Debug, hash::BuildHasherDefault};
-
-use indexmap::IndexSet;
-use rustc_hash::FxHasher;
-
-type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
-
 use super::{
     ident::{NodeId, NodeOutId},
     list::{List, ListStorage},
-    ModuleId, NodeIdx, NodeOutIdx, Nodes,
+    FxIndexSet, ModuleId, NodeIdx, NodeOutIdx, Nodes,
 };
 use crate::{net_list::Idx, node::Node, symbol::Symbol};
 
@@ -141,14 +134,14 @@ impl Module {
         self.outputs.contains(&node_out_idx)
     }
 
-    pub fn inputs(&self) -> impl Iterator<Item = NodeId> + '_ {
+    pub fn inputs(&self) -> impl DoubleEndedIterator<Item = NodeId> + '_ {
         let module_id = self.module_id;
         self.inputs
             .iter()
             .map(move |input| NodeId::make(module_id, *input))
     }
 
-    pub fn outputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
+    pub fn outputs(&self) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
         let module_id = self.module_id;
         self.outputs
             .iter()

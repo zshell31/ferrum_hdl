@@ -3,9 +3,9 @@ use std::iter;
 pub trait InOut<T: 'static> {
     fn items_len(&self) -> usize;
 
-    fn items(&self) -> impl Iterator<Item = (usize, &T)>;
+    fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &T)>;
 
-    fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)>;
+    fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut T)>;
 
     fn by_ind(&self, ind: usize) -> &T;
 
@@ -17,11 +17,11 @@ impl<T: 'static> InOut<T> for T {
         1
     }
 
-    fn items(&self) -> impl Iterator<Item = (usize, &T)> {
+    fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &T)> {
         iter::once(self).enumerate()
     }
 
-    fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)> {
+    fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut T)> {
         iter::once(self).enumerate()
     }
 
@@ -39,11 +39,11 @@ impl<T: 'static> InOut<T> for [T] {
         self.len()
     }
 
-    fn items(&self) -> impl Iterator<Item = (usize, &T)> {
+    fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &T)> {
         self.iter().enumerate()
     }
 
-    fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)> {
+    fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut T)> {
         self.iter_mut().enumerate()
     }
 
@@ -61,11 +61,11 @@ impl<T: 'static> InOut<T> for (T, T) {
         2
     }
 
-    fn items(&self) -> impl Iterator<Item = (usize, &T)> {
+    fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &T)> {
         [&self.0, &self.1].into_iter().enumerate()
     }
 
-    fn items_mut(&mut self) -> impl Iterator<Item = (usize, &mut T)> {
+    fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut T)> {
         [&mut self.0, &mut self.1].into_iter().enumerate()
     }
 

@@ -1,5 +1,4 @@
 use smallvec::SmallVec;
-use tracing::debug;
 
 use crate::{
     const_val::ConstVal,
@@ -94,7 +93,6 @@ impl<'n> Transform<'n> {
                             || node
                                 .inputs()
                                 .all(|input| self.net_list[input.node_id()].is_const());
-                        debug!("module_id {module_id:?} {}", *should_be_inlined);
 
                         None
                     }

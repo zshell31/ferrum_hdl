@@ -21,6 +21,7 @@ pub struct GenArgs {
     compiler_opts: CompilerArgs,
 }
 
+// TODO: move to rustc arguments
 #[allow(non_upper_case_globals)]
 const CARGO_dev: &[(&str, &str)] = &[
     ("CARGO_PROFILE_DEV_OPT_LEVEL", "0"),

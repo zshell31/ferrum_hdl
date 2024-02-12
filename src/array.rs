@@ -65,7 +65,7 @@ where
     }
 }
 
-pub trait ArrayExt<const N: usize, T> {
+pub trait ArrayExt<const N: usize, T>: Sized {
     fn slice<const S: usize, const M: usize>(&self) -> [T; M]
     where
         Assert<{ M > 0 }>: IsTrue,
@@ -79,7 +79,7 @@ pub trait ArrayExt<const N: usize, T> {
         T: Clone;
 
     #[synth(inline)]
-    fn reverse(&self) -> [T; N]
+    fn reverse(self) -> [T; N]
     where
         T: Clone,
         ConstConstr<{ idx_constr(N) }>:,
@@ -88,7 +88,7 @@ pub trait ArrayExt<const N: usize, T> {
     }
 
     #[synth(inline)]
-    fn map_<U>(&self, f: impl Fn(T) -> U) -> [U; N]
+    fn map_<U>(self, f: impl Fn(T) -> U) -> [U; N]
     where
         T: Clone,
         ConstConstr<{ idx_constr(N) }>:,
@@ -97,7 +97,7 @@ pub trait ArrayExt<const N: usize, T> {
     }
 
     #[synth(inline)]
-    fn map_idx<U>(&self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
+    fn map_idx<U>(self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
     where
         T: Clone,
         ConstConstr<{ idx_constr(N) }>:,

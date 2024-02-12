@@ -4,11 +4,15 @@ pub(crate) mod list;
 mod module;
 mod with_id;
 
-use std::ops::{Index, IndexMut};
+use std::{
+    hash::BuildHasherDefault,
+    ops::{Index, IndexMut},
+};
 
 pub use ident::*;
 pub(crate) use in_out::InOut;
-use rustc_hash::{FxHashMap, FxHashSet};
+use indexmap::IndexSet;
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 pub use with_id::WithId;
 
 pub use self::module::Module;
@@ -18,6 +22,8 @@ use crate::{
     node_ty::NodeTy,
     symbol::Symbol,
 };
+
+pub(crate) type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
 
 pub type Nodes = FxHashMap<NodeId, Node>;
 pub type Links = FxHashSet<NodeId>;
@@ -174,7 +180,10 @@ impl NetList {
         cursor.node_id
     }
 
-    pub fn mod_inputs(&self, mod_id: ModuleId) -> impl Iterator<Item = NodeOutId> + '_ {
+    pub fn mod_inputs(
+        &self,
+        mod_id: ModuleId,
+    ) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
         self.modules[mod_id]
             .inputs()
             .filter_map(|node_id| {
@@ -188,7 +197,10 @@ impl NetList {
             .flatten()
     }
 
-    pub fn mod_outputs(&self, mod_id: ModuleId) -> impl Iterator<Item = NodeOutId> + '_ {
+    pub fn mod_outputs(
+        &self,
+        mod_id: ModuleId,
+    ) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
         self.modules[mod_id].outputs()
     }
 

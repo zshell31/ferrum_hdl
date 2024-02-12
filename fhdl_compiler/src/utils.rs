@@ -13,18 +13,6 @@ pub fn ty_def_id(ty: Ty<'_>) -> Option<DefId> {
     }
 }
 
-// pub fn subst(ty: Ty<'_>) -> Option<GenericArgsRef<'_>> {
-//     match ty.kind() {
-//         TyKind::Adt(_, subst) => Some(subst),
-//         TyKind::FnDef(_, subst) => Some(subst),
-//         _ => None,
-//     }
-// }
-
-// pub fn subst_type(ty: Ty<'_>, index: usize) -> Option<Ty<'_>> {
-//     subst(ty).and_then(|subst| subst.get(index).and_then(|generic| generic.as_type()))
-// }
-
 pub fn resolve_unevaluated<'tcx>(
     tcx: TyCtxt<'tcx>,
     unevaluated: UnevaluatedConst<'tcx>,

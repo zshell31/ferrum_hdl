@@ -3,10 +3,14 @@ use fhdl_netlist::{
     net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
 };
-use rustc_hir::def_id::DefId;
+use rustc_hir::{
+    def::DefKind,
+    def_id::DefId,
+    definitions::{DefPathData, DisambiguatedDefPathData},
+};
 use rustc_middle::{
     mir::Local,
-    ty::{FnSig, GenericArgsRef},
+    ty::{ClosureArgs, FnSig, GenericArgsRef},
 };
 use rustc_span::{Span, Symbol as RustSymbol};
 
@@ -18,8 +22,14 @@ use crate::{
 
 impl<'tcx> Compiler<'tcx> {
     pub fn fn_sig(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> FnSig<'tcx> {
-        let fn_sig = self.tcx.fn_sig(def_id);
-        fn_sig.instantiate(self.tcx, generics).skip_binder()
+        if let DefKind::Closure = self.tcx.def_kind(def_id) {
+            let closure_args = ClosureArgs { args: generics };
+
+            closure_args.sig().skip_binder()
+        } else {
+            let fn_sig = self.tcx.fn_sig(def_id);
+            fn_sig.instantiate(self.tcx, generics).skip_binder()
+        }
     }
 
     pub fn make_input(
@@ -28,11 +38,15 @@ impl<'tcx> Compiler<'tcx> {
         ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
     ) -> Item<'tcx> {
-        let item = self.mk_item_from_ty(ty, ctx, &|compiler, node_ty, ctx| {
-            compiler
-                .netlist
-                .add_and_get_out(ctx.module_id, Input::new(node_ty, None))
-        });
+        let item = self
+            .mk_item_from_ty(ty, ctx, &|compiler, node_ty, ctx| {
+                Some(
+                    compiler
+                        .netlist
+                        .add_and_get_out(ctx.module_id, Input::new(node_ty, None)),
+                )
+            })
+            .unwrap();
 
         ctx.locals.place(local, item.clone());
 
@@ -45,6 +59,30 @@ impl<'tcx> Compiler<'tcx> {
             .next()
             .is_some()
             || self.find_synth(did).map(|synth| synth.inlined).is_some()
+    }
+
+    pub fn is_std_call(&self, fn_did: DefId, instance_did: DefId) -> bool {
+        if self.crates.is_core(instance_did) {
+            let def_path = self.tcx.def_path(fn_did);
+
+            self.def_path_eq(&def_path.data, &["ops", "function", "Fn", "call"])
+        } else {
+            false
+        }
+    }
+
+    fn def_path_eq(
+        &self,
+        def_path: &[DisambiguatedDefPathData],
+        items: &[&'static str],
+    ) -> bool {
+        let def_path = def_path.iter().filter_map(|def_path| match &def_path.data {
+            DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => Some(*sym),
+            _ => None,
+        });
+
+        itertools::diff_with(def_path, items, |sym, item| sym.as_str() == **item)
+            .is_none()
     }
 
     pub fn fn_output<T: Into<DefId>>(

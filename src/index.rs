@@ -173,8 +173,8 @@ where
 
     #[synth(inline)]
     pub fn rev(&self) -> Self {
-        let val = self.val();
-        let rev_val = N.cast::<Unsigned<_>>() - val;
+        let val = self.clone().cast::<Unsigned<_>>();
+        let rev_val = N.cast::<Unsigned<_>>() - val - 1;
         Self(rev_val)
     }
 }

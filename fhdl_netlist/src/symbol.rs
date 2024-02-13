@@ -1,4 +1,7 @@
-use std::fmt::{self, Arguments, Debug, Display};
+use std::{
+    fmt::{self, Arguments, Debug, Display},
+    str::pattern::{Pattern, Searcher},
+};
 
 use crate::arena::with_arena;
 
@@ -48,5 +51,16 @@ impl Symbol {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    // Split string but prefix contains delimiter
+    pub fn split_once_with_delim<'a, P: Pattern<'a>>(
+        &'a self,
+        delimiter: P,
+    ) -> Option<(&'a str, &'a str)> {
+        let s = self.as_str();
+        let (start, _) = delimiter.into_searcher(s).next_match()?;
+
+        unsafe { Some((s.get_unchecked(.. start), s.get_unchecked(start ..))) }
     }
 }

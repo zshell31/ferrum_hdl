@@ -20,11 +20,11 @@ use crate::{
     watchable::{AsDisplay, FmtKind, Formatter, Watchable},
 };
 
-pub trait SignalValue: Debug + Clone + 'static {}
+pub trait SignalValue: Clone + 'static {}
 
 impl<T: SignalValue> SignalValue for Option<T> {}
 
-#[derive_where(Debug, Clone)]
+#[derive_where(Debug, Clone; T)]
 #[blackbox_ty(Signal)]
 pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
@@ -97,6 +97,34 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
             wrapped.next(ctx);
             signal.next(ctx)
         })
+    }
+
+    #[synth(inline)]
+    #[synth]
+    pub fn reg<U: SignalValue>(
+        &self,
+        clk: Clock<D>,
+        rst: &Reset<D>,
+        f: impl Fn(T) -> U + Clone + 'static,
+    ) -> Signal<D, U>
+    where
+        U: Default,
+    {
+        self.and_then(|value| reg0(clk, rst, move |_| f(value.value())))
+    }
+
+    #[synth(inline)]
+    pub fn reg_en<U: SignalValue>(
+        &self,
+        clk: Clock<D>,
+        rst: &Reset<D>,
+        en: &Enable<D>,
+        f: impl Fn(T) -> U + Clone + 'static,
+    ) -> Signal<D, U>
+    where
+        U: Default,
+    {
+        self.and_then(|value| reg_en0(clk, rst, en, move |_| f(value.value())))
     }
 
     pub fn source(value: T) -> (Source<T>, Signal<D, T>) {
@@ -199,7 +227,7 @@ impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
     }
 }
 
-#[derive_where(Debug)]
+#[derive_where(Debug; T)]
 #[blackbox_ty(Wrapped)]
 pub struct Wrapped<D: ClockDomain, T: SignalValue>(Signal<D, T>);
 
@@ -499,28 +527,26 @@ mod tests {
     use std::iter;
 
     use super::{SignalIterExt, *};
-    use crate::{domain::TestSystem4, unsigned::Unsigned};
+    use crate::{domain::TD4, unsigned::Unsigned};
 
     #[test]
     fn test_iter() {
         let s = [0_u8, 4, 3, 1, 2]
             .into_iter()
             .map(Unsigned::<8>::cast_from)
-            .into_signal::<TestSystem4>();
+            .into_signal::<TD4>();
 
         assert_eq!(s.simulate().take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);
     }
 
     #[test]
     fn test_reg() {
-        let clk = Clock::<TestSystem4>::default();
+        let clk = Clock::<TD4>::default();
         let (rst, rst_signal) = Reset::reset_src();
 
         let mut r =
-            reg::<TestSystem4, Unsigned<3>>(clk, &rst_signal, &0_u8.cast(), |val| {
-                val + 1
-            })
-            .simulate();
+            reg::<TD4, Unsigned<3>>(clk, &rst_signal, &0_u8.cast(), |val| val + 1)
+                .simulate();
 
         assert_eq!(r.by_ref().take(15).collect::<Vec<_>>(), [
             0, 1, 2, 3, 4, 5, 6, 7, 0, 1, 2, 3, 4, 5, 6
@@ -537,7 +563,7 @@ mod tests {
 
     #[test]
     fn test_reg_en() {
-        let clk = Clock::<TestSystem4>::default();
+        let clk = Clock::<TD4>::default();
         let (rst, rst_signal) = Reset::reset_src();
         let (en, en_signal) = Enable::enable_src();
 
@@ -570,14 +596,14 @@ mod tests {
 
     #[test]
     fn test_reg_seq() {
-        let clk = Clock::<TestSystem4>::default();
+        let clk = Clock::<TD4>::default();
         let (rst, rst_signal) = Reset::reset_src();
         let (en, en_signal) = Enable::enable_src();
 
         let data = iter::successors::<Unsigned<3>, _>(Some(1_u8.cast()), |val| {
             Some(val.clone() + 1)
         })
-        .into_signal::<TestSystem4>();
+        .into_signal::<TD4>();
 
         macro_rules! block {
             ($pred:ident) => {

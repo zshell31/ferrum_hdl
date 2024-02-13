@@ -26,13 +26,12 @@ impl_tuple_traits!(12);
 mod tests {
     use super::*;
     use crate::{
-        array::Array, bit::Bit, domain::TestSystem4, signal::SignalIterExt,
-        unsigned::Unsigned,
+        array::Array, bit::Bit, domain::TD4, signal::SignalIterExt, unsigned::Unsigned,
     };
 
     #[test]
     fn unbundle() {
-        let s: Signal<TestSystem4, (Unsigned<4>, Bit)> = [
+        let s: Signal<TD4, (Unsigned<4>, Bit)> = [
             (0_u8, false),
             (1, true),
             (2, true),
@@ -64,7 +63,7 @@ mod tests {
 
     #[test]
     fn bundle() {
-        let s: (Signal<TestSystem4, Unsigned<4>>, Signal<TestSystem4, Bit>) = (
+        let s: (Signal<TD4, Unsigned<4>>, Signal<TD4, Bit>) = (
             [0_u8, 1, 2, 3, 4, 5]
                 .into_iter()
                 .map(Cast::cast)

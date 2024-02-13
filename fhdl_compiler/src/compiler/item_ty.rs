@@ -3,14 +3,14 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-use ferrum_hdl::const_functions::clog2_len;
+use ferrum_hdl::const_functions::{clog2, clog2_len};
 use fhdl_blackbox::BlackboxTy;
 use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{
     AdtDef, AliasKind, ClosureArgs, Const, ConstKind, EarlyBinder, FieldDef, GenericArg,
-    GenericArgsRef, List, Mutability, ParamEnv, Ty,
+    GenericArgsRef, List, Mutability, ParamEnv, Ty, VariantDiscr,
 };
 use rustc_span::Span;
 use rustc_target::abi::VariantIdx;
@@ -124,15 +124,29 @@ impl<'tcx> StructTy<'tcx> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct Variant<'tcx> {
+    pub discr: u128,
+    pub ty: Named<ItemTy<'tcx>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EnumTy<'tcx> {
     discr_ty: ItemTy<'tcx>,
     data_width: u128,
+    discr: Option<&'tcx [u128]>,
     variants: &'tcx [Named<ItemTy<'tcx>>],
 }
 
 impl<'tcx> EnumTy<'tcx> {
-    fn new(variants: &'tcx [Named<ItemTy<'tcx>>], discr_ty: ItemTy<'tcx>) -> Self {
+    fn new(
+        variants: &'tcx [Named<ItemTy<'tcx>>],
+        discr: Option<&'tcx [u128]>,
+        discr_ty: ItemTy<'tcx>,
+    ) -> Self {
+        if let Some(discr) = discr {
+            assert_eq!(discr.len(), variants.len());
+        }
         let data_width = variants
             .iter()
             .map(|variant| variant.width())
@@ -141,6 +155,7 @@ impl<'tcx> EnumTy<'tcx> {
         Self {
             discr_ty,
             data_width,
+            discr,
             variants,
         }
     }
@@ -161,23 +176,23 @@ impl<'tcx> EnumTy<'tcx> {
     }
 
     #[inline]
-    pub fn discrimant(&self, variant_idx: VariantIdx) -> u128 {
-        let idx = variant_idx.as_u32() as u128;
-        idx & ((1 << self.discr_width()) - 1)
-    }
-
-    #[inline]
     pub fn width(&self) -> u128 {
         self.discr_width() + self.data_width
     }
 
     #[inline]
-    pub fn by_idx(&self, idx: usize) -> ItemTy<'tcx> {
-        self.variants[idx].inner
+    pub fn by_idx(&self, idx: usize) -> Variant<'tcx> {
+        let discr = match self.discr {
+            Some(discr) => discr[idx],
+            None => idx as u128,
+        };
+        let ty = self.variants[idx];
+
+        Variant { discr, ty }
     }
 
     #[inline]
-    pub fn by_variant_idx(&self, variant_idx: VariantIdx) -> ItemTy<'tcx> {
+    pub fn by_variant_idx(&self, variant_idx: VariantIdx) -> Variant<'tcx> {
         self.by_idx(variant_idx.as_usize())
     }
 }
@@ -227,7 +242,6 @@ impl<'tcx> ItemTyKind<'tcx> {
     pub fn width(&self) -> u128 {
         match self {
             Self::Node(ty) => ty.width(),
-            // Self::Module(_) => 0,
             Self::Array(ty) => ty.width(),
             Self::Struct(ty) => ty.width(),
             Self::Closure(_, ty) => ty.width(),
@@ -717,8 +731,12 @@ impl<'tcx> Compiler<'tcx> {
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<EnumTy<'tcx>, Error> {
+        let mut discr_seq = true;
         let variants =
             self.alloc_from_iter_res_with_gen(adt.variants(), |compiler, variant| {
+                if let VariantDiscr::Explicit(_) = variant.discr {
+                    discr_seq = false;
+                }
                 let struct_ty = compiler.resolve_struct_ty_(
                     None,
                     variant.fields.iter(),
@@ -731,14 +749,29 @@ impl<'tcx> Compiler<'tcx> {
                 Ok(Named::new(item_ty, Symbol::new(variant.name.as_str())))
             })?;
 
-        let discr_width = clog2_len(variants.len()) as u128;
+        let (discr_width, discr) = if discr_seq {
+            (clog2_len(variants.len()) as u128, None)
+        } else {
+            let mut max_discr = 0;
+            let discr =
+                self.alloc_from_iter(adt.discriminants(self.tcx).map(|(_, discr)| {
+                    if max_discr < discr.val {
+                        max_discr = discr.val;
+                    }
+
+                    discr.val
+                }));
+
+            (clog2(max_discr as usize) as u128, Some(discr))
+        };
+
         let discr_ty = self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(discr_width)));
 
-        Ok(EnumTy::new(variants, discr_ty))
+        Ok(EnumTy::new(variants, discr, discr_ty))
     }
 
     fn ignore_ty(&self, def_id: DefId) -> bool {
-        self.crates.is_core(def_id)
+        self.crates.is_std(def_id)
             && self
                 .tcx
                 .get_lang_items(())

@@ -94,7 +94,7 @@ impl<'n> Visitor for InjectNodes<'n> {
     fn visit_node(&mut self, node_id: NodeId) {
         let node = &self.net_list[node_id];
 
-        if node.is_const() || node.is_expr() || node.is_splitter() {
+        if node.is_const() || node.is_expr() {
             self.try_inject(node_id, |this, link, link_out_id| {
                 link.is_expr()
                     || link.is_mux()

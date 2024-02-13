@@ -1,6 +1,7 @@
 #![feature(negative_impls)]
 #![feature(iter_intersperse)]
 #![feature(type_alias_impl_trait)]
+#![feature(pattern)]
 
 pub mod arena;
 pub mod backend;

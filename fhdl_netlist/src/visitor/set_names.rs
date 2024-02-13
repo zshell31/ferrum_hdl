@@ -42,10 +42,22 @@ impl<'n> SetNames<'n> {
     }
 
     fn ident(sym: Symbol, count: Option<usize>) -> (Symbol, usize) {
-        let sym = DEFAULT_SYMBOLS
-            .get(sym.as_str())
-            .map(Symbol::new)
-            .unwrap_or(sym);
+        assert!(!sym.is_empty());
+        let (suffix, prefix) = match sym.split_once_with_delim('$') {
+            Some(splitted) => splitted,
+            None => (sym.as_str(), ""),
+        };
+
+        let sym = match DEFAULT_SYMBOLS.get(suffix).map(Symbol::new) {
+            Some(new_sym) => {
+                if !prefix.is_empty() {
+                    Symbol::new_from_args(format_args!("{new_sym}{prefix}"))
+                } else {
+                    new_sym
+                }
+            }
+            None => sym,
+        };
 
         match count {
             Some(mut count) => {

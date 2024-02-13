@@ -106,6 +106,22 @@ pub trait ArrayExt<const N: usize, T>: Sized {
     }
 
     #[synth(inline)]
+    fn make(f: impl Fn() -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[T; N]>::chain_idx((), |_, _| ((), f())).1
+    }
+
+    #[synth(inline)]
+    fn make_idx(f: impl Fn(Idx<N>) -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[T; N]>::chain_idx((), |idx, _| ((), f(idx))).1
+    }
+
+    #[synth(inline)]
     fn chain<U>(init: U, f: impl Fn(U) -> (U, T)) -> (U, [T; N])
     where
         U: Clone,
@@ -201,7 +217,7 @@ mod tests {
     use crate::{
         bit::{Bit, H, L},
         bitvec::BitVec,
-        domain::TestSystem4,
+        domain::TD4,
         signal::SignalIterExt,
     };
 
@@ -214,7 +230,7 @@ mod tests {
     fn unbundle() {
         let s = [[H, H, L], [L, H, L], [H, L, H], [L, L, H]]
             .into_iter()
-            .into_signal::<TestSystem4>();
+            .into_signal::<TD4>();
 
         let res = s.unbundle();
 
@@ -229,9 +245,9 @@ mod tests {
     #[test]
     fn bundle() {
         let s = [
-            [H, L, H, L].into_signal::<TestSystem4>(),
-            [H, H, L, L].into_signal::<TestSystem4>(),
-            [L, L, H, H].into_signal::<TestSystem4>(),
+            [H, L, H, L].into_signal::<TD4>(),
+            [H, H, L, L].into_signal::<TD4>(),
+            [L, L, H, H].into_signal::<TD4>(),
         ];
 
         let res = s.bundle();

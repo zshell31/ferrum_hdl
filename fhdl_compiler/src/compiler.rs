@@ -8,7 +8,12 @@ pub mod mir;
 mod sym_ident;
 
 use std::{
-    env, fmt::Display, fs, io, mem::transmute, path::Path as StdPath, time::Instant,
+    env,
+    fmt::Display,
+    fs, io,
+    mem::transmute,
+    path::{Component, Path as StdPath, PathBuf},
+    time::Instant,
 };
 
 use bumpalo::Bump;
@@ -29,8 +34,11 @@ use rustc_hir::{
     ItemId as HirItemId, ItemKind,
 };
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
-use rustc_middle::ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt};
-use rustc_span::{def_id::CrateNum, Span};
+use rustc_middle::{
+    dep_graph::DepContext,
+    ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
+};
+use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
 pub use sym_ident::SymIdent;
 
 use self::{item::Item, item_ty::ItemTy, mir::DefIdOrPromoted};
@@ -100,10 +108,10 @@ fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MonoItem<'tcx>(DefIdOrPromoted, GenericArgsRef<'tcx>);
+pub struct MonoItem<'tcx>(DefIdOrPromoted<'tcx>, GenericArgsRef<'tcx>);
 
 impl<'tcx> MonoItem<'tcx> {
-    pub fn new<T: Into<DefIdOrPromoted>>(
+    pub fn new<T: Into<DefIdOrPromoted<'tcx>>>(
         item_id: T,
         generic_args: GenericArgsRef<'tcx>,
     ) -> Self {
@@ -163,7 +171,7 @@ impl Crates {
         })
     }
 
-    pub(crate) fn is_core(&self, def_id: DefId) -> bool {
+    pub(crate) fn is_std(&self, def_id: DefId) -> bool {
         def_id.krate == self.core || def_id.krate == self.std
     }
 
@@ -183,6 +191,7 @@ pub struct Compiler<'tcx> {
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     closures: FxHashMap<ItemTy<'tcx>, Closure<'tcx>>,
+    file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -204,6 +213,7 @@ impl<'tcx> Compiler<'tcx> {
             evaluated_modules: Default::default(),
             item_ty: Default::default(),
             closures: Default::default(),
+            file_names: Default::default(),
         }
     }
 
@@ -248,9 +258,12 @@ impl<'tcx> Compiler<'tcx> {
         self.netlist.set_names();
         self.netlist.inject_nodes();
 
-        let verilog = Verilog::new(&self.netlist).generate();
-
-        fs::write(path, verilog)?;
+        if self.args.dump_netlist {
+            self.netlist.dump(true);
+        } else {
+            let verilog = Verilog::new(&self.netlist).generate();
+            fs::write(path, verilog)?;
+        }
 
         self.print_message(
             &"Synthesized",
@@ -348,6 +361,60 @@ impl<'tcx> Compiler<'tcx> {
         if let Some(closure) = self.find_closure_opt(closure.ty) {
             let mod_id = closure.closure_id;
             self.netlist[mod_id].name = Symbol::new(name);
+        }
+    }
+
+    pub fn span_to_string(&mut self, span: Span, fn_did: DefId) -> Option<String> {
+        if self.crates.is_std(fn_did) {
+            return None;
+        }
+
+        let sm = self.tcx.sess().source_map();
+
+        let (source_file, lo_line, _, _, _) = sm.span_to_location_info(span);
+
+        let source_file = source_file?;
+
+        if let FileName::Real(file_name) = &source_file.name {
+            let file_name = file_name.local_path_if_available();
+            let file_name = if file_name.is_absolute() {
+                self.file_names
+                    .entry(source_file.stable_id)
+                    .or_insert_with(|| {
+                        let mut path = Vec::with_capacity(8);
+                        let mut has_src_dir = false;
+                        let mut parent_of_src = false;
+
+                        for component in file_name.components().rev() {
+                            if let Component::Normal(component) = component {
+                                if has_src_dir {
+                                    parent_of_src = true;
+                                    path.push(component);
+                                    break;
+                                } else {
+                                    if component == "src" {
+                                        has_src_dir = true;
+                                    }
+                                    path.push(component);
+                                }
+                            }
+                        }
+
+                        if parent_of_src {
+                            Some(path.into_iter().rev().collect())
+                        } else {
+                            None
+                        }
+                    })
+                    .as_ref()?
+                    .to_string_lossy()
+            } else {
+                file_name.to_string_lossy()
+            };
+
+            Some(format!("{file_name}: {lo_line}"))
+        } else {
+            None
         }
     }
 }

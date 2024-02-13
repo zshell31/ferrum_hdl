@@ -8,6 +8,9 @@ pub struct CompilerArgs {
     /// Use colors
     #[arg(long, value_enum, default_value_t = Color::Always)]
     pub color: Color,
+    /// Dump generated netlist
+    #[arg(long)]
+    pub dump_netlist: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]

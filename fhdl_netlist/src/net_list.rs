@@ -242,6 +242,18 @@ impl NetList {
         self.nodes[node_id].only_one_out().node_out_id()
     }
 
+    pub fn add_mod_span(&mut self, mod_id: ModuleId, span: Option<String>) {
+        self.modules[mod_id].set_span(span);
+    }
+
+    pub fn add_span(&mut self, node_id: impl Into<NodeId>, span: Option<String>) {
+        let node_id = node_id.into();
+        let node = &mut self.nodes[node_id];
+        if !node.is_input() {
+            self.nodes[node_id].set_span(span);
+        }
+    }
+
     pub fn const_val(&mut self, mod_id: ModuleId, ty: NodeTy, val: u128) -> NodeOutId {
         self.add_and_get_out(mod_id, Const::new(ty, val, None))
     }
@@ -539,9 +551,9 @@ impl NetList {
                 continue;
             }
 
-            let kind = self.nodes[node_id].kind().clone();
+            let node = &self.nodes[node_id];
             let node_id = node_id.with_module_id(target) + offset;
-            let mut node = Node::new(node_id, kind);
+            let mut node = Node::clone_from(node_id, node);
 
             for mut input in node.inputs_mut() {
                 let node_out_id = NodeOutId::make(source, **input);
@@ -560,10 +572,8 @@ impl NetList {
 
             self.reconnect_input_by_ind(mod_inst_node_id, ind, new_input);
 
-            if self.nodes[new_input].sym.is_none() {
-                let sym = self.nodes[mod_inst_node_id].output_by_ind(ind).sym;
-                self.nodes[new_input].sym = sym;
-            }
+            let sym = self.nodes[mod_inst_node_id].output_by_ind(ind).sym;
+            self.nodes[new_input].sym = sym;
         }
 
         self.remove(mod_inst_node_id);

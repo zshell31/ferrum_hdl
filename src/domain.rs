@@ -63,8 +63,12 @@ impl<D: ClockDomain> Clock<D> {
     }
 }
 
-pub struct TestSystem4;
+pub struct TestDomain<const N: usize>;
 
-impl ClockDomain for TestSystem4 {
-    const FREQ: usize = 4;
+impl<const N: usize> ClockDomain for TestDomain<N> {
+    const FREQ: usize = N;
 }
+
+pub type TD4 = TestDomain<4>;
+pub type TD8 = TestDomain<8>;
+pub type TD16 = TestDomain<16>;

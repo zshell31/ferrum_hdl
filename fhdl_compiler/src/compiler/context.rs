@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use ferrum_hdl::const_functions::clog2;
 use fhdl_netlist::net_list::ModuleId;
 use petgraph::{
     algo::dominators::{simple_fast, Dominators},
@@ -67,7 +66,6 @@ impl<'tcx> Variant<'tcx> {
 pub struct Switch<'tcx> {
     pub locals: BTreeSet<Local>,
     pub discr: Item<'tcx>,
-    pub width: u128,
     targets: usize,
     variants: Vec<Variant<'tcx>>,
     is_otherwise: bool,
@@ -81,7 +79,6 @@ impl<'tcx> Switch<'tcx> {
             discr,
             targets,
             variants: Vec::with_capacity(targets),
-            width: 0,
             is_otherwise: false,
             otherwise: None,
         }
@@ -94,10 +91,6 @@ impl<'tcx> Switch<'tcx> {
     pub fn add_variant(&mut self, value: Option<u128>) {
         if let Some(value) = value {
             self.variants.push(Variant::new(value));
-            let width = clog2(value as usize) as u128;
-            if width > self.width {
-                self.width = width;
-            }
             self.is_otherwise = false;
         } else {
             self.otherwise = Some(Default::default());

@@ -11,9 +11,9 @@ use crate::{compiler::CompilerArgs, Env};
 
 #[derive(Debug, Args)]
 pub struct GenArgs {
-    /// Build only this package's library
-    #[arg(long)]
-    lib: bool,
+    /// Space or comma separated list of features to activate
+    #[arg(short = 'F', long, value_delimiter = ' ', value_delimiter = ',', num_args = 1..)]
+    features: Option<Vec<String>>,
     /// Use verbose output (-vv very verbose/build.rs output)
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
@@ -60,7 +60,7 @@ impl Run for GenArgs {
             .map_err(|_| anyhow::anyhow!("current executable path invalid"))?
             .with_file_name(env.driver);
 
-        let mut cmd = Command::new(&env.cargo);
+        let mut cmd = Command::new("xargo");
         cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
         cmd.env("RUSTC_WRAPPER", driver)
             .env("RUSTUP_TOOLCHAIN", &env.toolchain)
@@ -70,8 +70,15 @@ impl Run for GenArgs {
         // Override settings for dev profile
         Self::set_cargo_profile(&mut cmd);
 
+        let features = self
+            .features
+            .as_ref()
+            .filter(|f| !f.is_empty())
+            .map(|f| f.join(","));
+
         let args = [
-            if self.lib { "--lib" } else { "" },
+            "--lib",
+            features.as_deref().unwrap_or_default(),
             match self.verbose {
                 0 => "",
                 1 => "-v",
@@ -85,6 +92,8 @@ impl Run for GenArgs {
 
         cmd.arg("build")
             .args(args)
+            .arg("--target")
+            .arg("x86_64-unknown-linux-gnu")
             .arg("--target-dir")
             .arg(&target_dir);
 

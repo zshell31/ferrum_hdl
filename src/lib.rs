@@ -22,13 +22,19 @@ pub mod unsigned;
 pub mod watchable;
 
 pub mod prelude {
+    pub use fhdl_macros::synth;
+
     pub use crate::{
         array::{Array, ArrayExt},
         bit::Bit,
         bitpack::BitPack,
+        bitvec::BitVec,
         cast::{Cast, CastFrom},
         const_helpers::{Assert, ConstConstr, IsTrue},
-        domain::{clk_divider, hz_to_period, Clock, ClockDomain},
+        domain::{
+            clk_divider, hz_to_period, Clock, ClockDomain, TestDomain, MICROSECOND,
+            MILLISECOND, NANOSECOND, PICOSECOND, SECOND, TD16, TD4, TD8,
+        },
         index::{idx_constr, Idx},
         signal::{
             reg, reg0, reg_en, reg_en0, Bundle, Enable, Reset, Signal, SignalValue,

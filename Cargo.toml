@@ -38,10 +38,6 @@ edition.workspace = true
 [package.metadata.ferrum_hdl]
 synth = true
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-# [package.metadata.rust-analyzer]
-# rustc_private = true
-
 [[example]]
 name = "blinking"
 crate-type = ["staticlib"]

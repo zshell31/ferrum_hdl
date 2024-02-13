@@ -16,7 +16,7 @@ use rustc_target::abi::{FieldIdx, VariantIdx};
 
 use super::{
     item_ty::{EnumTy, ItemTy, ItemTyKind},
-    Compiler, Context,
+    Compiler, Context, SymIdent,
 };
 use crate::error::Error;
 
@@ -504,19 +504,19 @@ impl<'tcx> Compiler<'tcx> {
         enum_ty: EnumTy<'tcx>,
         variant_idx: VariantIdx,
     ) -> Item<'tcx> {
-        let variant_ty = enum_ty.by_variant_idx(variant_idx);
+        let variant = enum_ty.by_variant_idx(variant_idx);
 
         let data_part = self.netlist.add_and_get_out(
             mod_id,
             Splitter::new(
                 scrutinee,
-                [(variant_ty.to_bitvec(), None)],
+                [(variant.ty.to_bitvec(), SymIdent::EnumPart)],
                 Some(enum_ty.data_width()),
                 true,
             ),
         );
 
-        self.from_bitvec(mod_id, data_part, variant_ty)
+        self.from_bitvec(mod_id, data_part, *variant.ty)
     }
 
     pub fn enum_variant_to_bitvec(
@@ -526,28 +526,28 @@ impl<'tcx> Compiler<'tcx> {
         enum_ty: ItemTy<'tcx>,
         variant_idx: VariantIdx,
     ) -> Item<'tcx> {
-        let (discriminant, data_width) = {
+        let (discr, data_width) = {
             let enum_ty = enum_ty.enum_ty();
 
-            let discriminant = enum_ty.discrimant(variant_idx);
-            let discriminant_ty = NodeTy::BitVec(enum_ty.discr_width());
+            let variant = enum_ty.by_variant_idx(variant_idx);
+            let discr = variant.discr;
+            let discr_ty = enum_ty.discr_ty().node_ty();
 
             (
-                self.netlist
-                    .const_val(mod_id, discriminant_ty, discriminant),
+                self.netlist.const_val(mod_id, discr_ty, discr),
                 enum_ty.data_width(),
             )
         };
 
         let inputs = if data_width == 0 {
-            Either::Left(iter::once(discriminant))
+            Either::Left(iter::once(discr))
         } else {
             let data_part = match data_part {
                 Some(data_part) => self.to_bitvec(mod_id, &data_part).node_out_id(),
                 None => self.netlist.const_zero(mod_id, NodeTy::BitVec(data_width)),
             };
 
-            Either::Right([discriminant, data_part].into_iter())
+            Either::Right([discr, data_part].into_iter())
         };
 
         Item::new(

@@ -11,7 +11,7 @@ mod pass;
 mod splitter;
 mod zero_extend;
 
-use std::mem;
+use std::{mem, rc::Rc};
 
 use auto_enums::auto_enum;
 
@@ -86,6 +86,7 @@ impl NodeOutput {
 pub struct Node {
     pub skip: bool,
     pub inject: bool,
+    span: Option<Rc<String>>,
     kind: NodeKind,
     module_id: ModuleId,
     node_idx: NodeIdx,
@@ -123,11 +124,30 @@ impl Node {
             kind,
             skip: true,
             inject: false,
+            span: None,
             module_id,
             node_idx,
             next: None,
             prev: None,
         }
+    }
+
+    pub fn clone_from(node_id: NodeId, node: &Self) -> Self {
+        let kind = node.kind().clone();
+        let span = node.span.clone();
+
+        let mut node = Self::new(node_id, kind);
+        node.span = span;
+
+        node
+    }
+
+    pub fn set_span(&mut self, span: Option<String>) {
+        self.span = span.map(Rc::new);
+    }
+
+    pub fn span(&self) -> Option<&str> {
+        self.span.as_ref().map(|s| s.as_str())
     }
 
     pub fn kind(&self) -> NodeKindWithId<'_> {
@@ -277,13 +297,14 @@ impl Node {
 
     pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
         println!(
-            "{}{} (skip: {}, inject: {}, prev: {:?}, next: {:?})",
+            "{}{} (skip: {}, inject: {}, prev: {:?}, next: {:?}, span: {})",
             prefix,
             self.kind.dump(),
             self.skip,
             self.inject,
             self.prev.map(|node_id| node_id.idx()),
-            self.next.map(|node_id| node_id.idx())
+            self.next.map(|node_id| node_id.idx()),
+            self.span.as_ref().map(|s| s.as_str()).unwrap_or_default()
         );
 
         match self.kind() {

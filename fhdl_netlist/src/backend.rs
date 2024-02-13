@@ -198,6 +198,24 @@ impl<'n> Verilog<'n> {
             _ => {}
         }
     }
+
+    fn write_mod_span(&mut self, mod_id: ModuleId) {
+        if let Some(span) = self.net_list[mod_id].span() {
+            self.buffer.write_tab();
+            self.buffer.write_str("// ");
+            self.buffer.write_str(span);
+            self.buffer.write_eol();
+        }
+    }
+
+    fn write_span(&mut self, node_id: NodeId) {
+        if let Some(span) = self.net_list[node_id].span() {
+            self.buffer.write_tab();
+            self.buffer.write_str("// ");
+            self.buffer.write_str(span);
+            self.buffer.write_eol();
+        }
+    }
 }
 
 impl<'n> Backend for Verilog<'n> {}
@@ -252,6 +270,8 @@ impl<'n> Visitor for Verilog<'n> {
 
         let module = &self.net_list[mod_id];
         let is_top = module.is_top;
+
+        self.write_mod_span(mod_id);
 
         self.buffer
             .write_fmt(format_args!("module {}\n(\n", module.name));
@@ -323,6 +343,7 @@ impl<'n> Visitor for Verilog<'n> {
     fn visit_node(&mut self, node_id: NodeId) {
         use NodeKindWithId as NodeKind;
 
+        self.write_span(node_id);
         self.write_locals(node_id);
 
         let node = &self.net_list[node_id];

@@ -12,7 +12,7 @@ pub use compiler::{Color, CompilerArgs};
 pub struct Env {
     driver: &'static str,
     toolchain: String,
-    cargo: String,
+    // cargo: String,
 }
 
 #[derive(Parser)]
@@ -36,7 +36,7 @@ pub fn run_cli(driver: &'static str, toolchain: String) -> anyhow::Result<()> {
     let env = Env {
         driver,
         toolchain,
-        cargo: env::var("CARGO").unwrap_or("cargo".into()),
+        // cargo: env::var("CARGO").unwrap_or("cargo".into()),
     };
 
     let args = if env::args()

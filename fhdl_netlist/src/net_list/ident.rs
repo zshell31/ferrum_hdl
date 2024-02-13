@@ -174,6 +174,12 @@ impl From<NodeOutId> for NodeOutIdx {
     }
 }
 
+impl From<NodeOutId> for NodeId {
+    fn from(out_id: NodeOutId) -> Self {
+        out_id.node_id()
+    }
+}
+
 impl NodeOutId {
     pub(crate) fn make(module_id: ModuleId, node_out_idx: NodeOutIdx) -> Self {
         let (node_idx, idx) = node_out_idx.split();

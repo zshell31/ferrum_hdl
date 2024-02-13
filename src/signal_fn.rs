@@ -2,7 +2,7 @@ use derive_where::derive_where;
 
 use crate::{signal::SignalValue, simulation::SimCtx};
 
-#[derive_where(Debug)]
+#[derive_where(Debug; T)]
 pub struct SignalFn<T: SignalValue> {
     cycle: usize,
     cached: Option<T>,

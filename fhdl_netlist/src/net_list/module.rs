@@ -1,4 +1,6 @@
 #![allow(clippy::ptr_arg)]
+use std::rc::Rc;
+
 use super::{
     ident::{NodeId, NodeOutId},
     list::{List, ListStorage},
@@ -32,6 +34,7 @@ pub struct Module {
     pub skip: bool,
     pub is_inlined: bool,
     pub only_inputs: bool,
+    span: Option<Rc<String>>,
     module_id: ModuleId,
     list: List<NodeIdx>,
     inputs: FxIndexSet<NodeIdx>,
@@ -46,11 +49,20 @@ impl Module {
             name,
             skip: true,
             only_inputs: true,
+            span: None,
             list: Default::default(),
             inputs: Default::default(),
             outputs: Default::default(),
             is_inlined: false,
         }
+    }
+
+    pub fn set_span(&mut self, span: Option<String>) {
+        self.span = span.map(Rc::new);
+    }
+
+    pub fn span(&self) -> Option<&str> {
+        self.span.as_ref().map(|s| s.as_str())
     }
 
     pub(super) fn next_node_id(&mut self) -> NodeId {

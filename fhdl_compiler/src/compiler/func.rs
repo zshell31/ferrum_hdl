@@ -13,6 +13,7 @@ use rustc_middle::{
     ty::{ClosureArgs, FnSig, GenericArgsRef},
 };
 use rustc_span::{Span, Symbol as RustSymbol};
+use tracing::debug;
 
 use super::{item::Item, item_ty::ItemTy, Compiler, Context};
 use crate::{
@@ -61,11 +62,14 @@ impl<'tcx> Compiler<'tcx> {
             || self.find_synth(did).map(|synth| synth.inlined).is_some()
     }
 
-    pub fn is_std_call(&self, fn_did: DefId, instance_did: DefId) -> bool {
-        if self.crates.is_core(instance_did) {
-            let def_path = self.tcx.def_path(fn_did);
+    pub fn is_std_call(&self, fn_did: DefId) -> bool {
+        if self.crates.is_std(fn_did) {
+            debug!("is_std_call: fn_did = {fn_did:?}");
+            let def_path = &self.tcx.def_path(fn_did).data;
 
-            self.def_path_eq(&def_path.data, &["ops", "function", "Fn", "call"])
+            self.def_path_eq(def_path, &["ops", "function", "Fn", "call"])
+                || self.def_path_eq(def_path, &["ops", "function", "FnOnce", "call"])
+                || self.def_path_eq(def_path, &["default", "Default", "default"])
         } else {
             false
         }
@@ -138,7 +142,7 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     fn find_blackbox_(&self, def_id: DefId) -> Option<BlackboxKind> {
-        if self.crates.is_core(def_id) {
+        if self.crates.is_std(def_id) {
             let def_path = self.tcx.def_path_str(def_id);
 
             if def_path == "std::clone::Clone::clone" {

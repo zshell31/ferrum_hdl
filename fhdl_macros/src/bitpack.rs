@@ -248,7 +248,7 @@ impl BitPackDerive {
                     match variant.fields.style {
                         Style::Unit => {
                             quote! {
-                                Self::#variant_ident() => {
+                                Self::#variant_ident => {
                                     #offset_expr
                                     #discr_expr;
                                     #final_expr;
@@ -259,7 +259,7 @@ impl BitPackDerive {
                         }
                         Style::Tuple => {
                             quote! {
-                                Self::#variant_ident( #(#names),* ) => {
+                                Self::#variant_ident( #(#names,)* ) => {
                                     #offset_expr
                                     #discr_expr;
                                     #(#exprs)*;
@@ -270,7 +270,7 @@ impl BitPackDerive {
                         }
                         Style::Struct => {
                             quote! {
-                                Self::#variant_ident{ #(#names),* } => {
+                                Self::#variant_ident{ #(#names,)* } => {
                                     #offset_expr
                                     #discr_expr;
                                     #(#exprs)*;
@@ -284,7 +284,7 @@ impl BitPackDerive {
 
                 quote! {
                     let bitvec = match self {
-                        #(#branches),*
+                        #(#branches,)*
                     };
                 }
             }
@@ -334,14 +334,14 @@ impl BitPackDerive {
                     match variant.fields.style {
                         Style::Unit => {
                             quote! {
-                                #idx => Self::#ident()
+                                #idx => Self::#ident
                             }
                         }
                         Style::Tuple => {
                             quote! {
                                 #idx => {
                                     #(#exprs)*
-                                    Self::#ident( #(#names),* )
+                                    Self::#ident( #(#names,)* )
                                 }
                             }
                         }
@@ -349,7 +349,7 @@ impl BitPackDerive {
                             quote! {
                                 #idx => {
                                     #(#exprs)*
-                                    Self::#ident{ #(#names),* }
+                                    Self::#ident{ #(#names,)* }
                                 }
                             }
                         }
@@ -359,7 +359,7 @@ impl BitPackDerive {
                 quote! {
                     #variant_expr
                     match variant {
-                        #(#branches),*
+                        #(#branches,)*
                         _ => {
                             panic!("invalid discriminant {variant}");
                         }
@@ -376,8 +376,8 @@ impl BitPackDerive {
 
                 let res = match fields.style {
                     Style::Unit => quote! { #ident },
-                    Style::Tuple => quote! { #ident( #(#names),* ) },
-                    Style::Struct => quote! { #ident{ #(#names),* } },
+                    Style::Tuple => quote! { #ident( #(#names,)* ) },
+                    Style::Struct => quote! { #ident{ #(#names,)* } },
                 };
 
                 quote! {

@@ -202,6 +202,34 @@ mod test_zs_enum {
     }
 }
 
+mod test_enum_with_1_unit_variant {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
+    enum Test {
+        A,
+    }
+
+    #[test]
+    fn bitsize() {
+        assert_eq!(Test::BITS, 1);
+    }
+
+    #[test]
+    fn pack() {
+        let s = Test::A;
+
+        assert_eq!(s.pack(), 0b0_u64.cast());
+    }
+
+    #[test]
+    fn unpack() {
+        let s: Test = BitPack::unpack(0b0_u64.cast());
+
+        assert_eq!(s, Test::A);
+    }
+}
+
 mod test_enum_with_1_variant {
     use super::*;
 
@@ -286,6 +314,35 @@ mod test_enum_with_1_var_and_const_param {
     }
 }
 
+mod test_enum_with_2_unit_variants {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
+    enum Test {
+        A,
+        B,
+    }
+
+    #[test]
+    fn bitsize() {
+        assert_eq!(Test::BITS, 1);
+    }
+
+    #[test]
+    fn pack() {
+        let s = Test::B;
+
+        assert_eq!(s.pack(), 0b1_u64.cast());
+    }
+
+    #[test]
+    fn unpack() {
+        let s: Test = BitPack::unpack(0b0_u64.cast());
+
+        assert_eq!(s, Test::A);
+    }
+}
+
 mod test_enum_with_2_variants {
     use super::*;
 
@@ -323,6 +380,44 @@ mod test_enum_with_2_variants {
                 true.cast()
             ],)
         );
+    }
+}
+
+mod test_enum_with_3_unit_variants {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
+    enum Test {
+        A,
+        B,
+        C,
+    }
+
+    #[test]
+    fn bitsize() {
+        assert_eq!(Test::BITS, 2);
+    }
+
+    #[test]
+    fn pack() {
+        let s = Test::B;
+
+        assert_eq!(s.pack(), 0b01_u64.cast());
+
+        let s = Test::C;
+
+        assert_eq!(s.pack(), 0b10_u64.cast());
+    }
+
+    #[test]
+    fn unpack() {
+        let s: Test = BitPack::unpack(0b10_u64.cast());
+
+        assert_eq!(s, Test::C);
+
+        let s: Test = BitPack::unpack(0b00_u64.cast());
+
+        assert_eq!(s, Test::A);
     }
 }
 
@@ -370,6 +465,23 @@ mod test_enum_with_3_variants {
         let s: Test<3, Unsigned<3>> = BitPack::unpack(0b011000000_u64.cast());
 
         assert_eq!(s, Test::<3, Unsigned<3>>::B(true.cast()));
+    }
+}
+
+mod test_unpack_invalid_enum_variant {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
+    enum Test {
+        A,
+        B,
+        C,
+    }
+
+    #[test]
+    #[should_panic]
+    fn unpack() {
+        let _s: Test = BitPack::unpack(0b11_u64.cast());
     }
 }
 

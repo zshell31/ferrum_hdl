@@ -5,7 +5,7 @@ use std::{
 
 use crate::arena::with_arena;
 
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Symbol(&'static str);
 
 impl !Sync for Symbol {}
@@ -30,6 +30,10 @@ impl AsRef<str> for Symbol {
 }
 
 impl Symbol {
+    pub fn empty() -> Self {
+        Self("")
+    }
+
     pub fn new(name: impl AsRef<str>) -> Self {
         // TODO: check duplicates
         let s = unsafe { with_arena().alloc_str(name.as_ref()) };

@@ -8,34 +8,6 @@ use crate::{
     utils,
 };
 
-pub struct BitVecShrink;
-
-impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
-    // fn eval_expr(
-    //     &self,
-    //     compiler: &mut compiler<'tcx>,
-    //     expr: &'tcx Expr<'tcx>,
-    //     ctx: &mut EvalContext<'tcx>,
-    // ) -> Result<ItemId, Error> {
-    //     utils::args!(expr as rec);
-
-    //     let rec = compiler.eval_expr(rec, ctx)?;
-
-    //     let ty = compiler.node_type(expr.hir_id, ctx);
-    //     let width = compiler.find_sig_ty(ty, ctx, expr.span)?.width();
-
-    //     let rec = compiler.to_bitvec(ctx.module_id, rec);
-
-    //     Ok(compiler
-    //         .netlist
-    //         .add_and_get_out(
-    //             ctx.module_id,
-    //             Splitter::new(rec, [(NodeTy::BitVec(width), None)], None, false),
-    //         )
-    //         .into())
-    // }
-}
-
 pub struct BitVecSlice;
 
 impl<'tcx> EvalExpr<'tcx> for BitVecSlice {

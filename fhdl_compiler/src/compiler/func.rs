@@ -6,11 +6,11 @@ use fhdl_netlist::{
 use rustc_hir::{
     def::DefKind,
     def_id::DefId,
-    definitions::{DefPathData, DisambiguatedDefPathData},
+    definitions::{DefPath, DefPathData},
 };
 use rustc_middle::{
     mir::Local,
-    ty::{ClosureArgs, FnSig, GenericArgsRef},
+    ty::{ClosureArgs, FnSig, GenericArgsRef, Ty},
 };
 use rustc_span::{Span, Symbol as RustSymbol};
 use tracing::debug;
@@ -20,6 +20,86 @@ use crate::{
     blackbox::Blackbox,
     error::{Error, SpanError, SpanErrorKind},
 };
+
+const STD_FUNCTIONS: &[&[&str]] = &[
+    &["default", "Default", "default"],
+    &["ops", "function", "Fn", "call"],
+    &["ops", "function", "FnOnce", "call_once"],
+    // Option
+    &["option", "impl", "and"],
+    &["option", "impl", "and_then"],
+    &["option", "impl", "as_ref"],
+    &["option", "impl", "filter"],
+    &["option", "impl", "flatten"],
+    &["option", "impl", "is_none"],
+    &["option", "impl", "is_some"],
+    &["option", "impl", "map"],
+    &["option", "impl", "map_or"],
+    &["option", "impl", "map_or_else"],
+    &["option", "impl", "or"],
+    &["option", "impl", "or_else"],
+    &["option", "impl", "transpose"],
+    &["option", "impl", "unzip"],
+    &["option", "impl", "xor"],
+    &["option", "impl", "zip"],
+    &["option", "impl", "zip_with"],
+    &["option", "impl", "unwrap_or"],
+    &["option", "impl", "unwrap_or_default"],
+    &["option", "impl", "unwrap_or_else"],
+    // Result
+    &["result", "impl", "and"],
+    &["result", "impl", "and_then"],
+    &["result", "impl", "as_ref"],
+    &["result", "impl", "err"],
+    &["result", "impl", "flatten"],
+    &["result", "impl", "into_err"],
+    &["result", "impl", "into_ok"],
+    &["result", "impl", "is_err"],
+    &["result", "impl", "is_err_and"],
+    &["result", "impl", "is_ok"],
+    &["result", "impl", "is_ok_and"],
+    &["result", "impl", "map"],
+    &["result", "impl", "map_err"],
+    &["result", "impl", "map_or"],
+    &["result", "impl", "map_or_else"],
+    &["result", "impl", "ok"],
+    &["result", "impl", "or"],
+    &["result", "impl", "or_else"],
+    &["result", "impl", "transpose"],
+    &["result", "impl", "unwrap_or"],
+    &["result", "impl", "unwrap_or_default"],
+    &["result", "impl", "unwrap_or_else"],
+];
+
+fn def_path_eq(def_path: &DefPath, items: &[&'static str]) -> bool {
+    let mut def_path = def_path.data.iter();
+    let mut items = items.iter();
+
+    loop {
+        let def_path = def_path.next();
+        let item = items.next();
+
+        let is_matched = match (def_path, item) {
+            (Some(def_path), Some(item)) => match &def_path.data {
+                DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => {
+                    sym.as_str() == *item
+                }
+                DefPathData::Impl => *item == "impl",
+                _ => false,
+            },
+            (Some(_), None) | (None, Some(_)) => false,
+            (None, None) => {
+                return true;
+            }
+        };
+
+        if !is_matched {
+            break;
+        }
+    }
+
+    false
+}
 
 impl<'tcx> Compiler<'tcx> {
     pub fn fn_sig(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> FnSig<'tcx> {
@@ -31,6 +111,36 @@ impl<'tcx> Compiler<'tcx> {
             let fn_sig = self.tcx.fn_sig(def_id);
             fn_sig.instantiate(self.tcx, generics).skip_binder()
         }
+    }
+
+    pub fn fn_inputs(
+        &self,
+        def_id: DefId,
+        generics: GenericArgsRef<'tcx>,
+    ) -> &'tcx [Ty<'tcx>] {
+        let fn_sig = self.fn_sig(def_id, generics);
+        let fn_inputs = fn_sig.inputs();
+        if let DefKind::Closure = self.tcx.def_kind(def_id) {
+            // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/struct.ClosureArgs.html
+            // ```
+            // CS represents the closure signature, representing as a fn() type.
+            // For example, fn(u32, u32) -> u32 would mean that the closure implements CK<(u32, u32), Output = u32>,
+            // where CK is the trait specified above
+            // ```
+            fn_inputs[0].tuple_fields()
+        } else {
+            fn_inputs
+        }
+    }
+
+    pub fn closure_inputs(&self, ty: &ItemTy<'tcx>) -> &'tcx [Ty<'tcx>] {
+        let ty = ty.closure_ty();
+        self.fn_inputs(ty.fn_did, ty.fn_generics)
+    }
+
+    pub fn fn_output(&self, def_id: DefId, generics: GenericArgsRef<'tcx>) -> Ty<'tcx> {
+        let fn_sig = self.fn_sig(def_id, generics);
+        fn_sig.output()
     }
 
     pub fn make_input(
@@ -65,38 +175,17 @@ impl<'tcx> Compiler<'tcx> {
     pub fn is_std_call(&self, fn_did: DefId) -> bool {
         if self.crates.is_std(fn_did) {
             debug!("is_std_call: fn_did = {fn_did:?}");
-            let def_path = &self.tcx.def_path(fn_did).data;
+            let def_path = &self.tcx.def_path(fn_did);
 
-            self.def_path_eq(def_path, &["ops", "function", "Fn", "call"])
-                || self.def_path_eq(def_path, &["ops", "function", "FnOnce", "call"])
-                || self.def_path_eq(def_path, &["default", "Default", "default"])
-        } else {
-            false
+            // TODO: use aho-corasick for searching
+            for std_func in STD_FUNCTIONS {
+                if def_path_eq(def_path, std_func) {
+                    return true;
+                }
+            }
         }
-    }
 
-    fn def_path_eq(
-        &self,
-        def_path: &[DisambiguatedDefPathData],
-        items: &[&'static str],
-    ) -> bool {
-        let def_path = def_path.iter().filter_map(|def_path| match &def_path.data {
-            DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => Some(*sym),
-            _ => None,
-        });
-
-        itertools::diff_with(def_path, items, |sym, item| sym.as_str() == **item)
-            .is_none()
-    }
-
-    pub fn fn_output<T: Into<DefId>>(
-        &mut self,
-        fn_did: T,
-        generics: GenericArgsRef<'tcx>,
-        span: Span,
-    ) -> Result<ItemTy<'tcx>, Error> {
-        let fn_sig = self.fn_sig(fn_did.into(), generics);
-        self.resolve_ty(fn_sig.output(), generics, span)
+        false
     }
 
     pub fn instantiate_module<'a>(
@@ -125,7 +214,6 @@ impl<'tcx> Compiler<'tcx> {
         fn_did: DefId,
         span: Span,
     ) -> Result<Blackbox, Error> {
-        // TODO: check crate
         #[allow(clippy::map_entry)]
         if !self.blackbox.contains_key(&fn_did) {
             let blackbox = self.find_blackbox_(fn_did);
@@ -143,9 +231,9 @@ impl<'tcx> Compiler<'tcx> {
 
     fn find_blackbox_(&self, def_id: DefId) -> Option<BlackboxKind> {
         if self.crates.is_std(def_id) {
-            let def_path = self.tcx.def_path_str(def_id);
+            let def_path = self.tcx.def_path(def_id);
 
-            if def_path == "std::clone::Clone::clone" {
+            if def_path_eq(&def_path, &["clone", "Clone", "clone"]) {
                 return Some(BlackboxKind::StdClone);
             }
         }

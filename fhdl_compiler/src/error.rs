@@ -43,8 +43,6 @@ impl SpanError {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpanErrorKind {
-    #[error("expected closure")]
-    ExpectedClosure,
     #[error("unsupported conversion")]
     UnsupportedConversion,
     #[error("loops are unsupported")]

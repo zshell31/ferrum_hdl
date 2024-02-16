@@ -16,7 +16,7 @@ pub trait Backend {}
 pub struct Verilog<'n> {
     pub buffer: Buffer,
     pub locals: FxHashSet<Symbol>,
-    pub net_list: &'n NetList,
+    pub netlist: &'n NetList,
 }
 
 impl<'n> Verilog<'n> {
@@ -24,7 +24,7 @@ impl<'n> Verilog<'n> {
         Self {
             buffer: Buffer::new(),
             locals: Default::default(),
-            net_list,
+            netlist: net_list,
         }
     }
 
@@ -35,21 +35,21 @@ impl<'n> Verilog<'n> {
     }
 
     fn write_locals(&mut self, node_id: NodeId) {
-        let can_skip = !self.net_list[node_id].is_mod_inst();
+        let can_skip = !self.netlist[node_id].is_mod_inst();
 
-        for node_out_id in self.net_list[node_id].node_out_ids() {
+        for node_out_id in self.netlist[node_id].node_out_ids() {
             self.write_local(node_out_id, can_skip);
         }
     }
 
     fn write_local(&mut self, node_out_id: NodeOutId, can_skip: bool) {
         let node_id = node_out_id.node_id();
-        let out = &self.net_list[node_out_id];
+        let out = &self.netlist[node_out_id];
         if can_skip && (out.skip || out.inject) {
             return;
         }
-        let is_input = self.net_list.is_input(node_id);
-        let is_output = self.net_list.is_output(node_out_id);
+        let is_input = self.netlist.is_input(node_id);
+        let is_output = self.netlist.is_output(node_out_id);
         let sym = out.sym.unwrap();
 
         if !self.locals.contains(&sym) {
@@ -61,8 +61,8 @@ impl<'n> Verilog<'n> {
             }
 
             if let NetKind::Reg(Some(init)) = &out.kind {
-                let init = self.net_list[node_id].input_by_ind(*init);
-                let node = &self.net_list[init.node_id()];
+                let init = self.netlist[node_id].input_by_ind(*init);
+                let node = &self.netlist[init.node_id()];
                 if node.is_const() {
                     let init = self.inject_input(*init, false);
 
@@ -84,10 +84,10 @@ impl<'n> Verilog<'n> {
     }
 
     fn write_local_for_injected(&mut self, node_out_id: NodeOutId) {
-        let inject = self.net_list[node_out_id].inject;
+        let inject = self.netlist[node_out_id].inject;
 
         self.write_local(node_out_id, true);
-        for input in self.net_list[node_out_id.node_id()].inputs() {
+        for input in self.netlist[node_out_id.node_id()].inputs() {
             if inject {
                 self.write_local_for_injected(*input);
             }
@@ -100,9 +100,9 @@ impl<'n> Verilog<'n> {
         nested_expr: bool,
     ) -> Cow<'static, str> {
         self.write_local_for_injected(node_out_id);
-        let node_out = &self.net_list[node_out_id];
+        let node_out = &self.netlist[node_out_id];
         let node_id = node_out_id.node_id();
-        let node = &self.net_list[node_id];
+        let node = &self.netlist[node_id];
 
         let should_be_injected = node.inject || node_out.inject;
 
@@ -117,7 +117,7 @@ impl<'n> Verilog<'n> {
             return buf.buffer.into();
         }
 
-        self.net_list[node_out_id].sym.unwrap().as_str().into()
+        self.netlist[node_out_id].sym.unwrap().as_str().into()
     }
 
     fn inject_node(
@@ -129,21 +129,21 @@ impl<'n> Verilog<'n> {
     ) {
         use NodeKindWithId as NodeKind;
 
-        let node_out = &self.net_list[node_out_id];
+        let node_out = &self.netlist[node_out_id];
         let node_id = node_out_id.node_id();
-        let node = &self.net_list[node_id];
+        let node = &self.netlist[node_id];
 
         if !node_out.inject {
             let mod_id = node_id.module_id();
             if module_id != mod_id {
                 panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", 
-                    self.net_list[module_id].name, self.net_list[node_id.module_id()].name);
+                    self.netlist[module_id].name, self.netlist[node_id.module_id()].name);
             }
-            expr.write_str(self.net_list[node_out_id].sym.unwrap().as_str());
+            expr.write_str(self.netlist[node_out_id].sym.unwrap().as_str());
             return;
         }
 
-        if let Some(const_val) = self.net_list.to_const(node_out_id) {
+        if let Some(const_val) = self.netlist.to_const(node_out_id) {
             expr.write_fmt(format_args!("{const_val}"));
             return;
         }
@@ -177,7 +177,7 @@ impl<'n> Verilog<'n> {
                 self.inject_node(module_id, splitter.input(), expr, true);
                 let width = outputs[out_id].width();
 
-                let mut indices = splitter.eval_indices(self.net_list);
+                let mut indices = splitter.eval_indices(self.netlist);
                 let (_, index) = indices.nth(out_id).unwrap();
                 let start: Cow<'_, str> = index.to_string().into();
 
@@ -200,7 +200,7 @@ impl<'n> Verilog<'n> {
     }
 
     fn write_mod_span(&mut self, mod_id: ModuleId) {
-        if let Some(span) = self.net_list[mod_id].span() {
+        if let Some(span) = self.netlist[mod_id].span() {
             self.buffer.write_tab();
             self.buffer.write_str("// ");
             self.buffer.write_str(span);
@@ -209,7 +209,7 @@ impl<'n> Verilog<'n> {
     }
 
     fn write_span(&mut self, node_id: NodeId) {
-        if let Some(span) = self.net_list[node_id].span() {
+        if let Some(span) = self.netlist[node_id].span() {
             self.buffer.write_tab();
             self.buffer.write_str("// ");
             self.buffer.write_str(span);
@@ -256,8 +256,8 @@ impl<'n> Visitor for Verilog<'n> {
         self.buffer
             .write_str("/* Automatically generated by Ferrum HDL. */\n\n");
 
-        for module_id in self.net_list.modules() {
-            let module = &self.net_list[module_id];
+        for module_id in self.netlist.modules() {
+            let module = &self.netlist[module_id];
             if module.skip {
                 continue;
             }
@@ -268,7 +268,7 @@ impl<'n> Visitor for Verilog<'n> {
     fn visit_module(&mut self, mod_id: ModuleId) {
         self.locals = Default::default();
 
-        let module = &self.net_list[mod_id];
+        let module = &self.netlist[mod_id];
         let is_top = module.is_top;
 
         self.write_mod_span(mod_id);
@@ -280,9 +280,9 @@ impl<'n> Visitor for Verilog<'n> {
 
         // Dont skip inputs if module is top
         let mut inputs = self
-            .net_list
+            .netlist
             .mod_inputs(mod_id)
-            .filter(|input| is_top || !self.net_list[*input].skip)
+            .filter(|input| is_top || !self.netlist[*input].skip)
             .peekable();
 
         self.buffer.push_tab();
@@ -291,7 +291,7 @@ impl<'n> Visitor for Verilog<'n> {
             self.buffer.write_tab();
             self.buffer.write_str("// Inputs\n");
 
-            let net_list = &self.net_list;
+            let net_list = &self.netlist;
             self.buffer.intersperse(SEP, inputs, |buffer, input| {
                 buffer.write_tab();
                 write_param(net_list, buffer, input, ParamKind::Input);
@@ -301,9 +301,9 @@ impl<'n> Visitor for Verilog<'n> {
 
         // Dont skip outputs if module is top
         let mut outputs = self
-            .net_list
+            .netlist
             .mod_outputs(mod_id)
-            .filter(|output| is_top || !self.net_list[*output].skip)
+            .filter(|output| is_top || !self.netlist[*output].skip)
             .peekable();
 
         self.buffer.push_tab();
@@ -314,7 +314,7 @@ impl<'n> Visitor for Verilog<'n> {
             self.buffer.write_tab();
             self.buffer.write_str("// Outputs\n");
 
-            let net_list = &self.net_list;
+            let net_list = &self.netlist;
             self.buffer.intersperse(SEP, outputs, |buffer, output| {
                 buffer.write_tab();
                 write_param(net_list, buffer, output, ParamKind::Output);
@@ -326,9 +326,9 @@ impl<'n> Visitor for Verilog<'n> {
         self.buffer.write_eol();
 
         self.buffer.push_tab();
-        let mut cursor = self.net_list.mod_cursor(mod_id);
-        while let Some(node_id) = self.net_list.next(&mut cursor) {
-            let node = &self.net_list[node_id];
+        let mut cursor = self.netlist.mod_cursor(mod_id);
+        while let Some(node_id) = self.netlist.next(&mut cursor) {
+            let node = &self.netlist[node_id];
             if node.skip || node.inject {
                 continue;
             }
@@ -346,7 +346,7 @@ impl<'n> Visitor for Verilog<'n> {
         self.write_span(node_id);
         self.write_locals(node_id);
 
-        let node = &self.net_list[node_id];
+        let node = &self.netlist[node_id];
         match node.kind() {
             NodeKind::Input(_) => {}
             NodeKind::Pass(pass) => {
@@ -359,7 +359,7 @@ impl<'n> Visitor for Verilog<'n> {
             NodeKind::ModInst(mod_inst) => {
                 let module_id = mod_inst.module_id();
                 let name = mod_inst.name();
-                let module = &self.net_list[module_id];
+                let module = &self.netlist[module_id];
                 assert_eq!(mod_inst.inputs_len(), module.inputs_len());
                 assert_eq!(mod_inst.outputs_len(), module.outputs_len());
 
@@ -377,13 +377,13 @@ impl<'n> Visitor for Verilog<'n> {
                     self.buffer.write_str("// Inputs\n");
                 }
                 for (input, mod_input) in
-                    mod_inst.inputs().zip(self.net_list.mod_inputs(module_id))
+                    mod_inst.inputs().zip(self.netlist.mod_inputs(module_id))
                 {
-                    if self.net_list[mod_input].skip {
+                    if self.netlist[mod_input].skip {
                         continue;
                     }
                     let input_sym = self.inject_input(input, false);
-                    let mod_input_sym = self.net_list[mod_input].sym.unwrap();
+                    let mod_input_sym = self.netlist[mod_input].sym.unwrap();
 
                     self.buffer.write_tab();
                     self.buffer
@@ -397,13 +397,13 @@ impl<'n> Visitor for Verilog<'n> {
                     mod_inst
                         .outputs()
                         .iter()
-                        .zip(self.net_list.mod_outputs(module_id)),
+                        .zip(self.netlist.mod_outputs(module_id)),
                     |buffer, (output, mod_output)| {
-                        if self.net_list[mod_output].skip {
+                        if self.netlist[mod_output].skip {
                             return;
                         }
                         let output_sym = output.sym.unwrap();
-                        let mod_output_sym = self.net_list[mod_output].sym.unwrap();
+                        let mod_output_sym = self.netlist[mod_output].sym.unwrap();
 
                         buffer.write_tab();
                         buffer.write_fmt(format_args!(".{mod_output_sym}({output_sym})"));
@@ -463,7 +463,7 @@ impl<'n> Visitor for Verilog<'n> {
 
                 let input = self.inject_input(input, false);
 
-                let indices = splitter.eval_indices(self.net_list);
+                let indices = splitter.eval_indices(self.netlist);
 
                 for (output, index) in indices {
                     if !(output.skip || output.inject) {

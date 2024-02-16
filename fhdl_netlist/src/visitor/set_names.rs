@@ -1,39 +1,29 @@
 use once_cell::sync::Lazy;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 use crate::{
-    net_list::{FxIndexSet, ModuleId, NetList, NodeId},
+    net_list::{ModuleId, NetList, NodeId},
     node::{NodeKindWithId, NodeKindWithIdMut},
     symbol::Symbol,
     visitor::Visitor,
 };
 
-static DEFAULT_SYMBOLS: Lazy<FxHashMap<&'static str, &'static str>> = Lazy::new(|| {
-    [
-        ("input", "_input"),
-        ("output", "_output"),
-        ("reg", "_reg"),
-        ("self", "_self"),
-    ]
-    .into_iter()
-    .collect()
-});
+static DEFAULT_SYMBOLS: Lazy<FxHashSet<&'static str>> =
+    Lazy::new(|| ["input", "output", "reg", "self"].into_iter().collect());
 
 pub struct SetNames<'n> {
-    net_list: &'n mut NetList,
+    netlist: &'n mut NetList,
     idents: FxHashMap<(ModuleId, Symbol), usize>,
     module_idents: FxHashMap<Symbol, usize>,
-    node_ids: FxIndexSet<NodeId>,
 }
 
 impl<'n> SetNames<'n> {
     pub fn new(net_list: &'n mut NetList) -> Self {
         Self {
-            net_list,
+            netlist: net_list,
             idents: Default::default(),
             module_idents: Default::default(),
-            node_ids: Default::default(),
         }
     }
 
@@ -42,21 +32,19 @@ impl<'n> SetNames<'n> {
     }
 
     fn ident(sym: Symbol, count: Option<usize>) -> (Symbol, usize) {
-        assert!(!sym.is_empty());
-        let (suffix, prefix) = match sym.split_once_with_delim('$') {
-            Some(splitted) => splitted,
-            None => (sym.as_str(), ""),
-        };
+        let sym = if !sym.is_empty() {
+            let (suffix, prefix) = match sym.split_once_with_delim('$') {
+                Some(splitted) => splitted,
+                None => (sym.as_str(), ""),
+            };
 
-        let sym = match DEFAULT_SYMBOLS.get(suffix).map(Symbol::new) {
-            Some(new_sym) => {
-                if !prefix.is_empty() {
-                    Symbol::new_from_args(format_args!("{new_sym}{prefix}"))
-                } else {
-                    new_sym
-                }
+            if DEFAULT_SYMBOLS.contains(suffix) || !prefix.is_empty() {
+                Symbol::new_from_args(format_args!("\\{sym}"))
+            } else {
+                sym
             }
-            None => sym,
+        } else {
+            sym
         };
 
         match count {
@@ -69,7 +57,9 @@ impl<'n> SetNames<'n> {
     }
 
     fn make_sym(sym: Symbol, count: usize) -> Symbol {
-        if count == 0 {
+        if sym.is_empty() {
+            Symbol::new_from_args(format_args!("\\${}", count + 1))
+        } else if count == 0 {
             sym
         } else {
             Symbol::new_from_args(format_args!("{}_{}", sym, count))
@@ -77,7 +67,7 @@ impl<'n> SetNames<'n> {
     }
 
     fn set_module_name(&mut self, module_id: ModuleId) {
-        let module = &mut self.net_list[module_id];
+        let module = &mut self.netlist[module_id];
         let sym = module.name;
         let count = self.module_idents.get(&sym).copied();
 
@@ -92,11 +82,11 @@ impl<'n> SetNames<'n> {
         let mut new_name = None;
         let mut mod_outputs = SmallVec::<[_; 8]>::new();
 
-        if let NodeKindWithId::ModInst(mod_inst) = self.net_list[node_id].kind() {
+        if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
             if mod_inst.name().is_none() {
                 let sym = Symbol::new_from_args(format_args!(
                     "__{}",
-                    self.net_list[mod_inst.module_id()].name
+                    self.netlist[mod_inst.module_id()].name
                 ));
 
                 let count = self.idents.get(&(module_id, sym)).copied();
@@ -106,21 +96,18 @@ impl<'n> SetNames<'n> {
                 new_name = Some(Self::make_sym(new_sym, count))
             }
 
-            for (output, mod_output) in self.net_list[node_id]
+            for (output, mod_output) in self.netlist[node_id]
                 .outputs()
-                .zip(self.net_list.mod_outputs(mod_inst.module_id()))
+                .zip(self.netlist.mod_outputs(mod_inst.module_id()))
             {
                 if output.sym.is_none() {
-                    mod_outputs.push((
-                        output.node_out_id().idx(),
-                        self.net_list[mod_output].sym,
-                    ));
+                    mod_outputs
+                        .push((output.node_out_id().idx(), self.netlist[mod_output].sym));
                 }
             }
         }
 
-        if let NodeKindWithIdMut::ModInst(mut mod_inst) =
-            self.net_list[node_id].kind_mut()
+        if let NodeKindWithIdMut::ModInst(mut mod_inst) = self.netlist[node_id].kind_mut()
         {
             let name = mod_inst.name().or(new_name);
             mod_inst.set_name(name);
@@ -130,9 +117,9 @@ impl<'n> SetNames<'n> {
             }
         }
 
-        let node = &mut self.net_list[node_id];
+        let node = &mut self.netlist[node_id];
         for mut out in node.outputs_mut() {
-            let sym = out.sym.unwrap_or_else(|| Symbol::new("__tmp"));
+            let sym = out.sym.unwrap_or_default();
             let count = self.idents.get(&(module_id, sym)).copied();
 
             let (new_sym, count) = Self::ident(sym, count);
@@ -144,7 +131,11 @@ impl<'n> SetNames<'n> {
 
 impl<'n> Visitor for SetNames<'n> {
     fn visit_modules(&mut self) {
-        for module_id in self.net_list.modules() {
+        for module_id in self.netlist.modules() {
+            if self.netlist[module_id].skip {
+                continue;
+            }
+
             self.visit_module(module_id);
         }
     }
@@ -152,27 +143,13 @@ impl<'n> Visitor for SetNames<'n> {
     fn visit_module(&mut self, module_id: ModuleId) {
         self.set_module_name(module_id);
 
-        self.node_ids.clear();
+        let mut cursor = self.netlist.mod_cursor(module_id);
+        while let Some(node_id) = self.netlist.next(&mut cursor) {
+            let node = &self.netlist[node_id];
 
-        self.node_ids.extend(
-            self.net_list
-                .mod_outputs(module_id)
-                .map(|node_out_id| node_out_id.node_id()),
-        );
-
-        let mut idx = 0;
-        while let Some(node_id) = self.node_ids.get_index(idx) {
-            let node_id = *node_id;
-
-            self.set_node_out_names(node_id);
-
-            self.node_ids.extend(
-                self.net_list[node_id]
-                    .inputs()
-                    .map(|node_out_id| node_out_id.node_id()),
-            );
-
-            idx += 1;
+            if !(node.skip || (self.netlist.nodes_injected && node.inject)) {
+                self.set_node_out_names(node_id);
+            }
         }
     }
 

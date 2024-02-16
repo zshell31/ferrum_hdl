@@ -7,7 +7,7 @@ use crate::{
 };
 
 pub struct Reachability<'n> {
-    net_list: &'n mut NetList,
+    netlist: &'n mut NetList,
     node_out_ids: Vec<NodeOutId>,
     modules: FxHashSet<ModuleId>,
 }
@@ -20,7 +20,7 @@ impl<'n> Reachability<'n> {
         }
 
         Self {
-            net_list,
+            netlist: net_list,
             node_out_ids: Default::default(),
             modules,
         }
@@ -33,7 +33,7 @@ impl<'n> Reachability<'n> {
 
 impl<'n> Visitor for Reachability<'n> {
     fn visit_modules(&mut self) {
-        for module_id in self.net_list.modules() {
+        for module_id in self.netlist.modules() {
             if self.modules.contains(&module_id) {
                 self.visit_module(module_id);
             }
@@ -44,21 +44,28 @@ impl<'n> Visitor for Reachability<'n> {
         self.node_out_ids.clear();
 
         self.node_out_ids
-            .extend(self.net_list.mod_outputs(module_id));
+            .extend(self.netlist.mod_outputs(module_id));
 
         while let Some(node_out_id) = self.node_out_ids.pop() {
-            let node_out = &mut self.net_list[node_out_id];
+            let node_out = &self.netlist[node_out_id];
             if !node_out.skip || node_out.ty.width() == 0 {
                 continue;
             }
 
+            let node_id = node_out_id.node_id();
+            if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
+                if mod_inst.empty_ports() {
+                    continue;
+                }
+            }
+
+            let node_out = &mut self.netlist[node_out_id];
             node_out.skip = false;
 
-            let node_id = node_out_id.node_id();
             let mod_id = node_id.module_id();
 
-            self.net_list[mod_id].skip = false;
-            let node = &mut self.net_list[node_id];
+            self.netlist[mod_id].skip = false;
+            let node = &mut self.netlist[node_id];
             node.skip = false;
 
             if let NodeKindWithId::ModInst(mod_inst) = node.kind() {

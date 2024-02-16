@@ -100,7 +100,6 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[synth(inline)]
-    #[synth]
     pub fn reg<U: SignalValue>(
         &self,
         clk: Clock<D>,
@@ -125,6 +124,14 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         U: Default,
     {
         self.and_then(|value| reg_en0(clk, rst, en, move |_| f(value.value())))
+    }
+
+    #[synth(inline)]
+    pub fn into_reg(&self, clk: Clock<D>, rst: &Reset<D>) -> Signal<D, T>
+    where
+        T: Default,
+    {
+        self.and_then(|value| reg0(clk, rst, move |_| value.value()))
     }
 
     pub fn source(value: T) -> (Source<T>, Signal<D, T>) {

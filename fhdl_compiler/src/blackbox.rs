@@ -10,7 +10,6 @@ use fhdl_blackbox::BlackboxKind;
 use fhdl_netlist::node::BinOp;
 use rustc_hir::def_id::DefId;
 use rustc_span::Span;
-use tracing::error;
 
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
@@ -21,15 +20,12 @@ use crate::{
 pub trait EvalExpr<'tcx> {
     fn eval(
         &self,
-        _compiler: &mut Compiler<'tcx>,
-        _args: &[Item<'tcx>],
-        _output_ty: ItemTy<'tcx>,
-        _ctx: &mut Context<'tcx>,
-        _span: Span,
-    ) -> Result<Item<'tcx>, Error> {
-        error!("{}", std::any::type_name::<Self>());
-        unimplemented!()
-    }
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        output_ty: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error>;
 }
 
 #[derive(Debug)]
@@ -85,7 +81,6 @@ eval_expr!(
     BitPackRepack => bitpack::BitPackRepack,
     BitPackMsb => bitpack::BitPackMsb,
 
-    BitVecShrink => bitvec::BitVecShrink,
     BitVecSlice => bitvec::BitVecSlice,
     BitVecUnpack => bitvec::BitVecUnpack,
 

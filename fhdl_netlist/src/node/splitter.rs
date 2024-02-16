@@ -12,7 +12,7 @@ use crate::{
 #[derive(Debug, Clone)]
 pub struct Splitter {
     input: NodeOutIdx,
-    outputs: SmallVec<[NodeOutput; 1]>,
+    outputs: SmallVec<[NodeOutput; 4]>,
     start: Option<u128>,
     rev: bool,
 }

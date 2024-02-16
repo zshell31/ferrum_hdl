@@ -28,12 +28,19 @@ pub(crate) type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
 pub type Nodes = FxHashMap<NodeId, Node>;
 pub type Links = FxHashSet<NodeId>;
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
+pub struct NetListCfg {
+    pub inline_all: bool,
+}
+
+#[derive(Debug)]
 pub struct NetList {
     modules: Vec<Module>,
     top_module: Option<ModuleId>,
     nodes: Nodes,
     links: FxHashMap<NodeOutId, FxHashSet<NodeInIdx>>,
+    cfg: NetListCfg,
+    pub(crate) nodes_injected: bool,
 }
 
 impl !Sync for NetList {}
@@ -138,8 +145,19 @@ impl NodeCursor {
 }
 
 impl NetList {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(cfg: NetListCfg) -> Self {
+        Self {
+            modules: Default::default(),
+            top_module: None,
+            nodes: Default::default(),
+            links: Default::default(),
+            cfg,
+            nodes_injected: false,
+        }
+    }
+
+    pub fn cfg(&self) -> &NetListCfg {
+        &self.cfg
     }
 
     fn next_mod_id(&self) -> ModuleId {

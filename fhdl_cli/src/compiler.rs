@@ -11,6 +11,9 @@ pub struct CompilerArgs {
     /// Dump generated netlist
     #[arg(long)]
     pub dump_netlist: bool,
+    /// Inline all modules except top module
+    #[arg(long)]
+    pub inline_all: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]

@@ -8,7 +8,6 @@ pub enum BlackboxKind {
     BitPackPack,
     BitPackRepack,
 
-    BitVecShrink,
     BitVecSlice,
     BitVecUnpack,
 

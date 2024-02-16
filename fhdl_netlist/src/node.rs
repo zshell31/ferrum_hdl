@@ -87,7 +87,7 @@ pub struct Node {
     pub skip: bool,
     pub inject: bool,
     span: Option<Rc<String>>,
-    kind: NodeKind,
+    kind: Box<NodeKind>,
     module_id: ModuleId,
     node_idx: NodeIdx,
     next: Option<NodeIdx>,
@@ -121,7 +121,7 @@ impl Node {
         let (module_id, node_idx) = node_id.split();
 
         Self {
-            kind,
+            kind: Box::new(kind),
             skip: true,
             inject: false,
             span: None,
@@ -351,38 +351,38 @@ impl Node {
     }
 
     pub fn is_input(&self) -> bool {
-        matches!(&self.kind, NodeKind::Input(_))
+        matches!(&*self.kind, NodeKind::Input(_))
     }
 
     pub fn is_expr(&self) -> bool {
         matches!(
-            &self.kind,
+            &*self.kind,
             NodeKind::Not(_) | NodeKind::BitNot(_) | NodeKind::BinOp(_)
         )
     }
 
     pub fn is_const(&self) -> bool {
-        matches!(&self.kind, NodeKind::Const(_) | NodeKind::MultiConst(_))
+        matches!(&*self.kind, NodeKind::Const(_) | NodeKind::MultiConst(_))
     }
 
     pub fn is_splitter(&self) -> bool {
-        matches!(&self.kind, NodeKind::Splitter(_))
+        matches!(&*self.kind, NodeKind::Splitter(_))
     }
 
     pub fn is_merger(&self) -> bool {
-        matches!(&self.kind, NodeKind::Merger(_))
+        matches!(&*self.kind, NodeKind::Merger(_))
     }
 
     pub fn is_zero_extend(&self) -> bool {
-        matches!(&self.kind, NodeKind::ZeroExtend(_))
+        matches!(&*self.kind, NodeKind::ZeroExtend(_))
     }
 
     pub fn is_mux(&self) -> bool {
-        matches!(&self.kind, NodeKind::Mux(_))
+        matches!(&*self.kind, NodeKind::Mux(_))
     }
 
     pub fn is_mod_inst(&self) -> bool {
-        matches!(&self.kind, NodeKind::ModInst(_))
+        matches!(&*self.kind, NodeKind::ModInst(_))
     }
 }
 

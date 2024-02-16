@@ -1,3 +1,4 @@
+use rustc_middle::ty::List;
 use rustc_span::Span;
 
 use super::EvalExpr;
@@ -27,7 +28,8 @@ impl<'tcx> EvalExpr<'tcx> for Chain {
         let array_ty = output_ty.struct_ty().by_idx(1);
         let count = array_ty.array_ty().count();
 
-        let idx_ty = compiler.find_closure(closure.ty, span)?.input_tys[0];
+        let idx_ty = compiler.closure_inputs(&closure.ty)[0];
+        let idx_ty = compiler.resolve_ty(idx_ty, List::empty(), span)?;
 
         let mut prev = init.clone();
         let array = Item::new(

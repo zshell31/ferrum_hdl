@@ -33,8 +33,6 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         let en = en.map(|en| compiler.to_bitvec(mod_id, en).node_out_id());
         let rst_val = compiler.to_bitvec(mod_id, rst_val).node_out_id();
 
-        compiler.set_mod_name(comb, "SignalReg");
-
         let dff = compiler.netlist.add(
             ctx.module_id,
             DFF::new(
@@ -78,8 +76,6 @@ impl<'tcx> EvalExpr<'tcx> for SignalMap {
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec, comb);
 
-        compiler.set_mod_name(comb, "SignalMap");
-
         compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
 }
@@ -97,8 +93,6 @@ impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as rec, comb);
 
-        compiler.set_mod_name(comb, "SignalAndThen");
-
         compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
 }
@@ -115,8 +109,6 @@ impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         utils::args!(args as arg1, arg2, comb);
-
-        compiler.set_mod_name(comb, "SignalApply2");
 
         compiler.instantiate_closure(comb, &[arg1.clone(), arg2.clone()], ctx, span)
     }

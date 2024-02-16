@@ -15,7 +15,7 @@ use fhdl_netlist::{
 use rustc_target::abi::{FieldIdx, VariantIdx};
 
 use super::{
-    item_ty::{EnumTy, ItemTy, ItemTyKind},
+    item_ty::{ClosureTy, EnumTy, ItemTy, ItemTyKind},
     Compiler, Context, SymIdent,
 };
 use crate::error::Error;
@@ -304,12 +304,14 @@ impl<'a> CombineOutputs<'a> {
                     ty.tys().map(|item_ty| self.next_output(item_ty)),
                 )),
             ),
-            ItemTyKind::Struct(ty) | ItemTyKind::Closure(_, ty) => Item::new(
-                item_ty,
-                ItemKind::Group(Group::new(
-                    ty.tys().map(|item_ty| self.next_output(item_ty)),
-                )),
-            ),
+            ItemTyKind::Struct(ty) | ItemTyKind::Closure(ClosureTy { ty, .. }) => {
+                Item::new(
+                    item_ty,
+                    ItemKind::Group(Group::new(
+                        ty.tys().map(|item_ty| self.next_output(item_ty)),
+                    )),
+                )
+            }
             ItemTyKind::Enum(_) => {
                 Item::new(item_ty, ItemKind::Node(self.outputs.next().unwrap()))
             }
@@ -459,7 +461,7 @@ impl<'tcx> Compiler<'tcx> {
                     )),
                 )
             }
-            ItemTyKind::Struct(ty) | ItemTyKind::Closure(_, ty) => {
+            ItemTyKind::Struct(ty) | ItemTyKind::Closure(ClosureTy { ty, .. }) => {
                 let outputs = if ty.len() == 1 {
                     Either::Left(iter::once(node_out_id).zip(ty.tys()))
                 } else {
@@ -578,16 +580,15 @@ impl<'tcx> Compiler<'tcx> {
                         .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
                 )?),
             ),
-            ItemTyKind::Struct(struct_ty) | ItemTyKind::Closure(_, struct_ty) => {
-                Item::new(
-                    ty,
-                    ItemKind::Group(Group::new_opt(
-                        struct_ty
-                            .tys()
-                            .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
-                    )?),
-                )
-            }
+            ItemTyKind::Struct(struct_ty)
+            | ItemTyKind::Closure(ClosureTy { ty: struct_ty, .. }) => Item::new(
+                ty,
+                ItemKind::Group(Group::new_opt(
+                    struct_ty
+                        .tys()
+                        .map(|ty| self.mk_item_from_ty(ty, ctx, mk_node)),
+                )?),
+            ),
             ItemTyKind::Enum(_) => {
                 let node_ty = ty.to_bitvec();
                 let node_out_id = mk_node(self, node_ty, ctx)?;

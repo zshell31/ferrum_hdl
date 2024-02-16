@@ -8,12 +8,12 @@ use crate::{
 };
 
 pub struct Transform<'n> {
-    net_list: &'n mut NetList,
+    netlist: &'n mut NetList,
 }
 
 impl<'n> Transform<'n> {
     pub fn new(net_list: &'n mut NetList) -> Self {
-        Self { net_list }
+        Self { netlist: net_list }
     }
 
     pub fn run(&mut self) {
@@ -25,7 +25,7 @@ impl<'n> Transform<'n> {
         node_id: NodeId,
         cursor: &mut NodeCursor,
     ) -> Option<NodeKind> {
-        if let NodeKindWithId::ModInst(mod_inst) = self.net_list[node_id].kind() {
+        if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
             let module_id = mod_inst.module_id();
 
             // transform nodes of module before inlining module
@@ -36,7 +36,7 @@ impl<'n> Transform<'n> {
         let res = self.transform_(node_id, &mut should_be_inlined);
 
         if should_be_inlined {
-            let node_id = self.net_list.inline_mod(node_id);
+            let node_id = self.netlist.inline_mod(node_id);
             cursor.set_node_id(node_id);
         }
 
@@ -50,16 +50,16 @@ impl<'n> Transform<'n> {
     ) -> Option<NodeKind> {
         use NodeKindWithId as NodeKind;
 
-        let node = &self.net_list[node_id];
+        let node = &self.netlist[node_id];
         match node.kind() {
-            NodeKind::Pass(pass) => match self.net_list.to_const(pass.input()) {
+            NodeKind::Pass(pass) => match self.netlist.to_const(pass.input()) {
                 Some(const_val) => {
                     let output = pass.output();
                     Some(Const::new(output.ty, const_val.val(), output.sym).into())
                 }
                 None => {
-                    if !self.net_list.is_output(node.only_one_out().node_out_id()) {
-                        self.net_list.reconnect(node_id);
+                    if !self.netlist.is_output(node.only_one_out().node_out_id()) {
+                        self.netlist.reconnect(node_id);
                     }
                     None
                 }
@@ -68,10 +68,10 @@ impl<'n> Transform<'n> {
                 let module_id = mod_inst.module_id();
 
                 let values = self
-                    .net_list
+                    .netlist
                     .mod_outputs(module_id)
                     .map(|node_out_id| {
-                        self.net_list
+                        self.netlist
                             .to_const(node_out_id)
                             .map(|const_val| const_val.val())
                     })
@@ -80,31 +80,35 @@ impl<'n> Transform<'n> {
                 match values {
                     Some(values) => {
                         let outputs = self
-                            .net_list
+                            .netlist
                             .mod_outputs(module_id)
-                            .map(|node_out_id| self.net_list[node_out_id]);
+                            .map(|node_out_id| self.netlist[node_out_id]);
 
                         Some(MultiConst::new(values, outputs).into())
                     }
                     None => {
-                        *should_be_inlined = self.net_list[module_id].is_inlined
-                            || node.inputs_len() == 0
-                            || self.net_list[module_id].only_inputs
-                            || node
-                                .inputs()
-                                .all(|input| self.net_list[input.node_id()].is_const());
+                        if !self.netlist.cfg().inline_all {
+                            *should_be_inlined = self.netlist[module_id].is_inlined
+                                || node.inputs_len() == 0
+                                || self.netlist[module_id].only_inputs
+                                || node.inputs().all(|input| {
+                                    self.netlist[input.node_id()].is_const()
+                                });
+                        } else {
+                            *should_be_inlined = true
+                        }
 
                         None
                     }
                 }
             }
-            NodeKind::Not(not) => self.net_list.to_const(not.input()).map(|const_val| {
+            NodeKind::Not(not) => self.netlist.to_const(not.input()).map(|const_val| {
                 let const_val = !const_val;
                 let output = not.output();
                 Const::new(output.ty, const_val.val(), output.sym).into()
             }),
             NodeKind::BitNot(bit_not) => {
-                self.net_list.to_const(bit_not.input()).map(|const_val| {
+                self.netlist.to_const(bit_not.input()).map(|const_val| {
                     let const_val = !const_val;
                     let output = bit_not.output();
                     Const::new(output.ty, const_val.val(), output.sym).into()
@@ -112,8 +116,8 @@ impl<'n> Transform<'n> {
             }
 
             NodeKind::BinOp(bin_op) => match (
-                self.net_list.to_const(bin_op.left()),
-                self.net_list.to_const(bin_op.right()),
+                self.netlist.to_const(bin_op.left()),
+                self.netlist.to_const(bin_op.right()),
             ) {
                 (Some(left), Some(right)) => {
                     let const_val = match bin_op.bin_op() {
@@ -143,12 +147,12 @@ impl<'n> Transform<'n> {
                 _ => None,
             },
             NodeKind::Splitter(splitter) => {
-                if splitter.pass_all_bits(self.net_list) {
-                    self.net_list.reconnect(node_id);
+                if splitter.pass_all_bits(self.netlist) {
+                    self.netlist.reconnect(node_id);
                     None
                 } else {
-                    let indices = splitter.eval_indices(self.net_list);
-                    let input = self.net_list.to_const(splitter.input());
+                    let indices = splitter.eval_indices(self.netlist);
+                    let input = self.netlist.to_const(splitter.input());
 
                     if let Some(input) = input {
                         let values = indices
@@ -167,15 +171,15 @@ impl<'n> Transform<'n> {
                         let input = splitter.input();
 
                         let input_id = input.node_id();
-                        let input = &self.net_list[input_id];
+                        let input = &self.netlist[input_id];
 
                         #[allow(clippy::single_match)]
                         match input.kind() {
                             NodeKind::Merger(merger) => {
                                 if splitter.rev() != merger.rev() // TODO: maybe it's unnecessary
-                                    && self.net_list.is_reversible(input_id, node_id)
+                                    && self.netlist.is_reversible(input_id, node_id)
                                 {
-                                    self.net_list.reconnect_from_to(input_id, node_id);
+                                    self.netlist.reconnect_from_to(input_id, node_id);
                                 }
                             }
                             _ => {}
@@ -211,7 +215,7 @@ impl<'n> Transform<'n> {
                 let mut val = Some(ConstVal::new(0, 0));
                 merger
                     .inputs()
-                    .for_each(|input| match self.net_list.to_const(input) {
+                    .for_each(|input| match self.netlist.to_const(input) {
                         Some(new_val) => {
                             if let Some(val) = val.as_mut() {
                                 val.shift(new_val);
@@ -230,13 +234,13 @@ impl<'n> Transform<'n> {
 
             NodeKindWithId::ZeroExtend(zero_extend) => {
                 let output = zero_extend.output();
-                match self.net_list.to_const(zero_extend.input()) {
+                match self.netlist.to_const(zero_extend.input()) {
                     Some(const_val) => {
                         Some(Const::new(output.ty, const_val.val(), output.sym).into())
                     }
                     None => {
-                        if self.net_list[zero_extend.input()].width() == output.width() {
-                            self.net_list.reconnect(node_id);
+                        if self.netlist[zero_extend.input()].width() == output.width() {
+                            self.netlist.reconnect(node_id);
                         }
 
                         None
@@ -247,7 +251,7 @@ impl<'n> Transform<'n> {
             NodeKind::Mux(node) => {
                 let MuxInputs { sel, variants } = node.inputs();
 
-                if let Some(new_input) = self.net_list.to_const(sel).and_then(|sel| {
+                if let Some(new_input) = self.netlist.to_const(sel).and_then(|sel| {
                     for (case, input) in variants {
                         match case {
                             Case::Val(case) => {
@@ -263,9 +267,8 @@ impl<'n> Transform<'n> {
 
                     None
                 }) {
-                    let out_id =
-                        self.net_list[node_id].only_one_out().node_out_id().idx();
-                    self.net_list
+                    let out_id = self.netlist[node_id].only_one_out().node_out_id().idx();
+                    self.netlist
                         .reconnect_input_by_ind(node_id, out_id, new_input);
                 }
 
@@ -278,17 +281,17 @@ impl<'n> Transform<'n> {
 
 impl<'n> Visitor for Transform<'n> {
     fn visit_modules(&mut self) {
-        if let Some(top) = self.net_list.top_module() {
+        if let Some(top) = self.netlist.top_module() {
             self.visit_module(top);
         }
     }
 
     fn visit_module(&mut self, module_id: ModuleId) {
-        let mut cursor = self.net_list.mod_cursor(module_id);
-        while let Some(node_id) = self.net_list.next(&mut cursor) {
+        let mut cursor = self.netlist.mod_cursor(module_id);
+        while let Some(node_id) = self.netlist.next(&mut cursor) {
             let new_node = self.transform(node_id, &mut cursor);
             if let Some(new_node) = new_node {
-                self.net_list.replace(node_id, new_node);
+                self.netlist.replace(node_id, new_node);
             }
         }
     }

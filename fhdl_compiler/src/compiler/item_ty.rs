@@ -98,7 +98,7 @@ impl<'tcx> StructTy<'tcx> {
         self.tys.len()
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &str> {
+    pub fn names(&self) -> impl Iterator<Item = &str> + 'tcx {
         self.tys.iter().map(|ty| ty.name.as_str())
     }
 
@@ -198,11 +198,32 @@ impl<'tcx> EnumTy<'tcx> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ClosureTy<'tcx> {
+    pub fn_did: DefId,
+    pub fn_generics: GenericArgsRef<'tcx>,
+    pub ty: StructTy<'tcx>,
+}
+
+impl<'tcx> ClosureTy<'tcx> {
+    pub fn new(
+        fn_did: DefId,
+        fn_generics: GenericArgsRef<'tcx>,
+        ty: StructTy<'tcx>,
+    ) -> Self {
+        Self {
+            fn_did,
+            fn_generics,
+            ty,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemTyKind<'tcx> {
     Node(NodeTy),
     Array(ArrayTy<'tcx>),
     Struct(StructTy<'tcx>),
-    Closure(DefId, StructTy<'tcx>),
+    Closure(ClosureTy<'tcx>),
     Enum(EnumTy<'tcx>),
 }
 
@@ -228,8 +249,15 @@ impl<'tcx> ItemTyKind<'tcx> {
         }
     }
 
+    pub fn closure_ty(&self) -> ClosureTy<'tcx> {
+        match self {
+            Self::Closure(closure_ty) => *closure_ty,
+            _ => panic!("expected closure ty"),
+        }
+    }
+
     pub fn is_closure_ty(&self) -> bool {
-        matches!(self, Self::Closure(_, _))
+        matches!(self, Self::Closure(_))
     }
 
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
@@ -244,7 +272,7 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Node(ty) => ty.width(),
             Self::Array(ty) => ty.width(),
             Self::Struct(ty) => ty.width(),
-            Self::Closure(_, ty) => ty.width(),
+            Self::Closure(ty) => ty.ty.width(),
             Self::Enum(ty) => ty.width(),
         }
     }
@@ -336,6 +364,11 @@ impl<'tcx> ItemTy<'tcx> {
     #[inline]
     pub fn struct_ty(&self) -> StructTy<'tcx> {
         self.0.struct_ty()
+    }
+
+    #[inline]
+    pub fn closure_ty(&self) -> ClosureTy<'tcx> {
+        self.0.closure_ty()
     }
 
     #[inline]
@@ -448,11 +481,18 @@ impl<'tcx> Compiler<'tcx> {
                 TyKind::Ref(_, ty, Mutability::Not) => {
                     Some(self.resolve_ty(*ty, generics, span)?)
                 }
-                TyKind::FnDef(fn_did, _) => {
+                TyKind::FnDef(fn_did, fn_generics) => {
+                    let (instance_did, instance) =
+                        self.resolve_instance(*fn_did, fn_generics, span)?;
+
                     let struct_ty =
                         self.resolve_tuple_ty(None, iter::empty(), List::empty(), span)?;
 
-                    Some(self.alloc_ty(ItemTyKind::Closure(*fn_did, struct_ty)))
+                    Some(self.alloc_ty(ItemTyKind::Closure(ClosureTy::new(
+                        instance_did,
+                        instance.args,
+                        struct_ty,
+                    ))))
                 }
                 TyKind::Closure(closure_did, closure_generics) => {
                     let closure_args = ClosureArgs {
@@ -465,7 +505,11 @@ impl<'tcx> Compiler<'tcx> {
                         span,
                     )?;
 
-                    Some(self.alloc_ty(ItemTyKind::Closure(*closure_did, struct_ty)))
+                    Some(self.alloc_ty(ItemTyKind::Closure(ClosureTy::new(
+                        *closure_did,
+                        closure_generics,
+                        struct_ty,
+                    ))))
                 }
                 TyKind::Array(ty, const_) => {
                     let item_ty = self.resolve_ty(*ty, generics, span)?;

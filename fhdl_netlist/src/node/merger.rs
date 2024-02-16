@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use smallvec::SmallVec;
+
 use super::{IsNode, NodeKind, NodeOutput};
 use crate::{
     net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
@@ -9,7 +11,7 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct Merger {
-    inputs: Vec<NodeOutIdx>,
+    inputs: SmallVec<[NodeOutIdx; 4]>,
     output: NodeOutput,
     rev: bool,
 }

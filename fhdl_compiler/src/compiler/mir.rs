@@ -6,7 +6,6 @@ use fhdl_netlist::{
     node::{Mux, Pass, Splitter},
     symbol::Symbol,
 };
-use itertools::Itertools as _;
 use rustc_data_structures::{fx::FxHashSet, graph::WithSuccessors};
 use rustc_hir::{def::DefKind, def_id::DefId, definitions::DefPathData};
 use rustc_index::IndexVec;
@@ -16,7 +15,9 @@ use rustc_middle::{
         ConstValue, Local, LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue,
         StatementKind, TerminatorKind, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
     },
-    ty::{GenericArgsRef, InstanceDef, List, ParamEnv, ParamEnvAnd, Ty, TyKind},
+    ty::{
+        GenericArgsRef, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd, Ty, TyKind,
+    },
 };
 use rustc_span::{def_id::LOCAL_CRATE, Span};
 use rustc_target::abi::FieldIdx;
@@ -26,28 +27,13 @@ use super::{
     context::Switch,
     item::{CombineOutputs, Group, Item},
     item_ty::{ItemTy, ItemTyKind},
-    Closure, Compiler, Context, MonoItem, SymIdent,
+    Compiler, Context, MonoItem, SymIdent,
 };
 use crate::{
     blackbox::bin_op::BinOp,
     error::{Error, SpanError, SpanErrorKind},
     utils,
 };
-
-#[derive(Debug, Clone, Copy)]
-pub enum ClosureOrFnDid {
-    Closure(DefId),
-    Fn(DefId),
-}
-
-impl ClosureOrFnDid {
-    fn did(&self) -> DefId {
-        match self {
-            Self::Closure(did) => *did,
-            Self::Fn(did) => *did,
-        }
-    }
-}
 
 struct BranchBlocks<'b, 'tcx: 'b> {
     stop: BasicBlock,
@@ -143,11 +129,7 @@ impl<'tcx> Compiler<'tcx> {
                 .def_ident_span(fn_did)
                 .unwrap_or_else(|| self.tcx.def_span(fn_did));
 
-            let mut module_sym = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
-                SymIdent::Closure.into()
-            } else {
-                self.module_name(fn_did)
-            };
+            let mut module_sym = self.module_name(fn_did);
 
             let (mir, is_inlined) = match def_id_or_promoted {
                 DefIdOrPromoted::DefId(fn_did, instance_def) => {
@@ -173,7 +155,10 @@ impl<'tcx> Compiler<'tcx> {
             self.netlist.add_mod_span(module_id, mod_span);
 
             let fn_name = self.fn_name(fn_did);
-            debug!("visit_fn ({fn_name}): start, module {}", module_id);
+            debug!(
+                "visit_fn ({fn_name} {fn_generics:?}): start, module {}",
+                module_id
+            );
             if is_inlined {
                 self.netlist[module_id].is_inlined = true;
             }
@@ -413,7 +398,7 @@ impl<'tcx> Compiler<'tcx> {
                             }
                             AggregateKind::Closure(closure_did, closure_generics) => {
                                 Some(self.visit_closure(
-                                    ClosureOrFnDid::Closure(*closure_did),
+                                    *closure_did,
                                     closure_generics,
                                     fields,
                                     ctx,
@@ -472,7 +457,7 @@ impl<'tcx> Compiler<'tcx> {
                         let ty = ctx.instantiate(self.tcx, const_.ty());
 
                         if let TyKind::FnDef(fn_did, fn_generics) = ty.kind() {
-                            let item = self.resolve_fn_call(
+                            let item = self.visit_fn_call(
                                 *fn_did,
                                 fn_generics,
                                 inputs,
@@ -676,21 +661,6 @@ impl<'tcx> Compiler<'tcx> {
         ))
     }
 
-    fn mk_const(
-        &mut self,
-        ty: Ty<'tcx>,
-        value: u128,
-        ctx: &Context<'tcx>,
-        span: Span,
-    ) -> Result<Item<'tcx>, Error> {
-        let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
-
-        Ok(Item::new(
-            ty,
-            self.netlist.const_val(ctx.module_id, ty.to_bitvec(), value),
-        ))
-    }
-
     fn visit_operands<'a>(
         &mut self,
         operands: impl IntoIterator<Item = &'a Operand<'tcx>>,
@@ -744,7 +714,7 @@ impl<'tcx> Compiler<'tcx> {
                                 ty.kind()
                             {
                                 return self.visit_closure(
-                                    ClosureOrFnDid::Closure(*closure_did),
+                                    *closure_did,
                                     closure_generics,
                                     &IndexVec::new(),
                                     ctx,
@@ -753,9 +723,14 @@ impl<'tcx> Compiler<'tcx> {
                             }
 
                             if let TyKind::FnDef(fn_did, fn_generics) = ty.kind() {
+                                let fn_generics = ctx.instantiate(self.tcx, *fn_generics);
+
+                                let (instance_did, instance) =
+                                    self.resolve_instance(*fn_did, fn_generics, span)?;
+
                                 return self.visit_closure(
-                                    ClosureOrFnDid::Fn(*fn_did),
-                                    fn_generics,
+                                    instance_did,
+                                    instance.args,
                                     &IndexVec::new(),
                                     ctx,
                                     span,
@@ -772,11 +747,6 @@ impl<'tcx> Compiler<'tcx> {
                     },
                     Const::Unevaluated(unevaluated, ty) => {
                         let ty = ctx.instantiate(self.tcx, ty);
-                        if let Some(value) =
-                            utils::resolve_unevaluated(self.tcx, unevaluated)
-                        {
-                            return self.mk_const(ty, value, ctx, span);
-                        }
 
                         if let Some(promoted) = unevaluated.promoted {
                             let output_ty =
@@ -790,6 +760,12 @@ impl<'tcx> Compiler<'tcx> {
                                 self.instantiate_module(module_id, iter::empty(), ctx);
 
                             return Ok(self.combine_outputs(module, output_ty));
+                        }
+
+                        if let Some(item) =
+                            self.resolve_unevaluated(unevaluated, ty, ctx, span)
+                        {
+                            return Ok(item);
                         }
                     }
                 }
@@ -904,7 +880,7 @@ impl<'tcx> Compiler<'tcx> {
         (!has_assign, count, common_locals)
     }
 
-    pub fn resolve_fn_call<'a>(
+    pub fn visit_fn_call<'a>(
         &mut self,
         fn_did: impl Into<DefId>,
         fn_generics: GenericArgsRef<'tcx>,
@@ -919,24 +895,10 @@ impl<'tcx> Compiler<'tcx> {
         let fn_generics = ctx.instantiate(self.tcx, fn_generics);
 
         let fn_name = self.fn_name(fn_did);
-        debug!("resolve_fn_call ({fn_name})");
+        debug!("visit_fn_call ({fn_name})");
 
-        let (instance_did, instance_def, instance_generics) = self
-            .tcx
-            .resolve_instance(ParamEnvAnd {
-                param_env: ParamEnv::reveal_all(),
-                value: (fn_did, fn_generics),
-            })
-            .ok()
-            .and_then(identity)
-            .and_then(|instance| match instance.def {
-                InstanceDef::Item(fn_did) => Some((fn_did, instance.def, instance.args)),
-                InstanceDef::FnPtrShim(fn_did, _) => {
-                    Some((fn_did, instance.def, instance.args))
-                }
-                _ => None,
-            })
-            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthCall, span))?;
+        let (instance_did, instance) =
+            self.resolve_instance(fn_did, fn_generics, span)?;
 
         let is_std_call = self.is_std_call(fn_did);
 
@@ -946,10 +908,11 @@ impl<'tcx> Compiler<'tcx> {
             || is_std_call
         {
             let inputs = self.visit_operands(inputs, ctx, span)?;
-            let output_ty = self.fn_output(instance_did, instance_generics, span)?;
+            let output_ty = self.fn_output(instance_did, instance.args);
+            let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
             let module_id =
-                self.visit_fn((instance_did, instance_def), instance_generics, false)?;
+                self.visit_fn((instance_did, instance.def), instance.args, false)?;
             if is_std_call {
                 self.netlist[module_id].is_inlined = true;
             }
@@ -972,10 +935,11 @@ impl<'tcx> Compiler<'tcx> {
 
             // But for resolving output ty instance_generics are used as output ty related to
             // callee function scope.
-            let output_ty = self.fn_output(instance_did, instance_generics, span)?;
+            let output_ty = self.fn_output(instance_did, instance.args);
+            let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
             ctx.fn_did = instance_did;
-            ctx.generic_args = instance_generics;
+            ctx.generic_args = instance.args;
 
             let blackbox = blackbox.eval(self, &inputs, output_ty, ctx, span)?;
 
@@ -986,81 +950,103 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
+    pub fn resolve_instance(
+        &self,
+        fn_did: DefId,
+        fn_generics: GenericArgsRef<'tcx>,
+        span: Span,
+    ) -> Result<(DefId, Instance<'tcx>), Error> {
+        self.tcx
+            .resolve_instance(ParamEnvAnd {
+                param_env: ParamEnv::reveal_all(),
+                value: (fn_did, fn_generics),
+            })
+            .ok()
+            .and_then(identity)
+            .and_then(|instance| match instance.def {
+                InstanceDef::Item(fn_did) => Some((fn_did, instance)),
+                InstanceDef::FnPtrShim(fn_did, _) => Some((fn_did, instance)),
+                _ => None,
+            })
+            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthCall, span).into())
+    }
+
     pub fn visit_closure(
         &mut self,
-        closure_did: ClosureOrFnDid,
+        closure_did: DefId,
         closure_generics: GenericArgsRef<'tcx>,
         captures: &IndexVec<FieldIdx, Operand<'tcx>>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let closure_generics = ctx.instantiate(self.tcx, closure_generics);
-        let closure_ty = self.type_of(closure_did.did(), closure_generics);
+        let closure_ty = self.type_of(closure_did, closure_generics);
         let closure_ty = self.resolve_ty(closure_ty, List::empty(), span)?;
 
-        match self.find_closure_opt(closure_ty) {
-            Some(closure) => Ok(closure.item.clone()),
-            None => {
-                let closure = self.mk_struct(closure_ty, captures, ctx, span)?;
+        self.mk_struct(closure_ty, captures, ctx, span)
 
-                let closure_id =
-                    self.visit_fn(closure_did.did(), closure_generics, false)?;
+        // match self.find_closure_opt(closure_ty) {
+        //     Some(closure) => Ok(closure.item.clone()),
+        //     None => {
 
-                let (input_tys, output_ty) = match closure_did {
-                    ClosureOrFnDid::Closure(did) => {
-                        self.netlist[closure_id].is_inlined = true;
+        //         let closure_id =
+        //             self.visit_fn(closure_did.did(), closure_generics, false)?;
 
-                        let sig = self.fn_sig(did, closure_generics);
+        //         let (input_tys, output_ty) = match closure_did {
+        //             ClosureOrFnDid::Closure(did) => {
+        //                 self.netlist[closure_id].is_inlined = true;
 
-                        // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/struct.ClosureArgs.html
-                        // ```
-                        // CS represents the closure signature, representing as a fn() type.
-                        // For example, fn(u32, u32) -> u32 would mean that the closure implements CK<(u32, u32), Output = u32>,
-                        // where CK is the trait specified above
-                        // ```
-                        let input_tys = sig
-                            .inputs()
-                            .iter()
-                            .map(|input_ty| {
-                                self.resolve_ty(*input_ty, List::empty(), span)
-                                    .map(|item_ty| item_ty.struct_ty().tys())
-                            })
-                            .flatten_ok()
-                            .collect::<Result<Vec<_>, Error>>()?;
+        //                 let sig = self.fn_sig(did, closure_generics);
 
-                        let output_ty =
-                            self.resolve_ty(sig.output(), List::empty(), span)?;
+        //                 // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/struct.ClosureArgs.html
+        //                 // ```
+        //                 // CS represents the closure signature, representing as a fn() type.
+        //                 // For example, fn(u32, u32) -> u32 would mean that the closure implements CK<(u32, u32), Output = u32>,
+        //                 // where CK is the trait specified above
+        //                 // ```
+        //                 let input_tys = sig
+        //                     .inputs()
+        //                     .iter()
+        //                     .map(|input_ty| {
+        //                         self.resolve_ty(*input_ty, List::empty(), span)
+        //                             .map(|item_ty| item_ty.struct_ty().tys())
+        //                     })
+        //                     .flatten_ok()
+        //                     .collect::<Result<Vec<_>, Error>>()?;
 
-                        (input_tys, output_ty)
-                    }
-                    ClosureOrFnDid::Fn(did) => {
-                        let sig = self.fn_sig(did, closure_generics);
+        //                 let output_ty =
+        //                     self.resolve_ty(sig.output(), List::empty(), span)?;
 
-                        let input_tys = sig
-                            .inputs()
-                            .iter()
-                            .map(|input_ty| {
-                                self.resolve_ty(*input_ty, List::empty(), span)
-                            })
-                            .collect::<Result<Vec<_>, Error>>()?;
+        //                 (input_tys, output_ty)
+        //             }
+        //             ClosureOrFnDid::Fn(did) => {
+        //                 let sig = self.fn_sig(did, closure_generics);
 
-                        let output_ty =
-                            self.resolve_ty(sig.output(), List::empty(), span)?;
+        //                 let input_tys = sig
+        //                     .inputs()
+        //                     .iter()
+        //                     .map(|input_ty| {
+        //                         self.resolve_ty(*input_ty, List::empty(), span)
+        //                     })
+        //                     .collect::<Result<Vec<_>, Error>>()?;
 
-                        (input_tys, output_ty)
-                    }
-                };
+        //                 let output_ty =
+        //                     self.resolve_ty(sig.output(), List::empty(), span)?;
 
-                self.add_closure(closure_ty, Closure {
-                    closure_id,
-                    input_tys,
-                    output_ty,
-                    item: closure.clone(),
-                });
+        //                 (input_tys, output_ty)
+        //             }
+        //         };
 
-                Ok(closure)
-            }
-        }
+        //         self.add_closure(closure_ty, Closure {
+        //             closure_id,
+        //             input_tys,
+        //             output_ty,
+        //             item: closure.clone(),
+        //         });
+
+        //         Ok(closure)
+        //     }
+        // }
     }
 
     pub fn instantiate_closure(
@@ -1070,24 +1056,31 @@ impl<'tcx> Compiler<'tcx> {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        let Closure {
-            closure_id,
-            output_ty,
-            ..
-        } = self.find_closure(closure.ty, span)?;
-        let closure_id = *closure_id;
-        let output_ty = *output_ty;
+        let closure_ty = closure.ty.closure_ty();
+        let fn_did = closure_ty.fn_did;
+        let fn_generics = closure_ty.fn_generics;
 
-        let module = self.instantiate_module(
-            closure_id,
-            iter::once(closure).chain(inputs.iter()),
-            ctx,
-        );
+        debug!("instantiate_closure: {fn_generics:?}");
+        let module_id = self.visit_fn(fn_did, fn_generics, false)?;
 
-        let span = self.span_to_string(span, ctx.fn_did);
-        self.netlist.add_span(module, span);
+        let module = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
+            self.instantiate_module(
+                module_id,
+                iter::once(closure).chain(inputs.iter()),
+                ctx,
+            )
+        } else {
+            self.instantiate_module(module_id, inputs, ctx)
+        };
+
+        let node_span = self.span_to_string(span, ctx.fn_did);
+        self.netlist.add_span(module, node_span);
+
+        let output_ty = self.fn_output(fn_did, fn_generics);
+        let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
         let mut outputs = CombineOutputs::new(self, module);
+
         Ok(outputs.next_output(output_ty))
     }
 }

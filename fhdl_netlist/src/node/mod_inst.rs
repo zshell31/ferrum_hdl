@@ -72,6 +72,10 @@ impl ModInst {
     pub fn outputs_is_empty(&self) -> bool {
         self.outputs.is_empty()
     }
+
+    pub fn empty_ports(&self) -> bool {
+        self.inputs.is_empty() && self.outputs.is_empty()
+    }
 }
 
 impl WithId<ModuleId, &'_ ModInst> {

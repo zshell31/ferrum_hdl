@@ -250,6 +250,11 @@ impl<const N: usize> Unsigned<N> {
     {
         self.0.idx(idx)
     }
+
+    #[synth(inline)]
+    pub fn rotate_left(self) -> Self {
+        (self.clone() << 1) | ((self >> (N - 1)) & 1)
+    }
 }
 
 impl<const N: usize> Default for Unsigned<N> {
@@ -411,7 +416,7 @@ macro_rules! impl_shift_ops {
     };
 }
 
-impl_shift_ops!(u128);
+impl_shift_ops!(usize);
 
 impl<const N: usize> Shl<Unsigned<N>> for Unsigned<N>
 where

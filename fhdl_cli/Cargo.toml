@@ -10,7 +10,8 @@ description.workspace = true
 anstyle = { workspace = true }
 anyhow = { workspace = true }
 cargo_metadata = "0.18"
-clap = { version = "4.4.18", features = ["derive"] }
+clap = { workspace = true }
+fhdl_netlist = { path = "../fhdl_netlist" }
 rustc_version = "0.4.0"
 serde = { workspace = true }
 serde_json = { workspace = true }

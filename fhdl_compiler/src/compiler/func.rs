@@ -159,6 +159,8 @@ impl<'tcx> Compiler<'tcx> {
             })
             .unwrap();
 
+        // self.assign_names_to_item(ident, &item, force)
+
         ctx.locals.place(local, item.clone());
 
         item

@@ -98,7 +98,7 @@ impl Run for GenArgs {
             .arg(&target_dir);
 
         cmd.status()
-            .map_err(|e| anyhow::anyhow!("failed to run cargo: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("failed to run xargo: {e}"))?;
 
         Ok(())
     }

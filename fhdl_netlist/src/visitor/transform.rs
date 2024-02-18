@@ -1,6 +1,7 @@
 use smallvec::SmallVec;
 
 use crate::{
+    cfg::InlineMod,
     const_val::ConstVal,
     net_list::{ModuleId, NetList, NodeCursor, NodeId},
     node::{BinOp, Case, Const, MultiConst, MuxInputs, NodeKind, NodeKindWithId},
@@ -87,16 +88,22 @@ impl<'n> Transform<'n> {
                         Some(MultiConst::new(values, outputs).into())
                     }
                     None => {
-                        if !self.netlist.cfg().inline_all {
-                            *should_be_inlined = self.netlist[module_id].is_inlined
-                                || node.inputs_len() == 0
-                                || self.netlist[module_id].only_inputs
-                                || node.inputs().all(|input| {
-                                    self.netlist[input.node_id()].is_const()
-                                });
-                        } else {
-                            *should_be_inlined = true
-                        }
+                        match self.netlist.cfg().inline_mod {
+                            InlineMod::All => {
+                                *should_be_inlined = true;
+                            }
+                            InlineMod::Auto => {
+                                *should_be_inlined = self.netlist[module_id].is_inlined
+                                    || node.inputs_len() == 0
+                                    || self.netlist[module_id].only_inputs
+                                    || node.inputs().all(|input| {
+                                        self.netlist[input.node_id()].is_const()
+                                    });
+                            }
+                            InlineMod::None => {
+                                *should_be_inlined = false;
+                            }
+                        };
 
                         None
                     }

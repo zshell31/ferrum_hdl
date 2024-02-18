@@ -6,6 +6,7 @@ pub mod func;
 pub mod item;
 pub mod item_ty;
 pub mod mir;
+pub mod switch;
 mod sym_ident;
 
 use std::{
@@ -23,7 +24,7 @@ use fhdl_blackbox::BlackboxKind;
 use fhdl_cli::CompilerArgs;
 use fhdl_netlist::{
     backend::Verilog,
-    net_list::{ModuleId, NetList, NetListCfg, NodeOutId},
+    net_list::{ModuleId, NetList, NodeOutId},
     node::{Splitter, ZeroExtend},
     node_ty::NodeTy,
 };
@@ -41,7 +42,7 @@ use rustc_middle::{
 use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
 pub use sym_ident::SymIdent;
 
-use self::{item_ty::ItemTy, mir::DefIdOrPromoted};
+use self::{item_ty::ItemTy, mir::DefIdOrPromoted, switch::SwitchBlocks};
 use crate::error::{Error, SpanError};
 
 pub struct CompilerCallbacks {
@@ -181,6 +182,7 @@ pub struct Compiler<'tcx> {
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
+    switch_meta: FxHashMap<DefId, SwitchBlocks>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
 }
@@ -193,19 +195,16 @@ impl<'tcx> Compiler<'tcx> {
         args: &'tcx CompilerArgs,
         arena: &'tcx Bump,
     ) -> Self {
-        let cfg = NetListCfg {
-            inline_all: args.inline_all,
-        };
-
         Self {
             tcx,
-            netlist: NetList::new(cfg),
+            netlist: NetList::new(args.netlist.clone()),
             args,
             arena,
             top_module,
             crates,
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
+            switch_meta: Default::default(),
             item_ty: Default::default(),
             file_names: Default::default(),
         }
@@ -241,7 +240,7 @@ impl<'tcx> Compiler<'tcx> {
         let elapsed = Instant::now();
 
         self.visit_fn(
-            DefId::from(self.top_module.hir_id().owner),
+            DefId::from(self.top_module.hir_id().owner).into(),
             GenericArgs::empty(),
             true,
         )?;

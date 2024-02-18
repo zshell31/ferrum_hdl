@@ -1,33 +1,24 @@
-use std::{collections::VecDeque, convert::identity, iter, ops::Deref};
+use std::{convert::identity, fmt::Debug, iter, ops::Deref};
 
-use fhdl_netlist::{
-    const_val::ConstVal,
-    net_list::ModuleId,
-    node::{Mux, Pass, Splitter},
-    symbol::Symbol,
-};
-use rustc_data_structures::{fx::FxHashSet, graph::WithSuccessors};
+use fhdl_netlist::{net_list::ModuleId, node::Pass, symbol::Symbol};
 use rustc_hir::{def::DefKind, def_id::DefId, definitions::DefPathData};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
-        AggregateKind, BasicBlock, BasicBlocks, Body, BorrowKind, Const, ConstOperand,
-        ConstValue, Local, LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue,
-        StatementKind, TerminatorKind, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
+        AggregateKind, BasicBlock, BorrowKind, Const, ConstOperand, ConstValue, Local,
+        LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue, StatementKind,
+        TerminatorKind, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
     },
-    ty::{
-        GenericArgsRef, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd, Ty, TyKind,
-    },
+    ty::{GenericArgsRef, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd, TyKind},
 };
 use rustc_span::{def_id::LOCAL_CRATE, Span};
 use rustc_target::abi::FieldIdx;
-use tracing::{debug, error};
+use tracing::{debug, error, instrument};
 
 use super::{
-    context::Switch,
     item::{CombineOutputs, Group, Item},
     item_ty::{ItemTy, ItemTyKind},
-    Compiler, Context, MonoItem, SymIdent,
+    Compiler, Context, MonoItem,
 };
 use crate::{
     blackbox::bin_op::BinOp,
@@ -35,52 +26,16 @@ use crate::{
     utils,
 };
 
-struct BranchBlocks<'b, 'tcx: 'b> {
-    stop: BasicBlock,
-    basic_blocks: &'b BasicBlocks<'tcx>,
-    to_visit: VecDeque<BasicBlock>,
-}
-
-impl<'b, 'tcx: 'b> BranchBlocks<'b, 'tcx> {
-    fn new(
-        basic_blocks: &'b BasicBlocks<'tcx>,
-        branch: BasicBlock,
-        stop: BasicBlock,
-    ) -> Self {
-        Self {
-            stop,
-            basic_blocks,
-            to_visit: {
-                let mut res = VecDeque::new();
-                res.push_back(branch);
-                res
-            },
-        }
-    }
-}
-
-impl<'b, 'tcx: 'b> Iterator for BranchBlocks<'b, 'tcx> {
-    type Item = BasicBlock;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        while let Some(block) = self.to_visit.pop_front() {
-            if block == self.stop {
-                continue;
-            }
-
-            self.to_visit.extend(self.basic_blocks.successors(block));
-
-            return Some(block);
-        }
-
-        None
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DefIdOrPromoted<'tcx> {
     DefId(DefId, InstanceDef<'tcx>),
     Promoted(DefId, Promoted),
+}
+
+impl<'tcx> Debug for DefIdOrPromoted<'tcx> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.did().fmt(f)
+    }
 }
 
 impl<'tcx> DefIdOrPromoted<'tcx> {
@@ -111,18 +66,18 @@ impl<'tcx> From<(DefId, Promoted)> for DefIdOrPromoted<'tcx> {
 }
 
 impl<'tcx> Compiler<'tcx> {
+    #[instrument(level = "debug", skip(self, def_id_or_promoted, fn_generics, top_module), fields(def_id = self.fn_name(def_id_or_promoted.did())))]
     pub fn visit_fn(
         &mut self,
-        def_id_or_promoted: impl Into<DefIdOrPromoted<'tcx>>,
+        def_id_or_promoted: DefIdOrPromoted<'tcx>,
         fn_generics: GenericArgsRef<'tcx>,
         top_module: bool,
     ) -> Result<ModuleId, Error> {
-        let def_id_or_promoted = def_id_or_promoted.into();
-
         let mono_item = MonoItem::new(def_id_or_promoted, fn_generics);
 
         #[allow(clippy::map_entry)]
         if !self.evaluated_modules.contains_key(&mono_item) {
+            debug!("start");
             let fn_did = def_id_or_promoted.did();
             let span = self
                 .tcx
@@ -150,15 +105,11 @@ impl<'tcx> Compiler<'tcx> {
             }
 
             let module_id = self.netlist.add_module(module_sym, top_module);
+            debug!("module_id = {module_id:?}");
 
             let mod_span = self.span_to_string(span, fn_did);
             self.netlist.add_mod_span(module_id, mod_span);
 
-            let fn_name = self.fn_name(fn_did);
-            debug!(
-                "visit_fn ({fn_name} {fn_generics:?}): start, module {}",
-                module_id
-            );
             if is_inlined {
                 self.netlist[module_id].is_inlined = true;
             }
@@ -172,23 +123,32 @@ impl<'tcx> Compiler<'tcx> {
                 .take(mir.arg_count);
             let inputs = self.visit_fn_inputs(inputs, &mut ctx)?;
             for var_debug_info in &mir.var_debug_info {
-                if let VarDebugInfoContents::Const(ConstOperand { const_, .. }) =
-                    var_debug_info.value
-                {
-                    if let Some(arg_idx) = var_debug_info.argument_index {
-                        ctx.add_const(const_, inputs[(arg_idx - 1) as usize].clone());
+                if let Some(arg_idx) = var_debug_info.argument_index {
+                    let input = &inputs[(arg_idx - 1) as usize];
+
+                    match var_debug_info.value {
+                        VarDebugInfoContents::Place(place)
+                            if place.projection.is_empty() =>
+                        {
+                            let name = var_debug_info.name.as_str();
+                            self.assign_names_to_item(name, input, true);
+                        }
+                        VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
+                            ctx.add_const(const_, input.clone());
+                        }
+                        _ => {}
                     }
                 }
             }
 
-            self.visit_blocks(mir, None, None, &mut ctx)?;
+            self.visit_blocks(None, None, &mut ctx)?;
 
             for var_debug_info in &mir.var_debug_info {
                 let name = var_debug_info.name.as_str();
                 let span = var_debug_info.source_info.span;
                 match var_debug_info.value {
                     VarDebugInfoContents::Place(place) => {
-                        let item = self.visit_place(&place, &ctx, span)?;
+                        let item = self.visit_rhs_place(&place, &ctx, span)?;
                         self.assign_names_to_item(name, &item, true);
                     }
                     VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
@@ -204,7 +164,7 @@ impl<'tcx> Compiler<'tcx> {
 
             self.evaluated_modules.insert(mono_item, module_id);
 
-            debug!("visit_fn ({fn_name}): end, module {}", module_id);
+            debug!("end");
         }
 
         Ok(*self.evaluated_modules.get(&mono_item).unwrap())
@@ -221,13 +181,19 @@ impl<'tcx> Compiler<'tcx> {
         };
 
         for data_path in &def_path.data {
-            if let DefPathData::TypeNs(s) | DefPathData::ValueNs(s) = &data_path.data {
+            let s = match &data_path.data {
+                DefPathData::TypeNs(s) | DefPathData::ValueNs(s) => Some(s.as_str()),
+                DefPathData::Closure => Some("closure"),
+                _ => None,
+            };
+
+            if let Some(s) = s {
                 if has_sep {
                     name.push('_');
                 } else {
                     has_sep = true;
                 }
-                name.push_str(s.as_str());
+                name.push_str(s);
             }
         }
 
@@ -282,7 +248,6 @@ impl<'tcx> Compiler<'tcx> {
 
     pub fn visit_blocks(
         &mut self,
-        mir: &Body<'tcx>,
         start: Option<BasicBlock>,
         end: Option<BasicBlock>,
         ctx: &mut Context<'tcx>,
@@ -295,7 +260,7 @@ impl<'tcx> Compiler<'tcx> {
                 }
             }
 
-            next = self.visit_block(mir, block, ctx)?;
+            next = self.visit_block(block, ctx)?;
         }
 
         Ok(())
@@ -303,10 +268,10 @@ impl<'tcx> Compiler<'tcx> {
 
     fn visit_block(
         &mut self,
-        mir: &Body<'tcx>,
         block: BasicBlock,
         ctx: &mut Context<'tcx>,
     ) -> Result<Option<BasicBlock>, Error> {
+        let mir = ctx.mir;
         let basic_blocks = &mir.basic_blocks;
         let block_data = &basic_blocks[block];
 
@@ -322,13 +287,12 @@ impl<'tcx> Compiler<'tcx> {
                         Rvalue::Ref(_, BorrowKind::Shared, place)
                         | Rvalue::Discriminant(place)
                         | Rvalue::CopyForDeref(place) => {
-                            Some(self.visit_place(place, ctx, span)?)
+                            Some(self.visit_rhs_place(place, ctx, span)?)
                         }
                         Rvalue::Use(operand) => {
                             Some(self.visit_operand(operand, ctx, span)?)
                         }
-                        Rvalue::BinaryOp(bin_op, operands)
-                        | Rvalue::CheckedBinaryOp(bin_op, operands) => {
+                        Rvalue::BinaryOp(bin_op, operands) => {
                             let lhs = self.visit_operand(&operands.0, ctx, span)?;
                             let rhs = self.visit_operand(&operands.1, ctx, span)?;
 
@@ -342,9 +306,6 @@ impl<'tcx> Compiler<'tcx> {
 
                             let bin_op = BinOp::try_from_op(*bin_op, span)?;
 
-                            if let Rvalue::CheckedBinaryOp(_, _) = rvalue {
-                                ctx.add_checked(assign.0.local);
-                            }
                             Some(bin_op.bin_op(self, &lhs, &rhs, output_ty, ctx, span)?)
                         }
                         Rvalue::Aggregate(aggregate_kind, fields) => match aggregate_kind
@@ -415,7 +376,7 @@ impl<'tcx> Compiler<'tcx> {
                         SpanError::new(SpanErrorKind::NotSynthExpr, span)
                     })?;
 
-                    self.assign(assign.0.local, &item, ctx)?;
+                    self.assign(assign.0, item, ctx)?;
                 }
                 _ => {
                     error!("statement: {statement:#?}");
@@ -441,7 +402,7 @@ impl<'tcx> Compiler<'tcx> {
 
                 let item = match func {
                     Operand::Move(place) | Operand::Copy(place) => {
-                        let fn_item = self.visit_place(place, ctx, span)?;
+                        let fn_item = self.visit_rhs_place(place, ctx, span)?;
 
                         if fn_item.ty.is_closure_ty() {
                             let inputs = self.visit_operands(inputs, ctx, span)?;
@@ -474,7 +435,7 @@ impl<'tcx> Compiler<'tcx> {
 
                 match item {
                     Some(item) => {
-                        self.assign(destination.local, &item, ctx)?;
+                        self.assign(*destination, item, ctx)?;
                     }
                     None => {
                         error!(
@@ -494,126 +455,7 @@ impl<'tcx> Compiler<'tcx> {
             | TerminatorKind::Goto { target }
             | TerminatorKind::Assert { target, .. } => Some(*target),
             TerminatorKind::SwitchInt { discr, targets } => {
-                let discr = self.visit_operand(discr, ctx, span)?;
-                let target_blocks = targets.all_targets();
-
-                let convergent_block = ctx
-                    .immediate_post_dominator(basic_blocks, block)
-                    .expect("Cannot find convergent block for switchInt targets");
-
-                let (ignore, target_count, common_locals) = self.find_common_locals(
-                    basic_blocks,
-                    target_blocks,
-                    convergent_block,
-                );
-                if !ignore {
-                    if common_locals.is_empty() {
-                        return Err(
-                            SpanError::new(SpanErrorKind::NotSynthExpr, span).into()
-                        );
-                    }
-
-                    ctx.push_switch(Switch::new(common_locals, discr, target_count));
-
-                    for (value, target) in targets
-                        .iter()
-                        .map(|(value, target)| (Some(value), target))
-                        .chain(iter::once((None, targets.otherwise())))
-                    {
-                        if basic_blocks[target].is_empty_unreachable() {
-                            continue;
-                        }
-                        let switch = ctx.last_switch().unwrap();
-                        switch.add_variant(value);
-
-                        self.visit_blocks(
-                            mir,
-                            Some(target),
-                            Some(convergent_block),
-                            ctx,
-                        )?;
-                    }
-
-                    let switch = ctx.pop_switch().unwrap();
-                    let mod_id = ctx.module_id;
-
-                    let (discr, discr_width) = match switch.discr.ty.kind() {
-                        ItemTyKind::Enum(enum_ty) => {
-                            let discr_ty = enum_ty.discr_ty();
-                            let discr = self.to_bitvec(mod_id, &switch.discr);
-
-                            (
-                                Item::new(discr_ty, {
-                                    let splitter = self.netlist.add_and_get_out(
-                                        mod_id,
-                                        Splitter::new(
-                                            discr.node_out_id(),
-                                            [(discr_ty.node_ty(), SymIdent::Discr)],
-                                            None,
-                                            true,
-                                        ),
-                                    );
-
-                                    let span = self.span_to_string(span, ctx.fn_did);
-                                    self.netlist.add_span(splitter, span);
-
-                                    splitter
-                                }),
-                                enum_ty.discr_width(),
-                            )
-                        }
-                        _ => (
-                            self.to_bitvec(mod_id, &switch.discr),
-                            switch.discr.ty.width(),
-                        ),
-                    };
-                    let discr = discr.node_out_id();
-
-                    let output_ty = Ty::new_tup_from_iter(
-                        self.tcx,
-                        switch.locals.iter().map(|local| mir.local_decls[*local].ty),
-                    );
-                    let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
-
-                    let default = switch.otherwise().map(|otherwise| {
-                        let item =
-                            Item::new(output_ty, Group::new(otherwise.values().cloned()));
-
-                        self.to_bitvec(mod_id, &item).node_out_id()
-                    });
-
-                    let inputs = switch.variants().map(|variant| {
-                        let case = ConstVal::new(variant.value, discr_width);
-
-                        let item = Item::new(
-                            output_ty,
-                            Group::new(variant.locals.values().cloned()),
-                        );
-                        let input = self.to_bitvec(mod_id, &item).node_out_id();
-
-                        (case, input)
-                    });
-
-                    let mux = Mux::new(
-                        output_ty.to_bitvec(),
-                        discr,
-                        inputs,
-                        default,
-                        SymIdent::Mux,
-                    );
-                    let mux = self.netlist.add_and_get_out(mod_id, mux);
-
-                    let node_span = self.span_to_string(span, ctx.fn_did);
-                    self.netlist.add_span(mux, node_span);
-
-                    let mux = self.from_bitvec(mod_id, mux, output_ty);
-
-                    for (local, item) in switch.locals.iter().zip(&*mux.group().items()) {
-                        self.assign(*local, item, ctx)?;
-                    }
-                }
-
-                Some(convergent_block)
+                self.visit_switch(block, discr, targets, ctx, span)?
             }
             _ => {
                 error!(
@@ -627,7 +469,48 @@ impl<'tcx> Compiler<'tcx> {
         Ok(next_block)
     }
 
-    fn assign(
+    pub fn assign(
+        &mut self,
+        place: Place<'tcx>,
+        rhs: Item<'tcx>,
+        ctx: &mut Context<'tcx>,
+    ) -> Result<(), Error> {
+        let local = place.local;
+        let span = ctx.mir.local_decls[local].source_info.span;
+        let lhs = ctx.locals.get_opt(local);
+
+        match ctx.last_switch() {
+            Some(switch) if switch.contains(local) => {
+                if place.projection.is_empty() {
+                    switch.add_branch_local(local, rhs.clone());
+                } else {
+                    // Write rhs into a nested part of lhs
+                    let mut lhs = match switch.branch_local(local) {
+                        Some(lhs) => lhs.clone(),
+                        None => lhs.expect("cannot find local").deep_clone(),
+                    };
+
+                    self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
+
+                    switch.add_branch_local(local, lhs);
+                }
+            }
+            _ => {
+                if place.projection.is_empty() {
+                    ctx.locals.place(local, rhs.clone());
+                } else {
+                    let mut lhs = lhs.expect("cannot find local");
+                    // Write rhs into a nested part of lhs
+                    self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
+
+                    ctx.locals.place(local, lhs);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn assign_local(
         &mut self,
         local: Local,
         item: &Item<'tcx>,
@@ -635,7 +518,7 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<(), Error> {
         match ctx.last_switch() {
             Some(switch) if switch.contains(local) => {
-                switch.add_variant_item(local, item.clone());
+                switch.add_branch_local(local, item.clone());
             }
             _ => {
                 ctx.locals.place(local, item.clone());
@@ -676,7 +559,7 @@ impl<'tcx> Compiler<'tcx> {
             .collect()
     }
 
-    fn visit_operand(
+    pub fn visit_operand(
         &mut self,
         operand: &Operand<'tcx>,
         ctx: &mut Context<'tcx>,
@@ -684,7 +567,7 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<Item<'tcx>, Error> {
         match operand {
             Operand::Copy(place) | Operand::Move(place) => {
-                self.visit_place(place, ctx, span)
+                self.visit_rhs_place(place, ctx, span)
             }
             Operand::Constant(value) => {
                 let span = value.span;
@@ -753,8 +636,11 @@ impl<'tcx> Compiler<'tcx> {
                                 self.resolve_ty(ty, ctx.generic_args, span)?;
                             let fn_args = ctx.instantiate(self.tcx, unevaluated.args);
 
-                            let module_id =
-                                self.visit_fn((ctx.fn_did, promoted), fn_args, false)?;
+                            let module_id = self.visit_fn(
+                                (ctx.fn_did, promoted).into(),
+                                fn_args,
+                                false,
+                            )?;
 
                             let module =
                                 self.instantiate_module(module_id, iter::empty(), ctx);
@@ -776,7 +662,28 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
-    pub fn visit_place(
+    fn visit_lhs_place(
+        &self,
+        place: &Place<'tcx>,
+        mut lhs: &mut Item<'tcx>,
+        rhs: Item<'tcx>,
+        span: Span,
+    ) -> Result<(), Error> {
+        for place_elem in place.projection {
+            lhs = match place_elem {
+                PlaceElem::Field(idx, _) => lhs.by_field_mut(idx),
+                _ => {
+                    return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
+                }
+            }
+        }
+
+        *lhs = rhs;
+
+        Ok(())
+    }
+
+    pub fn visit_rhs_place(
         &mut self,
         place: &Place<'tcx>,
         ctx: &Context<'tcx>,
@@ -793,17 +700,11 @@ impl<'tcx> Compiler<'tcx> {
                     let count = array_ty.count() as u64;
                     let offset = if from_end { count - offset } else { offset };
 
-                    item.by_idx(offset as usize).clone()
+                    item.by_idx(offset as usize)
                 }
-                PlaceElem::Deref => item.clone(),
+                PlaceElem::Deref => item,
                 PlaceElem::Subtype(_) => item,
-                PlaceElem::Field(idx, _) => {
-                    if ctx.is_checked(place.local) {
-                        item
-                    } else {
-                        item.by_field(idx).clone()
-                    }
-                }
+                PlaceElem::Field(idx, _) => item.by_field(idx),
                 PlaceElem::Downcast(_, variant_idx) => {
                     let mod_id = ctx.module_id;
 
@@ -827,62 +728,9 @@ impl<'tcx> Compiler<'tcx> {
         Ok(item)
     }
 
-    fn find_common_locals(
-        &self,
-        basic_blocks: &BasicBlocks<'tcx>,
-        targets: &[BasicBlock],
-        convergent_block: BasicBlock,
-    ) -> (bool, usize, FxHashSet<Local>) {
-        fn search_along_branch(
-            basic_blocks: &BasicBlocks<'_>,
-            start: BasicBlock,
-            convergent_block: BasicBlock,
-        ) -> FxHashSet<Local> {
-            let mut locals: FxHashSet<Local> = Default::default();
-
-            for block in BranchBlocks::new(basic_blocks, start, convergent_block) {
-                let block_data = &basic_blocks[block];
-                for stmt in &block_data.statements {
-                    if let Some((place, _)) = stmt.kind.as_assign() {
-                        locals.insert(place.local);
-                    }
-                }
-                if let TerminatorKind::Call { destination, .. } =
-                    block_data.terminator().kind
-                {
-                    locals.insert(destination.local);
-                }
-            }
-
-            locals
-        }
-
-        let mut common_locals =
-            search_along_branch(basic_blocks, targets[0], convergent_block);
-        let mut has_assign = !common_locals.is_empty();
-        let mut count = 1;
-
-        for target in &targets[1 ..] {
-            if basic_blocks[*target].is_empty_unreachable() {
-                continue;
-            }
-
-            let locals = search_along_branch(basic_blocks, *target, convergent_block);
-
-            common_locals = common_locals
-                .intersection(&locals)
-                .copied()
-                .collect::<FxHashSet<Local>>();
-            has_assign |= !locals.is_empty();
-            count += 1;
-        }
-
-        (!has_assign, count, common_locals)
-    }
-
     pub fn visit_fn_call<'a>(
         &mut self,
-        fn_did: impl Into<DefId>,
+        fn_did: DefId,
         fn_generics: GenericArgsRef<'tcx>,
         inputs: impl IntoIterator<Item = &'a Operand<'tcx>>,
         ctx: &mut Context<'tcx>,
@@ -891,11 +739,7 @@ impl<'tcx> Compiler<'tcx> {
     where
         'tcx: 'a,
     {
-        let fn_did = fn_did.into();
         let fn_generics = ctx.instantiate(self.tcx, fn_generics);
-
-        let fn_name = self.fn_name(fn_did);
-        debug!("visit_fn_call ({fn_name})");
 
         let (instance_did, instance) =
             self.resolve_instance(fn_did, fn_generics, span)?;
@@ -912,7 +756,7 @@ impl<'tcx> Compiler<'tcx> {
             let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
             let module_id =
-                self.visit_fn((instance_did, instance.def), instance.args, false)?;
+                self.visit_fn((instance_did, instance.def).into(), instance.args, false)?;
             if is_std_call {
                 self.netlist[module_id].is_inlined = true;
             }
@@ -984,69 +828,6 @@ impl<'tcx> Compiler<'tcx> {
         let closure_ty = self.resolve_ty(closure_ty, List::empty(), span)?;
 
         self.mk_struct(closure_ty, captures, ctx, span)
-
-        // match self.find_closure_opt(closure_ty) {
-        //     Some(closure) => Ok(closure.item.clone()),
-        //     None => {
-
-        //         let closure_id =
-        //             self.visit_fn(closure_did.did(), closure_generics, false)?;
-
-        //         let (input_tys, output_ty) = match closure_did {
-        //             ClosureOrFnDid::Closure(did) => {
-        //                 self.netlist[closure_id].is_inlined = true;
-
-        //                 let sig = self.fn_sig(did, closure_generics);
-
-        //                 // https://doc.rust-lang.org/nightly/nightly-rustc/rustc_middle/ty/struct.ClosureArgs.html
-        //                 // ```
-        //                 // CS represents the closure signature, representing as a fn() type.
-        //                 // For example, fn(u32, u32) -> u32 would mean that the closure implements CK<(u32, u32), Output = u32>,
-        //                 // where CK is the trait specified above
-        //                 // ```
-        //                 let input_tys = sig
-        //                     .inputs()
-        //                     .iter()
-        //                     .map(|input_ty| {
-        //                         self.resolve_ty(*input_ty, List::empty(), span)
-        //                             .map(|item_ty| item_ty.struct_ty().tys())
-        //                     })
-        //                     .flatten_ok()
-        //                     .collect::<Result<Vec<_>, Error>>()?;
-
-        //                 let output_ty =
-        //                     self.resolve_ty(sig.output(), List::empty(), span)?;
-
-        //                 (input_tys, output_ty)
-        //             }
-        //             ClosureOrFnDid::Fn(did) => {
-        //                 let sig = self.fn_sig(did, closure_generics);
-
-        //                 let input_tys = sig
-        //                     .inputs()
-        //                     .iter()
-        //                     .map(|input_ty| {
-        //                         self.resolve_ty(*input_ty, List::empty(), span)
-        //                     })
-        //                     .collect::<Result<Vec<_>, Error>>()?;
-
-        //                 let output_ty =
-        //                     self.resolve_ty(sig.output(), List::empty(), span)?;
-
-        //                 (input_tys, output_ty)
-        //             }
-        //         };
-
-        //         self.add_closure(closure_ty, Closure {
-        //             closure_id,
-        //             input_tys,
-        //             output_ty,
-        //             item: closure.clone(),
-        //         });
-
-        //         Ok(closure)
-        //     }
-        // }
     }
 
     pub fn instantiate_closure(
@@ -1060,10 +841,10 @@ impl<'tcx> Compiler<'tcx> {
         let fn_did = closure_ty.fn_did;
         let fn_generics = closure_ty.fn_generics;
 
-        debug!("instantiate_closure: {fn_generics:?}");
-        let module_id = self.visit_fn(fn_did, fn_generics, false)?;
+        let module_id = self.visit_fn(fn_did.into(), fn_generics, false)?;
 
         let module = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
+            self.netlist[module_id].is_inlined = true;
             self.instantiate_module(
                 module_id,
                 iter::once(closure).chain(inputs.iter()),

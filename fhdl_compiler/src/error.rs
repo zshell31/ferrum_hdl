@@ -56,4 +56,6 @@ pub enum SpanErrorKind {
     NotSynthExpr,
     #[error("not synthesizable call")]
     NotSynthCall,
+    #[error("not synthesizable if-else/match expression")]
+    NotSynthSwitch,
 }

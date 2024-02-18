@@ -23,6 +23,63 @@ use crate::error::Error;
 #[derive(Debug, Clone)]
 pub struct Group<'tcx>(Rc<RefCell<Vec<Item<'tcx>>>>);
 
+impl<'tcx> Group<'tcx> {
+    pub fn new(items: impl IntoIterator<Item = Item<'tcx>>) -> Self {
+        Self(Rc::new(RefCell::new(items.into_iter().collect())))
+    }
+
+    pub fn new_opt(items: impl IntoIterator<Item = Option<Item<'tcx>>>) -> Option<Self> {
+        let v = items.into_iter().collect::<Option<Vec<_>>>()?;
+
+        Some(Self::new(v))
+    }
+
+    pub fn try_new(
+        items: impl IntoIterator<Item = Result<Item<'tcx>, Error>>,
+    ) -> Result<Self, Error> {
+        let v = items.into_iter().collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self::new(v))
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.borrow().len()
+    }
+
+    #[inline]
+    fn by_idx(&self, idx: usize) -> Item<'tcx> {
+        self.0.borrow()[idx].clone()
+    }
+
+    #[inline]
+    fn by_idx_mut(&mut self, idx: usize) -> &mut Item<'tcx> {
+        // Check if we can borrow it mutably
+        let _ = self.0.borrow_mut();
+
+        let v = unsafe { self.0.as_ptr().as_mut().unwrap() };
+        &mut v[idx]
+    }
+
+    #[inline]
+    pub fn items(&self) -> Ref<'_, [Item<'tcx>]> {
+        Ref::map(self.0.borrow(), |vec| vec.as_slice())
+    }
+
+    fn to_iter(&self) -> GroupIter<'tcx> {
+        let len = self.len();
+        GroupIter {
+            group: self.clone(),
+            idx: 0,
+            len,
+        }
+    }
+
+    fn deep_clone(&self) -> Self {
+        Self::new(self.0.borrow().iter().map(|item| item.deep_clone()))
+    }
+}
+
 #[derive(Clone)]
 pub struct GroupIter<'tcx> {
     group: Group<'tcx>,
@@ -68,59 +125,19 @@ impl<'tcx> Iterator for GroupIter<'tcx> {
     }
 }
 
-impl<'tcx> Group<'tcx> {
-    pub fn new(items: impl IntoIterator<Item = Item<'tcx>>) -> Self {
-        Self(Rc::new(RefCell::new(items.into_iter().collect())))
-    }
-
-    pub fn new_opt(items: impl IntoIterator<Item = Option<Item<'tcx>>>) -> Option<Self> {
-        let v = items.into_iter().collect::<Option<Vec<_>>>()?;
-
-        Some(Self::new(v))
-    }
-
-    pub fn try_new(
-        items: impl IntoIterator<Item = Result<Item<'tcx>, Error>>,
-    ) -> Result<Self, Error> {
-        let v = items.into_iter().collect::<Result<Vec<_>, _>>()?;
-
-        Ok(Self::new(v))
-    }
-
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.0.borrow().len()
-    }
-
-    #[inline]
-    pub fn by_idx(&self, idx: usize) -> Ref<'_, Item<'tcx>> {
-        Ref::map(self.0.borrow(), |vec| &vec[idx])
-    }
-
-    #[inline]
-    pub fn by_field(&self, idx: FieldIdx) -> Ref<'_, Item<'tcx>> {
-        self.by_idx(idx.as_usize())
-    }
-
-    #[inline]
-    pub fn items(&self) -> Ref<'_, [Item<'tcx>]> {
-        Ref::map(self.0.borrow(), |vec| vec.as_slice())
-    }
-
-    fn to_iter(&self) -> GroupIter<'tcx> {
-        let len = self.len();
-        GroupIter {
-            group: self.clone(),
-            idx: 0,
-            len,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum ItemKind<'tcx> {
     Node(NodeOutId),
     Group(Group<'tcx>),
+}
+
+impl<'tcx> ItemKind<'tcx> {
+    fn deep_clone(&self) -> Self {
+        match self {
+            Self::Node(node_out_id) => Self::Node(*node_out_id),
+            Self::Group(group) => Self::Group(group.deep_clone()),
+        }
+    }
 }
 
 impl<'tcx> From<NodeOutId> for ItemKind<'tcx> {
@@ -175,6 +192,7 @@ impl<'tcx> Iterator for ItemIter<'tcx> {
 }
 
 impl<'tcx> Item<'tcx> {
+    #[inline]
     pub fn new(ty: ItemTy<'tcx>, kind: impl Into<ItemKind<'tcx>>) -> Self {
         Self {
             ty,
@@ -189,10 +207,12 @@ impl<'tcx> Item<'tcx> {
         }
     }
 
+    #[inline]
     pub fn width(&self) -> u128 {
         self.ty.width()
     }
 
+    #[inline]
     pub fn group(&self) -> &Group<'tcx> {
         match &self.kind {
             ItemKind::Group(group) => group,
@@ -200,12 +220,32 @@ impl<'tcx> Item<'tcx> {
         }
     }
 
-    pub fn by_idx(&self, idx: usize) -> Ref<'_, Item<'tcx>> {
+    #[inline]
+    pub fn group_mut(&mut self) -> &mut Group<'tcx> {
+        match &mut self.kind {
+            ItemKind::Group(group) => group,
+            _ => panic!("expected group"),
+        }
+    }
+
+    #[inline]
+    pub fn by_idx(&self, idx: usize) -> Item<'tcx> {
         self.group().by_idx(idx)
     }
 
-    pub fn by_field(&self, idx: FieldIdx) -> Ref<'_, Item<'tcx>> {
-        self.group().by_field(idx)
+    #[inline]
+    pub fn by_field(&self, idx: FieldIdx) -> Item<'tcx> {
+        self.group().by_idx(idx.as_usize())
+    }
+
+    #[inline]
+    pub fn by_field_mut(&mut self, idx: FieldIdx) -> &mut Item<'tcx> {
+        self.group_mut().by_idx_mut(idx.as_usize())
+    }
+
+    #[inline]
+    pub fn deep_clone(&self) -> Self {
+        Self::new(self.ty, self.kind.deep_clone())
     }
 
     pub fn iter(&self) -> ItemIter<'tcx> {

@@ -1,6 +1,7 @@
 use std::io::{self, IsTerminal};
 
 use clap::{Args, ValueEnum};
+use fhdl_netlist::cfg::NetListCfg;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Args, Serialize, Deserialize)]
@@ -11,9 +12,8 @@ pub struct CompilerArgs {
     /// Dump generated netlist
     #[arg(long)]
     pub dump_netlist: bool,
-    /// Inline all modules except top module
-    #[arg(long)]
-    pub inline_all: bool,
+    #[command(flatten)]
+    pub netlist: NetListCfg,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]

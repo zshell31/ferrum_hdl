@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 auto_enums = "0.8.2"
 bumpalo = { workspace = true, features = ["collections"] }
+clap = { workspace = true }
 derive-where = "1.2.5"
 either = { workspace = true }
 indexmap = "2.2.2"
@@ -13,6 +14,7 @@ fhdl_blackbox = { path = "../fhdl_blackbox/" }
 fhdl_const_func = { path = "../fhdl_const_func/" }
 once_cell = "1.18.0"
 rustc-hash = "1.1.0"
+serde = { workspace = true }
 smallvec = { workspace = true }
 tracing = { workspace = true }
 

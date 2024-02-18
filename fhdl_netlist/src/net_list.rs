@@ -17,6 +17,7 @@ pub use with_id::WithId;
 
 pub use self::module::Module;
 use crate::{
+    cfg::NetListCfg,
     const_val::ConstVal,
     node::{Const, IsNode, Node, NodeKindWithId, NodeKindWithIdMut, NodeOutput, Pass},
     node_ty::NodeTy,
@@ -27,11 +28,6 @@ pub(crate) type FxIndexSet<T> = IndexSet<T, BuildHasherDefault<FxHasher>>;
 
 pub type Nodes = FxHashMap<NodeId, Node>;
 pub type Links = FxHashSet<NodeId>;
-
-#[derive(Debug)]
-pub struct NetListCfg {
-    pub inline_all: bool,
-}
 
 #[derive(Debug)]
 pub struct NetList {

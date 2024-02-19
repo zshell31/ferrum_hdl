@@ -42,6 +42,7 @@ pub(crate) struct List<I: Idx> {
     head: Option<I>,
     tail: Option<I>,
     last_idx: usize,
+    len: usize,
 }
 
 impl<I: Idx> List<I> {
@@ -55,6 +56,10 @@ impl<I: Idx> List<I> {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.head().is_none()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.len
     }
 
     pub(crate) fn next_idx(&mut self) -> I {
@@ -81,6 +86,8 @@ impl<I: Idx> List<I> {
             self.head = Some(idx);
             self.tail = Some(idx);
         }
+
+        self.len += 1;
     }
 
     pub(crate) fn insert_head<S: ListStorage<I>>(&mut self, storage: &mut S, idx: I) {
@@ -92,6 +99,8 @@ impl<I: Idx> List<I> {
             self.head = Some(idx);
             self.tail = Some(idx);
         }
+
+        self.len += 1;
     }
 
     pub(crate) fn insert<S: ListStorage<I>>(
@@ -107,6 +116,8 @@ impl<I: Idx> List<I> {
                     Some(next_idx) => {
                         storage.link(prev_idx, idx);
                         storage.link(idx, next_idx);
+
+                        self.len += 1;
                     }
                     None => {
                         assert_eq!(self.tail.unwrap(), prev_idx);
@@ -166,5 +177,7 @@ impl<I: Idx> List<I> {
                 self.tail = None;
             }
         };
+
+        let _ = self.len.saturating_sub(1);
     }
 }

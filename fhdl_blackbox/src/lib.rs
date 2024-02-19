@@ -6,10 +6,9 @@ pub enum BlackboxKind {
 
     BitPackMsb,
     BitPackPack,
-    BitPackRepack,
+    BitPackUnpack,
 
     BitVecSlice,
-    BitVecUnpack,
 
     Bundle,
     Unbundle,
@@ -56,15 +55,4 @@ pub enum BlackboxTy {
     BitVec,
     Clock,
     Unsigned,
-    UnsignedShort,
-}
-
-impl BlackboxTy {
-    pub fn is_unsigned_short(&self) -> bool {
-        matches!(self, BlackboxTy::UnsignedShort)
-    }
-
-    pub fn has_constructor(&self) -> bool {
-        self.is_unsigned_short()
-    }
 }

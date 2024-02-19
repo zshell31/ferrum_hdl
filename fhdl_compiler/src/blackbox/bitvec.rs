@@ -1,11 +1,10 @@
 use fhdl_netlist::{node::Splitter, symbol::Symbol};
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::Error,
-    utils,
 };
 
 pub struct BitVecSlice;
@@ -19,7 +18,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
         let rec = rec.node_out_id();
 
         let fn_ty = compiler.type_of(ctx.fn_did, ctx.generic_args);
@@ -53,7 +52,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
         ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
 
         Ok(compiler.from_bitvec(ctx.module_id, rec, output_ty))
     }

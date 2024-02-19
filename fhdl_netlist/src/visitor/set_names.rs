@@ -39,7 +39,7 @@ impl<'n> SetNames<'n> {
             };
 
             if DEFAULT_SYMBOLS.contains(suffix) || !prefix.is_empty() {
-                Symbol::new_from_args(format_args!("\\{sym}"))
+                Symbol::new_from_args(format_args!("_{sym}"))
             } else {
                 sym
             }
@@ -58,7 +58,7 @@ impl<'n> SetNames<'n> {
 
     fn make_sym(sym: Symbol, count: usize) -> Symbol {
         if sym.is_empty() {
-            Symbol::new_from_args(format_args!("\\${}", count + 1))
+            Symbol::new_from_args(format_args!("_${}", count + 1))
         } else if count == 0 {
             sym
         } else {
@@ -84,10 +84,11 @@ impl<'n> SetNames<'n> {
 
         if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
             if mod_inst.name().is_none() {
-                let sym = Symbol::new_from_args(format_args!(
-                    "__{}",
-                    self.netlist[mod_inst.module_id()].name
-                ));
+                let sym = Symbol::new("__mod");
+                // let sym = Symbol::new_from_args(format_args!(
+                //     "__{}",
+                //     self.netlist[mod_inst.module_id()].name
+                // ));
 
                 let count = self.idents.get(&(module_id, sym)).copied();
 

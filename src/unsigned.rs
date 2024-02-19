@@ -4,7 +4,6 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
-use fhdl_const_func::max_val;
 use fhdl_macros::{blackbox, blackbox_ty, synth};
 use paste::paste;
 
@@ -75,21 +74,6 @@ impl<const N: usize> Ord for Unsigned<N> {
     }
 }
 
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-#[blackbox_ty(UnsignedShort)]
-#[repr(transparent)]
-pub struct u<const N: usize>(pub u128)
-where
-    Assert<{ N <= 128 }>: IsTrue;
-
-impl<const N: usize> u<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    pub const MAX: Self = Self(max_val(N as u128));
-}
-
 macro_rules! impl_for_unsigned_prim_ty {
     ($( $prim:ty ),+) => {
         $(
@@ -98,6 +82,7 @@ macro_rules! impl_for_unsigned_prim_ty {
             impl SignalValue for $prim {}
 
             impl <const N: usize> CastFrom<$prim> for Unsigned<N> {
+                #[blackbox(CastFrom)]
                 #[inline]
                 fn cast_from(val: $prim) -> Self {
                     Self(val.cast())
@@ -105,6 +90,7 @@ macro_rules! impl_for_unsigned_prim_ty {
             }
 
             impl <const N: usize> CastFrom<Unsigned<N>> for $prim {
+                #[blackbox(CastFrom)]
                 #[inline]
                 fn cast_from(val: Unsigned<N>) -> Self {
                     val.0.cast()
@@ -209,30 +195,6 @@ impl<const N: usize> PartialOrd<Unsigned<N>> for u128 {
     }
 }
 
-impl<const N: usize> IsPrimTy for u<N> where Assert<{ N <= 128 }>: IsTrue {}
-
-impl<const N: usize> BitSize for u<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    const BITS: usize = N;
-}
-
-impl<const N: usize> BitPack for u<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    type Packed = BitVec<N>;
-
-    fn pack(self) -> Self::Packed {
-        self.cast::<Unsigned<N>>().pack()
-    }
-
-    fn unpack(bitvec: Self::Packed) -> Self {
-        Unsigned::<N>::unpack(bitvec).cast()
-    }
-}
-
 impl<const N: usize> Unsigned<N> {
     #[synth(inline)]
     pub fn idx<T>(&self, idx: T) -> bool
@@ -305,24 +267,6 @@ impl<const N: usize> LowerHex for Unsigned<N> {
 impl<const N: usize, const M: usize> CastFrom<Unsigned<M>> for Unsigned<N> {
     fn cast_from(from: Unsigned<M>) -> Unsigned<N> {
         Self(from.0.cast())
-    }
-}
-
-impl<const N: usize> CastFrom<u<N>> for Unsigned<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    fn cast_from(value: u<N>) -> Self {
-        Self(value.0.cast())
-    }
-}
-
-impl<const N: usize> CastFrom<Unsigned<N>> for u<N>
-where
-    Assert<{ N <= 128 }>: IsTrue,
-{
-    fn cast_from(value: Unsigned<N>) -> Self {
-        Self(value.0.cast())
     }
 }
 

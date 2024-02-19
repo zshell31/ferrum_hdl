@@ -41,6 +41,6 @@ pub mod prelude {
             Unbundle,
         },
         simulation::Simulate,
-        unsigned::{u, Unsigned},
+        unsigned::Unsigned,
     };
 }

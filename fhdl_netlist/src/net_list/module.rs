@@ -197,6 +197,10 @@ impl Module {
         self.list.is_empty()
     }
 
+    pub fn len(&self) -> usize {
+        self.list.len()
+    }
+
     pub fn inputs_len(&self) -> usize {
         self.inputs.len()
     }

@@ -59,7 +59,7 @@ where
     T: CastFrom<U>,
     ConstConstr<{ idx_constr(N) }>:,
 {
-    #[synth]
+    #[synth(inline)]
     fn cast_from(from: [U; N]) -> [T; N] {
         from.map_(|from| T::cast_from(from))
     }

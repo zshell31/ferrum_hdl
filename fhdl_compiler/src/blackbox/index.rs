@@ -6,7 +6,7 @@ use fhdl_netlist::{
 };
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{
         item::Item,
@@ -14,7 +14,6 @@ use crate::{
         Compiler, Context, SymIdent,
     },
     error::{Error, SpanError, SpanErrorKind},
-    utils,
 };
 
 pub struct Index;
@@ -28,7 +27,7 @@ impl<'tcx> EvalExpr<'tcx> for Index {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec, idx);
+        args!(args as rec, idx);
         let mod_id = ctx.module_id;
 
         let item = match rec.ty.kind() {

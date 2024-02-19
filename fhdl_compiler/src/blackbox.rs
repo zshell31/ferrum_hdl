@@ -14,7 +14,6 @@ use rustc_span::Span;
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::Error,
-    utils,
 };
 
 pub trait EvalExpr<'tcx> {
@@ -57,6 +56,14 @@ macro_rules! eval_expr {
     };
 }
 
+macro_rules! args {
+    ($args:ident as $( $arg:ident ),+) => {
+        let [$($arg,)+ ..] = $args else { panic!("not enough arguments"); };
+    };
+}
+
+use args;
+
 struct PassReceiver;
 
 impl<'tcx> EvalExpr<'tcx> for PassReceiver {
@@ -68,7 +75,7 @@ impl<'tcx> EvalExpr<'tcx> for PassReceiver {
         _: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
 
         Ok(rec.clone())
     }
@@ -78,11 +85,10 @@ eval_expr!(
     ArrayChain => array::Chain,
 
     BitPackPack => bitpack::BitPackPack,
-    BitPackRepack => bitpack::BitPackRepack,
+    BitPackUnpack => bitpack::BitPackUnpack,
     BitPackMsb => bitpack::BitPackMsb,
 
     BitVecSlice => bitvec::BitVecSlice,
-    BitVecUnpack => bitvec::BitVecUnpack,
 
     Bundle => PassReceiver,
     Unbundle => PassReceiver,

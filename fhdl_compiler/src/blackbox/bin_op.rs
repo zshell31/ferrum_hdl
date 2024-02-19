@@ -2,11 +2,10 @@ use fhdl_netlist::node::{BinOp as NodeBinOp, BinOpNode};
 use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_span::Span;
 
-use super::{cast::Conversion, EvalExpr};
+use super::{args, cast::Conversion, EvalExpr};
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::{Error, SpanError, SpanErrorKind},
-    utils,
 };
 
 pub struct BinOp(pub NodeBinOp);
@@ -82,7 +81,7 @@ impl<'tcx> EvalExpr<'tcx> for BinOp {
         ctx: &mut Context<'tcx>,
         span: rustc_span::Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as lhs, rhs);
+        args!(args as lhs, rhs);
 
         self.bin_op(compiler, lhs, rhs, output_ty, ctx, span)
     }

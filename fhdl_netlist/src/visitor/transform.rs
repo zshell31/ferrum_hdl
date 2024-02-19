@@ -8,6 +8,8 @@ use crate::{
     visitor::Visitor,
 };
 
+const NODES_LIMIT_TO_INLINE: usize = 10;
+
 pub struct Transform<'n> {
     netlist: &'n mut NetList,
 }
@@ -96,6 +98,8 @@ impl<'n> Transform<'n> {
                                 *should_be_inlined = self.netlist[module_id].is_inlined
                                     || node.inputs_len() == 0
                                     || self.netlist[module_id].only_inputs
+                                    || self.netlist[module_id].len()
+                                        <= NODES_LIMIT_TO_INLINE
                                     || node.inputs().all(|input| {
                                         self.netlist[input.node_id()].is_const()
                                     });

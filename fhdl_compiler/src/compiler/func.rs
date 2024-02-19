@@ -231,6 +231,10 @@ impl<'tcx> Compiler<'tcx> {
             .map_err(Into::into)
     }
 
+    pub fn has_blackbox(&mut self, fn_did: DefId) -> bool {
+        self.blackbox.contains_key(&fn_did) || self.find_blackbox_(fn_did).is_some()
+    }
+
     fn find_blackbox_(&self, def_id: DefId) -> Option<BlackboxKind> {
         if self.crates.is_std(def_id) {
             let def_path = self.tcx.def_path(def_id);

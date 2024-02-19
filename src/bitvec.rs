@@ -117,7 +117,7 @@ impl<const N: usize> BitVec<N> {
         }
     }
 
-    #[blackbox(BitVecUnpack)]
+    #[blackbox(BitPackUnpack)]
     pub fn unpack<T: BitPack<Packed = Self>>(self) -> T {
         T::unpack(self)
     }
@@ -133,6 +133,7 @@ impl<const N: usize> IsPacked for BitVec<N> {
 }
 
 impl<const N: usize, const M: usize> CastFrom<BitVec<M>> for BitVec<N> {
+    #[blackbox(CastFrom)]
     fn cast_from(from: BitVec<M>) -> BitVec<N> {
         match from {
             BitVec::<M>::Short(short) => BitVec::<N>::from_short(short),
@@ -145,6 +146,7 @@ macro_rules! impl_from {
     ($( $prim:ty ),+) => {
         $(
             impl<const N: usize> CastFrom<$prim> for BitVec<N> {
+                #[blackbox(CastFrom)]
                 #[inline]
                 fn cast_from(val: $prim) -> Self {
                     Self::from_short(val as u128)
@@ -152,6 +154,7 @@ macro_rules! impl_from {
             }
 
             impl<const N: usize> CastFrom<BitVec<N>> for $prim {
+                #[blackbox(CastFrom)]
                 #[inline]
                 fn cast_from(val: BitVec<N>) -> Self {
                     match val {

@@ -1,11 +1,10 @@
 use fhdl_netlist::node::DFF;
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context, SymIdent},
     error::Error,
-    utils,
 };
 
 pub struct SignalReg {
@@ -74,7 +73,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalMap {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec, comb);
+        args!(args as rec, comb);
 
         compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
@@ -91,7 +90,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec, comb);
+        args!(args as rec, comb);
 
         compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
@@ -108,7 +107,7 @@ impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as arg1, arg2, comb);
+        args!(args as arg1, arg2, comb);
 
         compiler.instantiate_closure(comb, &[arg1.clone(), arg2.clone()], ctx, span)
     }

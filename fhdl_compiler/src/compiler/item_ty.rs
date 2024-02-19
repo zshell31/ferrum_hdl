@@ -9,8 +9,8 @@ use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{
-    AdtDef, AliasKind, ClosureArgs, Const, ConstKind, EarlyBinder, FieldDef, GenericArg,
-    GenericArgsRef, List, Mutability, ParamEnv, Ty, VariantDiscr,
+    AdtDef, AliasKind, ClosureArgs, EarlyBinder, FieldDef, GenericArg, GenericArgsRef,
+    List, Mutability, ParamEnv, Ty, VariantDiscr,
 };
 use rustc_span::Span;
 use rustc_target::abi::VariantIdx;
@@ -20,10 +20,15 @@ use rustc_type_ir::{
 };
 
 use super::Compiler;
-use crate::{
-    error::{Error, SpanError, SpanErrorKind},
-    utils,
-};
+use crate::error::{Error, SpanError, SpanErrorKind};
+
+pub fn ty_def_id(ty: Ty<'_>) -> Option<DefId> {
+    match ty.kind() {
+        TyKind::Adt(adt, _) => Some(adt.did()),
+        TyKind::FnDef(did, _) => Some(*did),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Named<T> {
@@ -84,13 +89,12 @@ impl<'tcx> ArrayTy<'tcx> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructTy<'tcx> {
-    blackbox_ty: Option<BlackboxTy>,
     tys: &'tcx [Named<ItemTy<'tcx>>],
 }
 
 impl<'tcx> StructTy<'tcx> {
-    fn new(blackbox_ty: Option<BlackboxTy>, tys: &'tcx [Named<ItemTy<'tcx>>]) -> Self {
-        Self { blackbox_ty, tys }
+    fn new(tys: &'tcx [Named<ItemTy<'tcx>>]) -> Self {
+        Self { tys }
     }
 
     #[inline]
@@ -116,11 +120,6 @@ impl<'tcx> StructTy<'tcx> {
 
     pub fn width(&self) -> u128 {
         self.tys.iter().map(|ty| ty.width()).sum()
-    }
-
-    #[inline]
-    pub fn is_unsigned_short(&self) -> bool {
-        matches!(self.blackbox_ty, Some(BlackboxTy::UnsignedShort))
     }
 }
 
@@ -444,14 +443,13 @@ impl<'tcx> Compiler<'tcx> {
                     Some(self.alloc_ty(NodeTy::Unsigned(usize::BITS as u128)))
                 }
                 TyKind::Tuple(ty) => {
-                    let ty = self.resolve_tuple_ty(None, ty.iter(), generics, span)?;
+                    let ty = self.resolve_tuple_ty(ty.iter(), generics, span)?;
                     Some(self.alloc_ty(ty))
                 }
                 TyKind::Adt(adt, adt_generics)
                     if !self.is_blackbox_ty(adt.did()) && adt.is_struct() =>
                 {
-                    let ty =
-                        self.resolve_struct_ty(None, adt, adt_generics, generics, span)?;
+                    let ty = self.resolve_struct_ty(adt, adt_generics, generics, span)?;
                     Some(self.alloc_ty(ty))
                 }
                 TyKind::Adt(adt, adt_generics)
@@ -486,7 +484,7 @@ impl<'tcx> Compiler<'tcx> {
                         self.resolve_instance(*fn_did, fn_generics, span)?;
 
                     let struct_ty =
-                        self.resolve_tuple_ty(None, iter::empty(), List::empty(), span)?;
+                        self.resolve_tuple_ty(iter::empty(), List::empty(), span)?;
 
                     Some(self.alloc_ty(ItemTyKind::Closure(ClosureTy::new(
                         instance_did,
@@ -499,7 +497,6 @@ impl<'tcx> Compiler<'tcx> {
                         args: closure_generics,
                     };
                     let struct_ty = self.resolve_tuple_ty(
-                        None,
                         closure_args.upvar_tys().iter(),
                         closure_generics,
                         span,
@@ -513,7 +510,7 @@ impl<'tcx> Compiler<'tcx> {
                 }
                 TyKind::Array(ty, const_) => {
                     let item_ty = self.resolve_ty(*ty, generics, span)?;
-                    let const_ = self.resolve_const(*const_, span)?;
+                    let const_ = self.eval_const(*const_, span)?;
 
                     let array_ty = ArrayTy::new(item_ty, const_);
                     Some(self.alloc_ty(array_ty))
@@ -546,7 +543,7 @@ impl<'tcx> Compiler<'tcx> {
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<Option<ItemTy<'tcx>>, Error> {
-        let def_id = match utils::ty_def_id(ty) {
+        let def_id = match ty_def_id(ty) {
             Some(def_id) => def_id,
             None => {
                 return Ok(None);
@@ -571,22 +568,6 @@ impl<'tcx> Compiler<'tcx> {
                 BlackboxTy::Unsigned => self
                     .generic_const(ty, 0, generics, span)?
                     .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(val)))),
-                BlackboxTy::UnsignedShort => {
-                    self.generic_const(ty, 0, generics, span)?.map(|val| {
-                        let tys = self.alloc_from_iter(
-                            iter::once(ItemTyKind::Node(NodeTy::Unsigned(val)))
-                                .enumerate()
-                                .map(|(ind, ty)| {
-                                    let item_ty = self.alloc_ty(ty);
-
-                                    Named::new(item_ty, Symbol::new_from_ind(ind))
-                                }),
-                        );
-                        let struct_ty = StructTy::new(Some(blackbox_ty), tys);
-
-                        self.alloc_ty(ItemTyKind::Struct(struct_ty))
-                    })
-                }
             };
 
             return Ok(item_ty);
@@ -630,7 +611,7 @@ impl<'tcx> Compiler<'tcx> {
                 .map(Into::into)
                 .map(Some),
             TyKind::Array(_, const_) if idx == 1 => {
-                self.resolve_const(*const_, span).map(Into::into).map(Some)
+                self.eval_const(*const_, span).map(Into::into).map(Some)
             }
             TyKind::Adt(adt, generics) if !generics.is_empty() => {
                 // TODO: check if blackbox_ty is ignored
@@ -673,34 +654,35 @@ impl<'tcx> Compiler<'tcx> {
             return Ok(Generic::Ty(item_ty));
         }
 
-        let cons_val = arg.as_const().and_then(|cons| match cons.kind() {
-            ConstKind::Unevaluated(unevaluated) => {
-                use rustc_middle::mir::UnevaluatedConst;
-
-                utils::resolve_unevaluated(
-                    self.tcx,
-                    UnevaluatedConst::new(unevaluated.def, unevaluated.args),
-                )
-            }
-            ConstKind::Value(val_tree) => utils::eval_val_tree(val_tree).map(Into::into),
-            _ => None,
-        });
-
-        cons_val
+        arg.as_const()
+            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
+            .and_then(|const_| self.eval_const(const_, span))
             .map(Generic::Const)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
-    }
 
-    fn resolve_const(&self, const_: Const<'tcx>, span: Span) -> Result<u128, Error> {
-        const_
-            .try_eval_scalar_int(self.tcx, ParamEnv::reveal_all())
-            .and_then(utils::eval_scalar_int)
-            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
+        // arg.as_const().and_then(|const_| {
+        //     Self::eval_const()
+        // })
+
+        // let cons_val = arg.as_const().and_then(|cons| match cons.kind() {
+        //     ConstKind::Unevaluated(unevaluated) => {
+        //         use rustc_middle::mir::UnevaluatedConst;
+
+        //         utils::resolve_unevaluated(
+        //             self.tcx,
+        //             UnevaluatedConst::new(unevaluated.def, unevaluated.args),
+        //         )
+        //     }
+        //     ConstKind::Value(val_tree) => utils::eval_val_tree(val_tree).map(Into::into),
+        //     _ => None,
+        // });
+
+        // cons_val
+        //     .map(Generic::Const)
+        //     .ok_or_else(|| )
     }
 
     fn resolve_tuple_ty(
         &mut self,
-        blackbox_ty: Option<BlackboxTy>,
         tys: impl Iterator<Item = Ty<'tcx>>,
         generics: GenericArgsRef<'tcx>,
         span: Span,
@@ -712,29 +694,21 @@ impl<'tcx> Compiler<'tcx> {
                 Ok(Named::new(item_ty, Symbol::new_from_ind(ind)))
             })?;
 
-        Ok(StructTy::new(blackbox_ty, tys))
+        Ok(StructTy::new(tys))
     }
 
     fn resolve_struct_ty(
         &mut self,
-        blackbox_ty: Option<BlackboxTy>,
         adt: &AdtDef<'tcx>,
         adt_generics: GenericArgsRef<'tcx>,
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<StructTy<'tcx>, Error> {
-        self.resolve_struct_ty_(
-            blackbox_ty,
-            adt.all_fields(),
-            adt_generics,
-            generics,
-            span,
-        )
+        self.resolve_struct_ty_(adt.all_fields(), adt_generics, generics, span)
     }
 
     fn resolve_struct_ty_(
         &mut self,
-        blackbox_ty: Option<BlackboxTy>,
         fields: impl IntoIterator<Item = &'tcx FieldDef>,
         adt_generics: GenericArgsRef<'tcx>,
         generics: GenericArgsRef<'tcx>,
@@ -765,7 +739,7 @@ impl<'tcx> Compiler<'tcx> {
                 }
             })?;
 
-        Ok(StructTy::new(blackbox_ty, fields))
+        Ok(StructTy::new(fields))
     }
 
     fn resolve_enum_ty(
@@ -782,7 +756,6 @@ impl<'tcx> Compiler<'tcx> {
                     discr_seq = false;
                 }
                 let struct_ty = compiler.resolve_struct_ty_(
-                    None,
                     variant.fields.iter(),
                     adt_generics,
                     generics,

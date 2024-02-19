@@ -1,22 +1,16 @@
-use std::iter;
-
-use ferrum_hdl::{
-    cast::CastFrom,
-    unsigned::{u, Unsigned},
-};
-use fhdl_netlist::{net_list::ModuleId, node_ty::NodeTy};
+use ferrum_hdl::{cast::CastFrom, unsigned::Unsigned};
+use fhdl_netlist::net_list::ModuleId;
 use rustc_span::Span;
 use tracing::error;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{
-        item::{Group, Item, ItemKind},
+        item::{Item, ItemKind},
         item_ty::{ItemTy, ItemTyKind},
         Compiler, Context,
     },
     error::{Error, SpanError, SpanErrorKind},
-    utils,
 };
 
 #[allow(dead_code)]
@@ -35,26 +29,11 @@ impl Conversion {
         }
 
         match (from.ty.kind(), to_ty.kind()) {
-            (ItemTyKind::Node(NodeTy::Unsigned(_)), ItemTyKind::Struct(struct_ty))
-                if struct_ty.is_unsigned_short() && from.ty.width() == to_ty.width() =>
-            {
-                assert_convert::<Unsigned<1>, u<1>>();
-                Ok(Item::new(
-                    to_ty,
-                    ItemKind::Group(Group::new(iter::once(from.clone()))),
-                ))
-            }
-            (ItemTyKind::Struct(struct_ty), ItemTyKind::Node(NodeTy::Unsigned(_)))
-                if struct_ty.is_unsigned_short() && from.ty.width() == to_ty.width() =>
-            {
-                assert_convert::<u<1>, Unsigned<1>>();
-
-                let from = from.by_idx(0).clone();
-                Ok(Self::to_unsigned(module_id, from, to_ty, compiler))
-            }
             (ItemTyKind::Node(from_ty_), ItemTyKind::Node(to_ty_))
                 if from_ty_.is_unsigned() && to_ty_.is_unsigned() =>
             {
+                assert_convert::<Unsigned<1>, Unsigned<1>>();
+                assert_convert::<Unsigned<1>, Unsigned<2>>();
                 Ok(Self::to_unsigned(module_id, from.clone(), to_ty, compiler))
             }
             _ => {
@@ -94,7 +73,7 @@ impl<'tcx> EvalExpr<'tcx> for Conversion {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as from);
+        args!(args as from);
 
         Self::convert(compiler, ctx.module_id, from, output_ty, span)
     }

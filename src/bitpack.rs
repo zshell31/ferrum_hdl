@@ -3,8 +3,8 @@ use std::{
     ops::{BitAnd, BitOr, Shl, Shr},
 };
 
-use fhdl_macros::blackbox;
 pub use fhdl_macros::BitPack;
+use fhdl_macros::{blackbox, synth};
 
 use crate::{bitvec::BitVec, cast::CastFrom};
 
@@ -31,9 +31,10 @@ pub trait BitPack: BitSize {
     #[blackbox(BitPackPack)]
     fn pack(self) -> Self::Packed;
 
+    #[blackbox(BitPackUnpack)]
     fn unpack(packed: Self::Packed) -> Self;
 
-    #[blackbox(BitPackRepack)]
+    #[synth(inline)]
     fn repack<T: BitPack<Packed = Self::Packed>>(self) -> T {
         let bitvec = self.pack();
         T::unpack(bitvec)

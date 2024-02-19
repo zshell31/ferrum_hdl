@@ -1,11 +1,10 @@
 use fhdl_netlist::node::Splitter;
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context, SymIdent},
     error::Error,
-    utils,
 };
 
 pub struct BitPackPack;
@@ -19,15 +18,15 @@ impl<'tcx> EvalExpr<'tcx> for BitPackPack {
         ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
 
         Ok(compiler.to_bitvec(ctx.module_id, rec))
     }
 }
 
-pub struct BitPackRepack;
+pub struct BitPackUnpack;
 
-impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
+impl<'tcx> EvalExpr<'tcx> for BitPackUnpack {
     fn eval(
         &self,
         compiler: &mut Compiler<'tcx>,
@@ -36,9 +35,8 @@ impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
         ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
 
-        let rec = compiler.to_bitvec(ctx.module_id, rec);
         Ok(compiler.from_bitvec(ctx.module_id, rec, output_ty))
     }
 }
@@ -54,7 +52,7 @@ impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
         ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as rec);
+        args!(args as rec);
 
         let rec = compiler.to_bitvec(ctx.module_id, rec);
         let msb = compiler.netlist.add_and_get_out(

@@ -1,9 +1,9 @@
 use fhdl_netlist::node_ty::NodeTy;
 use rustc_abi::Size;
-use rustc_const_eval::interpret::alloc_range;
+use rustc_const_eval::interpret::{alloc_range, Scalar};
 use rustc_middle::{
     mir::{ConstValue, UnevaluatedConst},
-    ty::{ParamEnv, ScalarInt, Ty},
+    ty::{Const, ParamEnv, ScalarInt, Ty},
 };
 use rustc_span::Span;
 use tracing::{debug, error};
@@ -11,13 +11,20 @@ use tracing::{debug, error};
 use super::{item::Item, Compiler, Context};
 use crate::{
     compiler::{item::Group, item_ty::ItemTyKind},
-    error::Error,
+    error::{Error, SpanError, SpanErrorKind},
 };
 
 pub fn const_val_to_u128(val: ConstValue) -> Option<u128> {
     let scalar = val.try_to_scalar_int()?;
 
     scalar_int_to_u128(scalar)
+}
+
+pub fn scalar_to_u128(scalar: Scalar) -> Option<u128> {
+    match scalar {
+        Scalar::Int(scalar) => scalar_int_to_u128(scalar),
+        _ => None,
+    }
 }
 
 pub fn scalar_int_to_u128(scalar: ScalarInt) -> Option<u128> {
@@ -107,13 +114,20 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
-    fn const_eval_resolve(
+    pub fn const_eval_resolve(
         &self,
         unevaluated: UnevaluatedConst<'tcx>,
     ) -> Option<ConstValue<'tcx>> {
         let param_env = ParamEnv::reveal_all();
         let value = self.tcx.const_eval_resolve(param_env, unevaluated, None);
         value.ok()
+    }
+
+    pub fn eval_const(&self, const_: Const<'tcx>, span: Span) -> Result<u128, Error> {
+        const_
+            .try_eval_scalar_int(self.tcx, ParamEnv::reveal_all())
+            .and_then(scalar_int_to_u128)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
     }
 
     pub fn mk_const(

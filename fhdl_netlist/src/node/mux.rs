@@ -1,5 +1,6 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, iter};
 
+use either::Either;
 use smallvec::SmallVec;
 
 use super::{IsNode, NodeKind, NodeOutput};
@@ -15,6 +16,7 @@ pub struct Mux {
     cases: SmallVec<[ConstVal; 2]>,
     inputs: SmallVec<[NodeOutIdx; 3]>,
     output: NodeOutput,
+    has_default: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +53,7 @@ impl Mux {
             inputs.push(input.into());
         }
 
+        let has_default = default.is_some();
         if let Some(default) = default {
             cases.push(ConstVal::default());
             inputs.push(default.into());
@@ -60,6 +63,7 @@ impl Mux {
             cases,
             inputs,
             output: NodeOutput::reg(ty, sym.into(), None),
+            has_default,
         }
     }
 
@@ -76,25 +80,32 @@ impl WithId<ModuleId, &'_ Mux> {
     pub fn inputs(&self) -> MuxInputs<'_> {
         let module_id = self.id();
 
+        let cases = if self.has_default {
+            Either::Left(self.cases.iter().map(|case| {
+                if !case.is_zero_sized() {
+                    Case::Val(*case)
+                } else {
+                    Case::Default
+                }
+            }))
+        } else {
+            let cases = self.cases.len();
+            Either::Right(
+                self.cases[.. cases - 1]
+                    .iter()
+                    .map(|case| Case::Val(*case))
+                    .chain(iter::once(Case::Default)),
+            )
+        };
+
         MuxInputs {
             sel: NodeOutId::make(module_id, self.inputs[0]),
-            variants: self
-                .cases
-                .iter()
-                .copied()
-                .map(|case| {
-                    if !case.is_zero_sized() {
-                        Case::Val(case)
-                    } else {
-                        Case::Default
-                    }
-                })
-                .zip(
-                    self.inputs
-                        .iter()
-                        .skip(1)
-                        .map(move |input| NodeOutId::make(module_id, *input)),
-                ),
+            variants: cases.zip(
+                self.inputs
+                    .iter()
+                    .skip(1)
+                    .map(move |input| NodeOutId::make(module_id, *input)),
+            ),
         }
     }
 }

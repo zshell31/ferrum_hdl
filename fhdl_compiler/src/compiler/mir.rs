@@ -22,8 +22,8 @@ use super::{
 };
 use crate::{
     blackbox::bin_op::BinOp,
+    compiler::cons_::scalar_to_u128,
     error::{Error, SpanError, SpanErrorKind},
-    utils,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -282,6 +282,7 @@ impl<'tcx> Compiler<'tcx> {
                 StatementKind::StorageLive(_) | StatementKind::StorageDead(_) => {}
                 StatementKind::Assign(assign) => {
                     let rvalue = &assign.1;
+                    let rvalue_ty = rvalue.ty(&mir.local_decls, self.tcx);
 
                     let item: Option<Item> = match rvalue {
                         Rvalue::Ref(_, BorrowKind::Shared, place)
@@ -308,14 +309,35 @@ impl<'tcx> Compiler<'tcx> {
 
                             Some(bin_op.bin_op(self, &lhs, &rhs, output_ty, ctx, span)?)
                         }
+                        Rvalue::Repeat(op, const_) => {
+                            let rvalue_ty =
+                                self.resolve_ty(rvalue_ty, ctx.generic_args, span)?;
+                            let count = self.eval_const(*const_, span)? as usize;
+                            let op = self.visit_operand(op, ctx, span)?;
+
+                            Some(Item::new(
+                                rvalue_ty,
+                                Group::new(
+                                    iter::repeat(op)
+                                        .take(count)
+                                        .map(|item| item.deep_clone()),
+                                ),
+                            ))
+                        }
                         Rvalue::Aggregate(aggregate_kind, fields) => match aggregate_kind
                             .deref()
                         {
+                            AggregateKind::Array(_) => {
+                                let rvalue_ty =
+                                    self.resolve_ty(rvalue_ty, ctx.generic_args, span)?;
+
+                                Some(self.mk_item_group(rvalue_ty, fields, ctx, span)?)
+                            }
                             AggregateKind::Tuple => {
                                 let ty = rvalue.ty(&mir.local_decls, self.tcx);
                                 let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
 
-                                Some(self.mk_struct(ty, fields, ctx, span)?)
+                                Some(self.mk_item_group(ty, fields, ctx, span)?)
                             }
                             AggregateKind::Adt(
                                 variant_did,
@@ -334,7 +356,7 @@ impl<'tcx> Compiler<'tcx> {
 
                                 match ty.kind() {
                                     ItemTyKind::Struct(_) => {
-                                        Some(self.mk_struct(ty, fields, ctx, span)?)
+                                        Some(self.mk_item_group(ty, fields, ctx, span)?)
                                     }
                                     ItemTyKind::Enum(enum_ty) => {
                                         let data_part = if fields.is_empty() {
@@ -343,7 +365,11 @@ impl<'tcx> Compiler<'tcx> {
                                             let ty =
                                                 *enum_ty.by_variant_idx(variant_idx).ty;
 
-                                            Some(self.mk_struct(ty, fields, ctx, span)?)
+                                            Some(
+                                                self.mk_item_group(
+                                                    ty, fields, ctx, span,
+                                                )?,
+                                            )
                                         };
 
                                         Some(self.enum_variant_to_bitvec(
@@ -527,7 +553,7 @@ impl<'tcx> Compiler<'tcx> {
         Ok(())
     }
 
-    fn mk_struct(
+    fn mk_item_group(
         &mut self,
         item_ty: ItemTy<'tcx>,
         fields: &IndexVec<FieldIdx, Operand<'tcx>>,
@@ -574,17 +600,15 @@ impl<'tcx> Compiler<'tcx> {
 
                 match value.const_ {
                     Const::Ty(const_) => {
-                        if let Some(value) = ctx
-                            .instantiate(self.tcx, const_)
-                            .try_eval_scalar_int(self.tcx, ParamEnv::reveal_all())
-                            .and_then(utils::eval_scalar_int)
+                        if let Ok(value) =
+                            self.eval_const(ctx.instantiate(self.tcx, const_), span)
                         {
                             return self.mk_const(const_.ty(), value, ctx, span);
                         }
                     }
                     Const::Val(const_value, ty) => match const_value {
                         ConstValue::Scalar(scalar) => {
-                            if let Some(value) = utils::eval_scalar(scalar) {
+                            if let Some(value) = scalar_to_u128(scalar) {
                                 return self.mk_const(ty, value, ctx, span);
                             }
                         }
@@ -746,7 +770,7 @@ impl<'tcx> Compiler<'tcx> {
 
         let is_std_call = self.is_std_call(fn_did);
 
-        if instance_did.is_local()
+        if (instance_did.is_local() && !self.has_blackbox(fn_did))
             || self.is_synth(instance_did)
             || self.is_synth(fn_did)
             || is_std_call
@@ -827,7 +851,7 @@ impl<'tcx> Compiler<'tcx> {
         let closure_ty = self.type_of(closure_did, closure_generics);
         let closure_ty = self.resolve_ty(closure_ty, List::empty(), span)?;
 
-        self.mk_struct(closure_ty, captures, ctx, span)
+        self.mk_item_group(closure_ty, captures, ctx, span)
     }
 
     pub fn instantiate_closure(

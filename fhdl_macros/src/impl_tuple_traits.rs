@@ -134,6 +134,7 @@ impl ImplTupleTraits {
 
         quote! {
             impl< #( #u, #t: CastFrom<#u>, )* > CastFrom< ( #(#u,)* ) > for ( #(#t,)* ) {
+                #[fhdl_macros::synth(inline)]
                 fn cast_from(from: ( #( #u, )* ) ) -> ( #( #t, )* ) {
                     (
                         #(

@@ -7,7 +7,6 @@
 mod blackbox;
 mod compiler;
 mod error;
-mod utils;
 
 use std::{
     env, io,

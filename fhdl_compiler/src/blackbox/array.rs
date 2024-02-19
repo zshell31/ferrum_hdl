@@ -1,7 +1,7 @@
 use rustc_middle::ty::List;
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
     compiler::{
         item::{Group, Item},
@@ -9,7 +9,6 @@ use crate::{
         Compiler, Context,
     },
     error::Error,
-    utils,
 };
 
 pub struct Chain;
@@ -23,7 +22,7 @@ impl<'tcx> EvalExpr<'tcx> for Chain {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        utils::args!(args as init, closure);
+        args!(args as init, closure);
 
         let array_ty = output_ty.struct_ty().by_idx(1);
         let count = array_ty.array_ty().count();

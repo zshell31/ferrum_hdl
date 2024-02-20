@@ -1,7 +1,5 @@
 use fhdl_macros::synth;
 
-pub trait IsPrimTy: Sized {}
-
 pub trait CastFrom<T: Sized>: Sized {
     fn cast_from(from: T) -> Self;
 }

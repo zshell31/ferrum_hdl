@@ -10,7 +10,7 @@ use paste::paste;
 use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
-    cast::{Cast, CastFrom, IsPrimTy},
+    cast::{Cast, CastFrom},
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
@@ -77,8 +77,6 @@ impl<const N: usize> Ord for Unsigned<N> {
 macro_rules! impl_for_unsigned_prim_ty {
     ($( $prim:ty ),+) => {
         $(
-            impl IsPrimTy for $prim {}
-
             impl SignalValue for $prim {}
 
             impl <const N: usize> CastFrom<$prim> for Unsigned<N> {
@@ -227,8 +225,6 @@ impl<const N: usize> Default for Unsigned<N> {
 }
 
 impl<const N: usize> SignalValue for Unsigned<N> {}
-
-impl<const N: usize> IsPrimTy for Unsigned<N> {}
 
 impl<const N: usize> BitSize for Unsigned<N> {
     const BITS: usize = N;

@@ -3,7 +3,7 @@ use fhdl_macros::blackbox;
 use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
-    cast::{Cast, CastFrom, IsPrimTy},
+    cast::{Cast, CastFrom},
     signal::SignalValue,
 };
 
@@ -17,8 +17,6 @@ pub const fn bit_value(value: bool) -> u128 {
 }
 
 impl SignalValue for Bit {}
-
-impl IsPrimTy for Bit {}
 
 impl BitSize for Bit {
     const BITS: usize = 1;

@@ -3,6 +3,7 @@ use fhdl_netlist::{
     net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
 };
+use once_cell::sync::Lazy;
 use rustc_hir::{
     def::DefKind,
     def_id::DefId,
@@ -18,58 +19,92 @@ use tracing::debug;
 use super::{item::Item, item_ty::ItemTy, Compiler, Context};
 use crate::{
     blackbox::Blackbox,
+    compiler::trie::Trie,
     error::{Error, SpanError, SpanErrorKind},
 };
 
-const STD_FUNCTIONS: &[&[&str]] = &[
-    &["default", "Default", "default"],
-    &["ops", "function", "Fn", "call"],
-    &["ops", "function", "FnOnce", "call_once"],
-    // Option
-    &["option", "impl", "and"],
-    &["option", "impl", "and_then"],
-    &["option", "impl", "as_ref"],
-    &["option", "impl", "filter"],
-    &["option", "impl", "flatten"],
-    &["option", "impl", "is_none"],
-    &["option", "impl", "is_some"],
-    &["option", "impl", "map"],
-    &["option", "impl", "map_or"],
-    &["option", "impl", "map_or_else"],
-    &["option", "impl", "or"],
-    &["option", "impl", "or_else"],
-    &["option", "impl", "transpose"],
-    &["option", "impl", "unzip"],
-    &["option", "impl", "xor"],
-    &["option", "impl", "zip"],
-    &["option", "impl", "zip_with"],
-    &["option", "impl", "unwrap_or"],
-    &["option", "impl", "unwrap_or_default"],
-    &["option", "impl", "unwrap_or_else"],
-    // Result
-    &["result", "impl", "and"],
-    &["result", "impl", "and_then"],
-    &["result", "impl", "as_ref"],
-    &["result", "impl", "err"],
-    &["result", "impl", "flatten"],
-    &["result", "impl", "into_err"],
-    &["result", "impl", "into_ok"],
-    &["result", "impl", "is_err"],
-    &["result", "impl", "is_err_and"],
-    &["result", "impl", "is_ok"],
-    &["result", "impl", "is_ok_and"],
-    &["result", "impl", "map"],
-    &["result", "impl", "map_err"],
-    &["result", "impl", "map_or"],
-    &["result", "impl", "map_or_else"],
-    &["result", "impl", "ok"],
-    &["result", "impl", "or"],
-    &["result", "impl", "or_else"],
-    &["result", "impl", "transpose"],
-    &["result", "impl", "unwrap_or"],
-    &["result", "impl", "unwrap_or_default"],
-    &["result", "impl", "unwrap_or_else"],
-];
+const IMPL: &str = "impl";
+
+static STD_FUNCTIONS: Lazy<Trie> = Lazy::new(|| {
+    let std_func: &[&[&str]] = &[
+        &["default", "Default", "default"],
+        &["ops", "function", "Fn", "call"],
+        &["ops", "function", "FnOnce", "call_once"],
+        // Option
+        &["option", IMPL, "and"],
+        &["option", IMPL, "and_then"],
+        &["option", IMPL, "as_ref"],
+        &["option", IMPL, "filter"],
+        &["option", IMPL, "flatten"],
+        &["option", IMPL, "is_none"],
+        &["option", IMPL, "is_some"],
+        &["option", IMPL, "map"],
+        &["option", IMPL, "map_or"],
+        &["option", IMPL, "map_or_else"],
+        &["option", IMPL, "or"],
+        &["option", IMPL, "or_else"],
+        &["option", IMPL, "transpose"],
+        &["option", IMPL, "unzip"],
+        &["option", IMPL, "xor"],
+        &["option", IMPL, "zip"],
+        &["option", IMPL, "zip_with"],
+        &["option", IMPL, "unwrap_or"],
+        &["option", IMPL, "unwrap_or_default"],
+        &["option", IMPL, "unwrap_or_else"],
+        // Result
+        &["result", IMPL, "and"],
+        &["result", IMPL, "and_then"],
+        &["result", IMPL, "as_ref"],
+        &["result", IMPL, "err"],
+        &["result", IMPL, "flatten"],
+        &["result", IMPL, "into_err"],
+        &["result", IMPL, "into_ok"],
+        &["result", IMPL, "is_err"],
+        &["result", IMPL, "is_err_and"],
+        &["result", IMPL, "is_ok"],
+        &["result", IMPL, "is_ok_and"],
+        &["result", IMPL, "map"],
+        &["result", IMPL, "map_err"],
+        &["result", IMPL, "map_or"],
+        &["result", IMPL, "map_or_else"],
+        &["result", IMPL, "ok"],
+        &["result", IMPL, "or"],
+        &["result", IMPL, "or_else"],
+        &["result", IMPL, "transpose"],
+        &["result", IMPL, "unwrap_or"],
+        &["result", IMPL, "unwrap_or_default"],
+        &["result", IMPL, "unwrap_or_else"],
+    ];
+
+    let mut trie = Trie::new();
+    for path in std_func {
+        trie.add(path);
+    }
+
+    trie
+});
+
+enum SymOrStr {
+    Sym(RustSymbol),
+    Str(&'static str),
+}
+
+impl AsRef<str> for SymOrStr {
+    fn as_ref(&self) -> &str {
+        match self {
+            Self::Sym(sym) => sym.as_str(),
+            Self::Str(s) => s,
+        }
+    }
+}
+
+fn def_path_data(def_path_data: &DefPathData) -> Option<SymOrStr> {
+    match &def_path_data {
+        DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => Some(SymOrStr::Sym(*sym)),
+        DefPathData::Impl => Some(SymOrStr::Str(IMPL)),
+        _ => None,
+    }
+}
 
 fn def_path_eq(def_path: &DefPath, items: &[&'static str]) -> bool {
     let mut def_path = def_path.data.iter();
@@ -80,12 +115,9 @@ fn def_path_eq(def_path: &DefPath, items: &[&'static str]) -> bool {
         let item = items.next();
 
         let is_matched = match (def_path, item) {
-            (Some(def_path), Some(item)) => match &def_path.data {
-                DefPathData::TypeNs(sym) | DefPathData::ValueNs(sym) => {
-                    sym.as_str() == *item
-                }
-                DefPathData::Impl => *item == "impl",
-                _ => false,
+            (Some(def_path), Some(item)) => match def_path_data(&def_path.data) {
+                Some(data) => data.as_ref() == *item,
+                None => false,
             },
             (Some(_), None) | (None, Some(_)) => false,
             (None, None) => {
@@ -179,12 +211,12 @@ impl<'tcx> Compiler<'tcx> {
             debug!("is_std_call: fn_did = {fn_did:?}");
             let def_path = &self.tcx.def_path(fn_did);
 
-            // TODO: use aho-corasick for searching
-            for std_func in STD_FUNCTIONS {
-                if def_path_eq(def_path, std_func) {
-                    return true;
-                }
-            }
+            return STD_FUNCTIONS.find(
+                def_path
+                    .data
+                    .iter()
+                    .filter_map(|def_path| def_path_data(&def_path.data)),
+            );
         }
 
         false

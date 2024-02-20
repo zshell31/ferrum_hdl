@@ -25,6 +25,7 @@ fhdl_blackbox = { path = "../fhdl_blackbox" }
 fhdl_cli = { path = "../fhdl_cli" }
 fhdl_netlist = { path = "../fhdl_netlist" }
 itertools = { workspace = true }
+once_cell = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = "1.0"

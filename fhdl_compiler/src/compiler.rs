@@ -8,6 +8,7 @@ pub mod item_ty;
 pub mod mir;
 pub mod switch;
 mod sym_ident;
+mod trie;
 
 use std::{
     env,

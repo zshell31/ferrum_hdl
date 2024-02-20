@@ -10,7 +10,7 @@ use super::Run;
 use crate::{compiler::CompilerArgs, Env};
 
 #[derive(Debug, Args)]
-pub struct GenArgs {
+pub struct SynthArgs {
     /// Space or comma separated list of features to activate
     #[arg(short = 'F', long, value_delimiter = ' ', value_delimiter = ',', num_args = 1..)]
     features: Option<Vec<String>>,
@@ -34,7 +34,7 @@ const CARGO_dev: &[(&str, &str)] = &[
     ("CARGO_PROFILE_DEV_INCREMENTAL", "true"),
 ];
 
-impl GenArgs {
+impl SynthArgs {
     fn set_cargo_profile(cmd: &mut Command) {
         for (key, val) in CARGO_dev {
             cmd.env(*key, *val);
@@ -42,7 +42,7 @@ impl GenArgs {
     }
 }
 
-impl Run for GenArgs {
+impl Run for SynthArgs {
     fn run(&self, env: &Env) -> anyhow::Result<()> {
         let metadata = MetadataCommand::new()
             .no_deps()

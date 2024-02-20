@@ -1,14 +1,14 @@
 use clap::Subcommand;
 
-use self::gen::GenArgs;
+use self::synth::SynthArgs;
 use crate::Env;
 
-mod gen;
+mod synth;
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Generate a verilog file
-    Gen(GenArgs),
+    /// Synthesize a verilog file
+    Synth(SynthArgs),
 }
 
 pub trait Run {
@@ -18,7 +18,7 @@ pub trait Run {
 impl Commands {
     pub fn run(&self, env: &Env) -> anyhow::Result<()> {
         match self {
-            Self::Gen(args) => args.run(env),
+            Self::Synth(args) => args.run(env),
         }
     }
 }

@@ -1,4 +1,4 @@
-use fhdl_blackbox::{BlackboxKind, BlackboxTy};
+use fhdl_common::{BlackboxKind, BlackboxTy, SynthAttrs};
 use rustc_ast::{
     token::{Lit, LitKind, Token, TokenKind},
     tokenstream::TokenTree,
@@ -12,11 +12,6 @@ const FHDL_TOOL: &str = "fhdl_tool";
 const SYNTH_ATTR: &str = "synth";
 const BLACKBOX_ATTR: &str = "blackbox";
 const BLACKBOX_TY_ATTR: &str = "blackbox_ty";
-
-#[derive(Debug)]
-pub struct Synth {
-    pub inlined: bool,
-}
 
 impl<'tcx> Compiler<'tcx> {
     pub fn find_fhdl_tool_attr<T>(
@@ -85,27 +80,48 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
-    pub fn find_synth(&self, def_id: DefId) -> Option<Synth> {
+    pub fn find_synth(&self, def_id: DefId) -> Option<SynthAttrs> {
         self.find_fhdl_tool_attr(SYNTH_ATTR, def_id, |args| {
-            let mut inlined = false;
+            let mut inline = false;
+
             if let AttrArgs::Delimited(DelimArgs { tokens, .. }) = args {
                 for token in tokens.trees() {
-                    if let TokenTree::Token(
-                        Token {
-                            kind: TokenKind::Ident(symbol, ..),
-                            ..
-                        },
-                        _,
-                    ) = token
-                    {
-                        if symbol.as_str() == "inline" {
-                            inlined = true;
+                    match token {
+                        TokenTree::Token(
+                            Token {
+                                kind: TokenKind::Ident(symbol, ..),
+                                ..
+                            },
+                            _,
+                        ) => {
+                            if symbol.as_str() == "inline" {
+                                inline = true;
+                            }
                         }
+                        TokenTree::Token(
+                            Token {
+                                kind:
+                                    TokenKind::Literal(Lit {
+                                        kind: LitKind::Str,
+                                        symbol: attrs,
+                                        ..
+                                    }),
+                                ..
+                            },
+                            _,
+                        ) => {
+                            let attrs = attrs.as_str().replace("\\\"", "\"");
+                            return Some(serde_json::from_str(attrs.as_str()).unwrap());
+                        }
+                        _ => {}
                     }
                 }
             }
 
-            Some(Synth { inlined })
+            Some(SynthAttrs {
+                inline,
+                ..Default::default()
+            })
         })
     }
 

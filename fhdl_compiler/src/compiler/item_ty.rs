@@ -4,7 +4,7 @@ use std::{
 };
 
 use ferrum_hdl::const_functions::{clog2, clog2_len};
-use fhdl_blackbox::BlackboxTy;
+use fhdl_common::BlackboxTy;
 use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;

@@ -6,6 +6,7 @@ pub mod func;
 pub mod item;
 pub mod item_ty;
 pub mod mir;
+mod pins;
 pub mod switch;
 mod sym_ident;
 mod trie;
@@ -21,8 +22,8 @@ use std::{
 
 use bumpalo::Bump;
 pub use context::Context;
-use fhdl_blackbox::BlackboxKind;
 use fhdl_cli::CompilerArgs;
+use fhdl_common::{BlackboxKind, NonEmptyStr};
 use fhdl_netlist::{
     backend::Verilog,
     net_list::{ModuleId, NetList, NodeOutId},
@@ -43,7 +44,9 @@ use rustc_middle::{
 use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
 pub use sym_ident::SymIdent;
 
-use self::{item_ty::ItemTy, mir::DefIdOrPromoted, switch::SwitchBlocks};
+use self::{
+    item_ty::ItemTy, mir::DefIdOrPromoted, pins::PinConstraints, switch::SwitchBlocks,
+};
 use crate::error::{Error, SpanError};
 
 pub struct CompilerCallbacks {
@@ -186,6 +189,7 @@ pub struct Compiler<'tcx> {
     switch_meta: FxHashMap<DefId, SwitchBlocks>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
+    pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -208,25 +212,27 @@ impl<'tcx> Compiler<'tcx> {
             switch_meta: Default::default(),
             item_ty: Default::default(),
             file_names: Default::default(),
+            pin_constr: Default::default(),
         }
     }
 
     pub fn generate(&mut self) {
-        if let Err(e) = self.generate_inner() {
+        if let Err(e) = self.synth_inner() {
             self.emit_err(e);
         }
     }
 
-    fn generate_inner(&mut self) -> Result<(), Error> {
+    fn synth_inner(&mut self) -> Result<(), Error> {
         let crate_name = self.tcx.crate_name(LOCAL_CRATE);
 
-        let dir = env::var("CARGO_MANIFEST_DIR").unwrap();
+        let root_dir = &env::var("CARGO_MANIFEST_DIR").unwrap();
+        let root_dir = StdPath::new(&root_dir);
         let name = "top_module";
 
-        let path = StdPath::new(&dir).join("generated").join("verilog");
-        fs::create_dir_all(&path)?;
+        let synth_path = root_dir.join("synth").join("verilog");
+        fs::create_dir_all(&synth_path)?;
 
-        let mut path = path.join(name);
+        let mut path = synth_path.join(name);
         path.set_extension("v");
 
         self.print_message(
@@ -264,10 +270,17 @@ impl<'tcx> Compiler<'tcx> {
             Some(&format!("in {:.2}s", elapsed.elapsed().as_secs_f32())),
         )?;
 
+        if !self.pin_constr.is_empty() {
+            let constr_path = root_dir.join("constraints");
+            fs::create_dir_all(&constr_path)?;
+
+            self.write_pin_constraints(constr_path)?;
+        }
+
         Ok(())
     }
 
-    fn print_message(
+    pub fn print_message(
         &self,
         status: &dyn Display,
         message: Option<&dyn Display>,

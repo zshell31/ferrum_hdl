@@ -443,7 +443,8 @@ impl NetList {
         module.add_output(node_out_id.into());
     }
 
-    pub fn is_input(&self, node_id: NodeId) -> bool {
+    pub fn is_input(&self, node_out_id: NodeOutId) -> bool {
+        let node_id = node_out_id.node_id();
         let mod_id = node_id.module_id();
         let module = &self.modules[mod_id];
         module.is_input(node_id.into()) && self.nodes[node_id].is_input()

@@ -1,13 +1,18 @@
-use std::iter;
+use std::{
+    fmt::{self, Display},
+    iter,
+    ops::Deref,
+};
 
-use darling::FromAttributes;
+use darling::{ast::NestedMeta, FromAttributes, FromMeta};
 use either::Either;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    punctuated::Punctuated, token::Comma, Attribute, Expr, ExprLit, Generics,
-    ImplGenerics, Lit, Meta, MetaNameValue, PredicateType, Type, TypeArray, TypeGenerics,
-    TypeParam, TypePath, TypeTuple, WherePredicate,
+    parse::Parser, punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute,
+    Expr, ExprLit, ExprParen, ExprTuple, Generics, ImplGenerics, Lit, Meta,
+    MetaNameValue, PredicateType, Type, TypeArray, TypeGenerics, TypeParam, TypePath,
+    TypeTuple, WherePredicate,
 };
 
 #[derive(Debug)]
@@ -114,5 +119,83 @@ impl FromAttributes for Bounds {
             }
         }
         Ok(Bounds(bounds))
+    }
+}
+
+pub trait MetaExt: FromMeta + Sized {
+    fn from_tuple(tuple: &ExprTuple) -> darling::Result<Self> {
+        let parser = Punctuated::<NestedMeta, Comma>::parse_terminated;
+        let items = parser
+            .parse(tuple.elems.to_token_stream().into())?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        Self::from_list(&items)
+    }
+
+    fn from_paren(paren: &ExprParen) -> darling::Result<Self> {
+        let parser = Punctuated::<NestedMeta, Comma>::parse_terminated;
+        let items = parser
+            .parse(paren.expr.to_token_stream().into())?
+            .into_iter()
+            .collect::<Vec<_>>();
+
+        Self::from_list(&items)
+    }
+}
+
+impl<T: FromMeta + Sized> MetaExt for T {}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SpannedValue<T> {
+    value: T,
+    span: Span,
+}
+
+impl<T> SpannedValue<T> {
+    pub fn new(value: T, span: Span) -> Self {
+        Self { value, span }
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn into_inner(self) -> T {
+        self.value
+    }
+}
+
+impl<T: Display> Display for SpannedValue<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl<T: Default> Default for SpannedValue<T> {
+    fn default() -> Self {
+        Self::new(Default::default(), Span::call_site())
+    }
+}
+
+impl<T> Deref for SpannedValue<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
+}
+
+impl<T: FromMeta> FromMeta for SpannedValue<T> {
+    fn from_meta(item: &Meta) -> darling::Result<Self> {
+        let value = T::from_meta(item).map_err(|e| e.with_span(item))?;
+
+        let span = match item {
+            Meta::Path(path) => path.span(),
+            Meta::List(list) => list.tokens.span(),
+            Meta::NameValue(nv) => nv.value.span(),
+        };
+
+        Ok(Self::new(value, span))
     }
 }

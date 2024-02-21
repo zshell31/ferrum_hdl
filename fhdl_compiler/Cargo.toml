@@ -21,8 +21,8 @@ anyhow = { workspace = true }
 bumpalo = { workspace = true, features = ["collections", "allocator_api"] }
 either = { workspace = true }
 ferrum_hdl = { path = "../" }
-fhdl_blackbox = { path = "../fhdl_blackbox" }
 fhdl_cli = { path = "../fhdl_cli" }
+fhdl_common = { path = "../fhdl_common" }
 fhdl_netlist = { path = "../fhdl_netlist" }
 itertools = { workspace = true }
 once_cell = { workspace = true }

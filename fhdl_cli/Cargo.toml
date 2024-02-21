@@ -15,3 +15,4 @@ fhdl_netlist = { path = "../fhdl_netlist" }
 rustc_version = "0.4.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
+tracing = { workspace = true }

@@ -32,7 +32,7 @@ pub struct Module {
     pub name: Symbol,
     pub is_top: bool,
     pub skip: bool,
-    pub is_inlined: bool,
+    pub inline: bool,
     pub only_inputs: bool,
     span: Option<Rc<String>>,
     module_id: ModuleId,
@@ -53,7 +53,7 @@ impl Module {
             list: Default::default(),
             inputs: Default::default(),
             outputs: Default::default(),
-            is_inlined: false,
+            inline: false,
         }
     }
 
@@ -215,7 +215,7 @@ impl Module {
             module_id.idx(),
             self.name,
             self.skip,
-            self.is_inlined,
+            self.inline,
             self.head(),
             self.tail(),
             self.last_idx()

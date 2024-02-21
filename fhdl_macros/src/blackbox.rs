@@ -1,4 +1,4 @@
-use fhdl_blackbox::{BlackboxKind, BlackboxTy};
+use fhdl_common::{BlackboxKind, BlackboxTy};
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
 use syn::parse::{Parse, ParseStream};

@@ -6,7 +6,7 @@ pub mod cast;
 pub mod index;
 pub mod signal;
 
-use fhdl_blackbox::BlackboxKind;
+use fhdl_common::BlackboxKind;
 use fhdl_netlist::node::BinOp;
 use rustc_hir::def_id::DefId;
 use rustc_span::Span;

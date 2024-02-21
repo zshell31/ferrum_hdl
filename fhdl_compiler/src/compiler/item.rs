@@ -47,6 +47,10 @@ impl<'tcx> Group<'tcx> {
         self.0.borrow().len()
     }
 
+    fn nodes(&self) -> usize {
+        self.0.borrow().iter().map(|item| item.nodes()).sum()
+    }
+
     #[inline]
     fn by_idx(&self, idx: usize) -> Item<'tcx> {
         self.0.borrow()[idx].clone()
@@ -138,6 +142,13 @@ impl<'tcx> ItemKind<'tcx> {
             Self::Group(group) => Self::Group(group.deep_clone()),
         }
     }
+
+    fn nodes(&self) -> usize {
+        match self {
+            Self::Node(_) => 1,
+            Self::Group(group) => group.nodes(),
+        }
+    }
 }
 
 impl<'tcx> From<NodeOutId> for ItemKind<'tcx> {
@@ -156,6 +167,7 @@ impl<'tcx> From<Group<'tcx>> for ItemKind<'tcx> {
 pub struct Item<'tcx> {
     pub ty: ItemTy<'tcx>,
     pub kind: ItemKind<'tcx>,
+    pub nodes: usize,
 }
 
 pub enum ItemIter<'tcx> {
@@ -194,10 +206,14 @@ impl<'tcx> Iterator for ItemIter<'tcx> {
 impl<'tcx> Item<'tcx> {
     #[inline]
     pub fn new(ty: ItemTy<'tcx>, kind: impl Into<ItemKind<'tcx>>) -> Self {
-        Self {
-            ty,
-            kind: kind.into(),
-        }
+        let kind = kind.into();
+        let nodes = kind.nodes();
+
+        Self { ty, kind, nodes }
+    }
+
+    pub fn nodes(&self) -> usize {
+        self.nodes
     }
 
     pub fn node_out_id(&self) -> NodeOutId {

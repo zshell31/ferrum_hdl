@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     blackbox::bin_op::BinOp,
-    compiler::cons_::scalar_to_u128,
+    compiler::{cons_::scalar_to_u128, pins::Idents},
     error::{Error, SpanError, SpanErrorKind},
 };
 
@@ -86,10 +86,17 @@ impl<'tcx> Compiler<'tcx> {
 
             let mut module_sym = self.module_name(fn_did);
 
-            let (mir, is_inlined) = match def_id_or_promoted {
+            let mut synth_attrs = None;
+            let (mir, inline) = match def_id_or_promoted {
                 DefIdOrPromoted::DefId(fn_did, instance_def) => {
                     let mir = self.tcx.instance_mir(instance_def);
-                    (mir, self.is_inlined(fn_did))
+                    synth_attrs = self.find_synth(fn_did);
+                    let inline = synth_attrs
+                        .as_ref()
+                        .map(|synth_attrs| synth_attrs.inline)
+                        .unwrap_or_default();
+
+                    (mir, inline)
                 }
                 DefIdOrPromoted::Promoted(fn_did, promoted) => {
                     let promoted_mir = self.tcx.promoted_mir(fn_did);
@@ -110,8 +117,8 @@ impl<'tcx> Compiler<'tcx> {
             let mod_span = self.span_to_string(span, fn_did);
             self.netlist.add_mod_span(module_id, mod_span);
 
-            if is_inlined {
-                self.netlist[module_id].is_inlined = true;
+            if !top_module && inline {
+                self.netlist[module_id].inline = true;
             }
 
             let mut ctx = Context::new(fn_did, fn_generics, module_id, mir);
@@ -161,6 +168,24 @@ impl<'tcx> Compiler<'tcx> {
 
             let output = ctx.locals.get_mut(RETURN_PLACE);
             self.visit_fn_output(ctx.module_id, output);
+
+            if top_module {
+                if let Some(synth_attrs) = &synth_attrs {
+                    if !synth_attrs.constr.is_empty() {
+                        let idents = Idents::from_debug_info(mir);
+                        let inputs_and_outputs =
+                            inputs.iter().map(|input| input.nodes()).sum::<usize>()
+                                + output.nodes();
+
+                        self.add_pin_constraints(
+                            &synth_attrs.constr,
+                            &idents,
+                            inputs_and_outputs,
+                            &ctx,
+                        )?;
+                    }
+                }
+            }
 
             self.evaluated_modules.insert(mono_item, module_id);
 
@@ -782,7 +807,7 @@ impl<'tcx> Compiler<'tcx> {
             let module_id =
                 self.visit_fn((instance_did, instance.def).into(), instance.args, false)?;
             if is_std_call {
-                self.netlist[module_id].is_inlined = true;
+                self.netlist[module_id].inline = true;
             }
             let module = self.instantiate_module(module_id, inputs.iter(), ctx);
             let span = self.span_to_string(span, ctx.fn_did);
@@ -868,7 +893,7 @@ impl<'tcx> Compiler<'tcx> {
         let module_id = self.visit_fn(fn_did.into(), fn_generics, false)?;
 
         let module = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
-            self.netlist[module_id].is_inlined = true;
+            self.netlist[module_id].inline = true;
             self.instantiate_module(
                 module_id,
                 iter::once(closure).chain(inputs.iter()),

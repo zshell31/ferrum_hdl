@@ -48,7 +48,7 @@ impl<'n> Verilog<'n> {
         if can_skip && (out.skip || out.inject) {
             return;
         }
-        let is_input = self.netlist.is_input(node_id);
+        let is_input = self.netlist.is_input(node_out_id);
         let is_output = self.netlist.is_output(node_out_id);
         let sym = out.sym.unwrap();
 

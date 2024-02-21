@@ -1,6 +1,6 @@
 use std::{
     env,
-    process::{Command, Stdio},
+    process::{self, Command, Stdio},
 };
 
 use cargo_metadata::MetadataCommand;
@@ -54,6 +54,21 @@ impl Run for SynthArgs {
             .target_directory
             .join(format!("fhdl-{}", &env.toolchain));
 
+        #[cfg(target_os = "linux")]
+        {
+            use tracing::error;
+
+            let root_dir = metadata.workspace_root;
+
+            let src_lib = root_dir.join("src").join("lib.rs");
+            if src_lib.is_file() {
+                let mut cmd = Command::new("touch");
+                if let Err(e) = cmd.arg(src_lib).status() {
+                    error!("failed to run touch: {e}");
+                }
+            }
+        }
+
         let fhdl_args = serde_json::to_string(&self.compiler_opts)?;
 
         let driver = env::current_exe()
@@ -97,9 +112,10 @@ impl Run for SynthArgs {
             .arg("--target-dir")
             .arg(&target_dir);
 
-        cmd.status()
+        let status = cmd
+            .status()
             .map_err(|e| anyhow::anyhow!("failed to run xargo: {e}"))?;
 
-        Ok(())
+        process::exit(status.code().unwrap_or_default())
     }
 }

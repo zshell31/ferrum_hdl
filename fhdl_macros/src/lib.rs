@@ -3,6 +3,7 @@ mod bitpack;
 mod blackbox;
 mod impl_tuple_traits;
 mod signal_value;
+mod synth;
 mod utils;
 
 use bitpack::BitPackDerive;
@@ -13,6 +14,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use signal_value::SignalValueDerive;
 use syn::{parse_macro_input, DeriveInput};
+use synth::SynthAttrs;
 
 use self::blackbox::{BlackboxAttr, BlackboxTyAttr};
 
@@ -41,12 +43,17 @@ pub fn blackbox_ty(attr: TokenStream, input: TokenStream) -> TokenStream {
 }
 
 #[proc_macro_attribute]
-pub fn synth(attr: TokenStream, input: TokenStream) -> TokenStream {
-    let attr: TokenStream2 = attr.into();
+pub fn synth(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    let attrs = match SynthAttrs::parse(attrs, &input) {
+        Ok(attrs) => attrs,
+        Err(e) => {
+            return TokenStream::from(e.to_compile_error());
+        }
+    };
     let input: TokenStream2 = input.into();
 
     quote! {
-        #[fhdl_tool::synth(#attr)]
+        #attrs
         #input
     }
     .into()

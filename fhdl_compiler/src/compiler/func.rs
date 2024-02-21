@@ -1,4 +1,4 @@
-use fhdl_blackbox::BlackboxKind;
+use fhdl_common::BlackboxKind;
 use fhdl_netlist::{
     net_list::{ModuleId, NodeId},
     node::{Input, ModInst},
@@ -191,19 +191,9 @@ impl<'tcx> Compiler<'tcx> {
             })
             .unwrap();
 
-        // self.assign_names_to_item(ident, &item, force)
-
         ctx.locals.place(local, item.clone());
 
         item
-    }
-
-    pub fn is_inlined(&self, did: DefId) -> bool {
-        self.tcx
-            .get_attrs(did, RustSymbol::intern("inline"))
-            .next()
-            .is_some()
-            || self.find_synth(did).map(|synth| synth.inlined).is_some()
     }
 
     pub fn is_std_call(&self, fn_did: DefId) -> bool {

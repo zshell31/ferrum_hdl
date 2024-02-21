@@ -1,7 +1,0 @@
-[package]
-name = "fhdl_blackbox"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-strum = { workspace = true }

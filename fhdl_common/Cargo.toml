@@ -1,0 +1,11 @@
+[package]
+name = "fhdl_common"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+darling = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+smallvec = { workspace = true }
+strum = { workspace = true }

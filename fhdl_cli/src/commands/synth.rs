@@ -93,6 +93,7 @@ impl Run for SynthArgs {
 
         let args = [
             "--lib",
+            if features.is_some() { "--features" } else { "" },
             features.as_deref().unwrap_or_default(),
             match self.verbose {
                 0 => "",

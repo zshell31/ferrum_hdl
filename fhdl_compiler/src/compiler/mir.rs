@@ -7,7 +7,7 @@ use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BorrowKind, Const, ConstOperand, ConstValue, Local,
         LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue, StatementKind,
-        TerminatorKind, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
+        TerminatorKind, UnOp, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
     },
     ty::{GenericArgsRef, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd, TyKind},
 };
@@ -21,7 +21,7 @@ use super::{
     Compiler, Context, MonoItem,
 };
 use crate::{
-    blackbox::bin_op::BinOp,
+    blackbox::{bin_op::BinOp, un_op::BitNot},
     compiler::{cons_::scalar_to_u128, pins::Idents},
     error::{Error, SpanError, SpanErrorKind},
 };
@@ -333,6 +333,11 @@ impl<'tcx> Compiler<'tcx> {
                             let bin_op = BinOp::try_from_op(*bin_op, span)?;
 
                             Some(bin_op.bin_op(self, &lhs, &rhs, output_ty, ctx, span)?)
+                        }
+                        Rvalue::UnaryOp(UnOp::Not, operand) => {
+                            let expr = self.visit_operand(operand, ctx, span)?;
+
+                            Some(BitNot::not(self, &expr, ctx)?)
                         }
                         Rvalue::Repeat(op, const_) => {
                             let rvalue_ty =

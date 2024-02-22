@@ -271,7 +271,7 @@ impl<'tcx> Compiler<'tcx> {
         )?;
 
         if !self.pin_constr.is_empty() {
-            let constr_path = root_dir.join("constraints");
+            let constr_path = root_dir.join("constr");
             fs::create_dir_all(&constr_path)?;
 
             self.write_pin_constraints(constr_path)?;
@@ -342,13 +342,6 @@ impl<'tcx> Compiler<'tcx> {
                 .add_and_get_out(mod_id, ZeroExtend::new(to_ty, from, None))
         }
     }
-
-    // pub fn set_mod_name(&mut self, closure: &Item<'tcx>, name: &str) {
-    //     if let Some(closure) = self.find_closure_opt(closure.ty) {
-    //         let mod_id = closure.closure_id;
-    //         self.netlist[mod_id].name = Symbol::new(name);
-    //     }
-    // }
 
     pub fn span_to_string(&mut self, span: Span, fn_did: DefId) -> Option<String> {
         if self.crates.is_std(fn_did) {

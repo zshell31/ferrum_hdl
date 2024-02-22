@@ -5,6 +5,7 @@ pub mod bitvec;
 pub mod cast;
 pub mod index;
 pub mod signal;
+pub mod un_op;
 
 use fhdl_common::BlackboxKind;
 use fhdl_netlist::node::BinOp;
@@ -111,6 +112,7 @@ eval_expr!(
     OpRem => bin_op::BinOp(BinOp::Rem),
     OpShl => bin_op::BinOp(BinOp::Shl),
     OpShr => bin_op::BinOp(BinOp::Shr),
+    OpNot => un_op::BitNot,
 
     CastFrom => cast::Conversion,
 

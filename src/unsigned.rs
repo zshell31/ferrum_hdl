@@ -373,6 +373,7 @@ where
 impl<const N: usize> Not for Unsigned<N> {
     type Output = Self;
 
+    #[blackbox(OpNot)]
     fn not(self) -> Self::Output {
         Self(self.0.not())
     }

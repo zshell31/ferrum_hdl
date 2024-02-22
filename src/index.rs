@@ -10,10 +10,11 @@ use crate::{
     unsigned::Unsigned,
 };
 
-#[inline]
 pub const fn idx_constr(n: usize) -> usize {
     assert!(n > 0);
-    clog2_len(n)
+    let len = clog2_len(n);
+    assert!(len <= usize::BITS as usize);
+    len
 }
 
 #[derive(Clone)]

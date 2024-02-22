@@ -31,6 +31,7 @@ pub enum BlackboxKind {
     OpRem,
     OpShl,
     OpShr,
+    OpNot,
 
     CastFrom,
 

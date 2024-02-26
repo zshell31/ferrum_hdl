@@ -95,8 +95,7 @@ impl<'n> Transform<'n> {
                                 *should_be_inlined = true;
                             }
                             InlineMod::Auto => {
-                                *should_be_inlined = self.netlist[module_id].inline
-                                    || node.inputs_len() == 0
+                                *should_be_inlined = node.inputs_len() == 0
                                     || self.netlist[module_id].only_inputs
                                     || self.netlist[module_id].len()
                                         <= NODES_LIMIT_TO_INLINE

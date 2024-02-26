@@ -148,7 +148,7 @@ impl<'n> Visitor for SetNames<'n> {
         while let Some(node_id) = self.netlist.next(&mut cursor) {
             let node = &self.netlist[node_id];
 
-            if !(node.skip || (self.netlist.nodes_injected && node.inject)) {
+            if !node.skip {
                 self.set_node_out_names(node_id);
             }
         }

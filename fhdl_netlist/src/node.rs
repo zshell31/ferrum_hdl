@@ -52,7 +52,6 @@ pub struct NodeOutput {
     pub kind: NetKind,
     pub sym: Option<Symbol>,
     pub skip: bool,
-    pub inject: bool,
 }
 
 impl NodeOutput {
@@ -70,7 +69,6 @@ impl NodeOutput {
             kind,
             sym,
             skip: true,
-            inject: false,
         }
     }
 }
@@ -85,7 +83,6 @@ impl NodeOutput {
 #[derive(Debug, Clone)]
 pub struct Node {
     pub skip: bool,
-    pub inject: bool,
     span: Option<Rc<String>>,
     kind: Box<NodeKind>,
     module_id: ModuleId,
@@ -123,7 +120,6 @@ impl Node {
         Self {
             kind: Box::new(kind),
             skip: true,
-            inject: false,
             span: None,
             module_id,
             node_idx,
@@ -297,11 +293,10 @@ impl Node {
 
     pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
         println!(
-            "{}{} (skip: {}, inject: {}, prev: {:?}, next: {:?}, span: {})",
+            "{}{} (skip: {}, prev: {:?}, next: {:?}, span: {})",
             prefix,
             self.kind.dump(),
             self.skip,
-            self.inject,
             self.prev.map(|node_id| node_id.idx()),
             self.next.map(|node_id| node_id.idx()),
             self.span.as_ref().map(|s| s.as_str()).unwrap_or_default()

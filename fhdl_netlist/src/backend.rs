@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -45,7 +43,7 @@ impl<'n> Verilog<'n> {
     fn write_local(&mut self, node_out_id: NodeOutId, can_skip: bool) {
         let node_id = node_out_id.node_id();
         let out = &self.netlist[node_out_id];
-        if can_skip && (out.skip || out.inject) {
+        if can_skip && out.skip {
             return;
         }
         let is_input = self.netlist.is_input(node_out_id);
@@ -64,7 +62,7 @@ impl<'n> Verilog<'n> {
                 let init = self.netlist[node_id].input_by_ind(*init);
                 let node = &self.netlist[init.node_id()];
                 if node.is_const() {
-                    let init = self.inject_input(*init, false);
+                    let init = self.netlist[*init].sym.unwrap();
 
                     self.buffer.write_tab();
                     self.buffer.write_str("initial begin\n");
@@ -80,122 +78,6 @@ impl<'n> Verilog<'n> {
             }
 
             self.locals.insert(sym);
-        }
-    }
-
-    fn write_local_for_injected(&mut self, node_out_id: NodeOutId) {
-        let inject = self.netlist[node_out_id].inject;
-
-        self.write_local(node_out_id, true);
-        for input in self.netlist[node_out_id.node_id()].inputs() {
-            if inject {
-                self.write_local_for_injected(*input);
-            }
-        }
-    }
-
-    fn inject_input(
-        &mut self,
-        node_out_id: NodeOutId,
-        nested_expr: bool,
-    ) -> Cow<'static, str> {
-        self.write_local_for_injected(node_out_id);
-        let node_out = &self.netlist[node_out_id];
-        let node_id = node_out_id.node_id();
-        let node = &self.netlist[node_id];
-
-        let should_be_injected = node.inject || node_out.inject;
-
-        if should_be_injected {
-            let mut buf = Buffer::new();
-            self.inject_node(
-                node_out_id.node_id().module_id(),
-                node_out_id,
-                &mut buf,
-                nested_expr,
-            );
-            return buf.buffer.into();
-        }
-
-        self.netlist[node_out_id].sym.unwrap().as_str().into()
-    }
-
-    fn inject_node(
-        &self,
-        module_id: ModuleId,
-        node_out_id: NodeOutId,
-        expr: &mut Buffer,
-        nested_expr: bool,
-    ) {
-        use NodeKindWithId as NodeKind;
-
-        let node_out = &self.netlist[node_out_id];
-        let node_id = node_out_id.node_id();
-        let node = &self.netlist[node_id];
-
-        if !node_out.inject {
-            let mod_id = node_id.module_id();
-            if module_id != mod_id {
-                panic!("Cannot inject non-injectable nodes from other modules (current: {}, other module: {})", 
-                    self.netlist[module_id].name, self.netlist[node_id.module_id()].name);
-            }
-            expr.write_str(self.netlist[node_out_id].sym.unwrap().as_str());
-            return;
-        }
-
-        if let Some(const_val) = self.netlist.to_const(node_out_id) {
-            expr.write_fmt(format_args!("{const_val}"));
-            return;
-        }
-
-        match node.kind() {
-            NodeKind::BitNot(bit_not) => {
-                expr.write_str("~");
-                self.inject_node(module_id, bit_not.input(), expr, true);
-            }
-            NodeKind::Not(not) => {
-                expr.write_str("!");
-                self.inject_node(module_id, not.input(), expr, true);
-            }
-            NodeKind::BinOp(bin_op) => {
-                if nested_expr {
-                    expr.write_str("( ");
-                }
-
-                self.inject_node(module_id, bin_op.left(), expr, true);
-                expr.write_fmt(format_args!(" {} ", bin_op.bin_op()));
-                self.inject_node(module_id, bin_op.right(), expr, true);
-
-                if nested_expr {
-                    expr.write_str(" )");
-                }
-            }
-            NodeKind::Splitter(splitter) => {
-                let out_id = node_out_id.idx();
-                let outputs = splitter.outputs();
-
-                self.inject_node(module_id, splitter.input(), expr, true);
-                let width = outputs[out_id].width();
-
-                let mut indices = splitter.eval_indices(self.netlist);
-                let (_, index) = indices.nth(out_id).unwrap();
-                let start: Cow<'_, str> = index.to_string().into();
-
-                if width == 1 {
-                    expr.write_fmt(format_args!("[{start}]"));
-                } else {
-                    expr.write_fmt(format_args!("[{start} +: {width}]"));
-                }
-            }
-            NodeKind::Merger(merger) => {
-                expr.write_str("{ ");
-                let inputs = merger.inputs();
-                expr.intersperse(", ", inputs, |expr, input| {
-                    self.inject_node(module_id, input, expr, false);
-                });
-                expr.write_str(" }");
-            }
-            _ => {}
         }
     }
 
@@ -329,7 +211,7 @@ impl<'n> Visitor for Verilog<'n> {
         let mut cursor = self.netlist.mod_cursor(mod_id);
         while let Some(node_id) = self.netlist.next(&mut cursor) {
             let node = &self.netlist[node_id];
-            if node.skip || node.inject {
+            if node.skip {
                 continue;
             }
 
@@ -350,7 +232,7 @@ impl<'n> Visitor for Verilog<'n> {
         match node.kind() {
             NodeKind::Input(_) => {}
             NodeKind::Pass(pass) => {
-                let input = self.inject_input(pass.input(), false);
+                let input = self.netlist[pass.input()].sym.unwrap();
                 let output = pass.output().sym.unwrap();
 
                 self.buffer
@@ -382,7 +264,7 @@ impl<'n> Visitor for Verilog<'n> {
                     if self.netlist[mod_input].skip {
                         continue;
                     }
-                    let input_sym = self.inject_input(input, false);
+                    let input_sym = self.netlist[input].sym.unwrap();
                     let mod_input_sym = self.netlist[mod_input].sym.unwrap();
 
                     self.buffer.write_tab();
@@ -461,12 +343,12 @@ impl<'n> Visitor for Verilog<'n> {
                     }
                 }
 
-                let input = self.inject_input(input, false);
+                let input = self.netlist[input].sym.unwrap();
 
                 let indices = splitter.eval_indices(self.netlist);
 
                 for (output, index) in indices {
-                    if !(output.skip || output.inject) {
+                    if !output.skip {
                         write_out(&mut self.buffer, output, input.as_ref(), index);
                     }
                 }
@@ -481,7 +363,7 @@ impl<'n> Visitor for Verilog<'n> {
 
                     let inputs = merger.inputs();
                     let inputs = inputs
-                        .map(|input| self.inject_input(input, false))
+                        .map(|input| self.netlist[input].sym.unwrap())
                         .collect::<SmallVec<[_; 8]>>();
 
                     self.buffer.push_tab();
@@ -497,7 +379,7 @@ impl<'n> Visitor for Verilog<'n> {
                 }
             }
             NodeKind::ZeroExtend(zero_extend) => {
-                let input = self.inject_input(zero_extend.input(), false);
+                let input = self.netlist[zero_extend.input()].sym.unwrap();
                 let output = zero_extend.output().sym.unwrap();
 
                 self.buffer
@@ -508,7 +390,7 @@ impl<'n> Visitor for Verilog<'n> {
                     let MuxInputs { sel, variants } = case.inputs();
 
                     let output = case.output().sym.unwrap();
-                    let sel_sym = self.inject_input(sel, false);
+                    let sel_sym = self.netlist[sel].sym.unwrap();
 
                     self.buffer.write_tab();
                     self.buffer.write_fmt(format_args!("always @(*) begin\n"));
@@ -523,7 +405,7 @@ impl<'n> Visitor for Verilog<'n> {
                     for (case, input) in variants {
                         match case {
                             Case::Val(case) => {
-                                let input = self.inject_input(input, false);
+                                let input = self.netlist[input].sym.unwrap();
 
                                 self.buffer.write_tab();
                                 self.buffer.write_fmt(format_args!(
@@ -531,7 +413,7 @@ impl<'n> Visitor for Verilog<'n> {
                                 ));
                             }
                             Case::Default => {
-                                let default = self.inject_input(input, false);
+                                let default = self.netlist[input].sym.unwrap();
 
                                 self.buffer.write_tab();
                                 self.buffer.write_fmt(format_args!(
@@ -553,22 +435,22 @@ impl<'n> Visitor for Verilog<'n> {
                 }
             }
             NodeKind::BitNot(bit_not) => {
-                let input = self.inject_input(bit_not.input(), true);
+                let input = self.netlist[bit_not.input()].sym.unwrap();
                 let output = bit_not.output().sym.unwrap();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = ~{input};",));
             }
             NodeKind::Not(not) => {
-                let input = self.inject_input(not.input(), true);
+                let input = self.netlist[not.input()].sym.unwrap();
                 let output = not.output().sym.unwrap();
 
                 self.buffer
                     .write_template(format_args!("assign {output} = !{input};",));
             }
             NodeKind::BinOp(bin_op) => {
-                let left = self.inject_input(bin_op.left(), true);
-                let right = self.inject_input(bin_op.right(), true);
+                let left = self.netlist[bin_op.left()].sym.unwrap();
+                let right = self.netlist[bin_op.right()].sym.unwrap();
                 let output = bin_op.output().sym.unwrap();
                 let bin_op = bin_op.bin_op();
 
@@ -585,15 +467,15 @@ impl<'n> Visitor for Verilog<'n> {
                     rst_val,
                     data,
                 } = dff.inputs();
-                let clk = self.inject_input(clk, false);
-                let rst = self.inject_input(rst, false);
-                let data = self.inject_input(data, false);
-                let rst_val = self.inject_input(rst_val, false);
+                let clk = self.netlist[clk].sym.unwrap();
+                let rst = self.netlist[rst].sym.unwrap();
+                let data = self.netlist[data].sym.unwrap();
+                let rst_val = self.netlist[rst_val].sym.unwrap();
                 let output = dff.output().sym.unwrap();
 
                 match en {
                     Some(en) => {
-                        let en = self.inject_input(en, false);
+                        let en = self.netlist[en].sym.unwrap();
 
                         self.buffer.write_template(format_args!(
                             "

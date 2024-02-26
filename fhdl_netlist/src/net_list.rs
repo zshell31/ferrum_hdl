@@ -36,7 +36,6 @@ pub struct NetList {
     nodes: Nodes,
     links: FxHashMap<NodeOutId, FxHashSet<NodeInIdx>>,
     cfg: NetListCfg,
-    pub(crate) nodes_injected: bool,
 }
 
 impl !Sync for NetList {}
@@ -148,7 +147,6 @@ impl NetList {
             nodes: Default::default(),
             links: Default::default(),
             cfg,
-            nodes_injected: false,
         }
     }
 

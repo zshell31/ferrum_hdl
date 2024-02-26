@@ -1,12 +1,10 @@
 mod assert;
 mod dump;
-mod inject_nodes;
 mod reachability;
 mod set_names;
 mod transform;
 
 use dump::Dump;
-use inject_nodes::InjectNodes;
 use reachability::Reachability;
 use set_names::SetNames;
 use transform::Transform;
@@ -47,10 +45,6 @@ impl NetList {
 
     pub fn set_names(&mut self) {
         SetNames::new(self).run();
-    }
-
-    pub fn inject_nodes(&mut self) {
-        InjectNodes::new(self).run();
     }
 
     pub fn dump(&self, skip: bool) {

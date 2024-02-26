@@ -32,7 +32,6 @@ pub struct Module {
     pub name: Symbol,
     pub is_top: bool,
     pub skip: bool,
-    pub inline: bool,
     pub only_inputs: bool,
     span: Option<Rc<String>>,
     module_id: ModuleId,
@@ -53,7 +52,6 @@ impl Module {
             list: Default::default(),
             inputs: Default::default(),
             outputs: Default::default(),
-            inline: false,
         }
     }
 
@@ -211,11 +209,10 @@ impl Module {
 
     pub(crate) fn dump(&self, module_id: ModuleId) {
         println!(
-            "{} {} (skip {}, is_inlined {}, head {:?}, tail {:?}, last_idx: {})",
+            "{} {} (skip {}, head {:?}, tail {:?}, last_idx: {})",
             module_id.idx(),
             self.name,
             self.skip,
-            self.inline,
             self.head(),
             self.tail(),
             self.last_idx()

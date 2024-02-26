@@ -255,7 +255,6 @@ impl<'tcx> Compiler<'tcx> {
         self.netlist.assert();
         self.netlist.transform();
         self.netlist.reachability();
-        self.netlist.inject_nodes();
         self.netlist.set_names();
 
         if self.args.dump_netlist {

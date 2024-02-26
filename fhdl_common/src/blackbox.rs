@@ -39,12 +39,12 @@ pub enum BlackboxKind {
 
     SignalAndThen,
     SignalApply2,
-    SignalLift,
     SignalMap,
     SignalReg,
     SignalRegEn,
     SignalValue,
     SignalWatch,
+    IntoSignal,
 
     StdClone,
 }

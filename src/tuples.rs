@@ -3,9 +3,10 @@ use fhdl_macros::impl_tuple_traits;
 use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
     bitvec::BitVec,
+    bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
     domain::ClockDomain,
-    signal::{Bundle, Signal, SignalValue, Unbundle},
+    signal::{Signal, SignalValue},
     simulation::{SimCtx, Simulate},
 };
 

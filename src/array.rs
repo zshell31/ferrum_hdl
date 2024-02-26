@@ -4,11 +4,12 @@ use smallvec::SmallVec;
 use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
     bitvec::BitVec,
+    bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
     const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
     index::{idx_constr, Idx},
-    signal::{Bundle, Signal, SignalValue, Unbundle},
+    signal::{Signal, SignalValue},
     simulation::{SimCtx, Simulate},
 };
 

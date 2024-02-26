@@ -16,18 +16,12 @@ use crate::{
     signal::SignalValue,
 };
 
-pub fn unsigned_value(val: u128, width: u128) -> u128 {
-    if width == 128 {
-        val
-    } else {
-        val & ((1 << width) - 1)
-    }
-}
-
 #[derive(Debug, Clone, Eq)]
 #[blackbox_ty(Unsigned)]
 #[repr(transparent)]
 pub struct Unsigned<const N: usize>(BitVec<N>);
+
+pub type U<const N: usize> = Unsigned<N>;
 
 impl<const N: usize> PartialEq for Unsigned<N> {
     #[blackbox(OpEq)]

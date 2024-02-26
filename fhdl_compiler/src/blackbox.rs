@@ -120,12 +120,12 @@ eval_expr!(
 
     SignalAndThen => signal::SignalAndThen,
     SignalApply2 => signal::SignalApply2,
-    SignalLift => PassReceiver,
     SignalMap => signal::SignalMap,
     SignalReg => signal::SignalReg { has_en: false },
     SignalRegEn => signal::SignalReg { has_en: true },
     SignalValue => PassReceiver,
     SignalWatch => PassReceiver,
+    IntoSignal => PassReceiver,
 
     StdClone => PassReceiver
 );

@@ -9,13 +9,6 @@ use crate::{
 
 pub type Bit = bool;
 
-pub const fn bit_value(value: bool) -> u128 {
-    match value {
-        false => 0,
-        true => 1,
-    }
-}
-
 impl SignalValue for Bit {}
 
 impl BitSize for Bit {

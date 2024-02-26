@@ -9,6 +9,7 @@ pub mod array;
 pub mod bit;
 pub mod bitpack;
 pub mod bitvec;
+pub mod bundle;
 pub mod cast;
 pub mod const_functions;
 pub mod const_helpers;
@@ -29,6 +30,7 @@ pub mod prelude {
         bit::Bit,
         bitpack::BitPack,
         bitvec::BitVec,
+        bundle::{Bundle, Unbundle},
         cast::{Cast, CastFrom},
         const_helpers::{Assert, ConstConstr, IsTrue},
         domain::{
@@ -37,10 +39,9 @@ pub mod prelude {
         },
         index::{idx_constr, Idx},
         signal::{
-            reg, reg0, reg_en, reg_en0, Bundle, Enable, Reset, Signal, SignalValue,
-            Unbundle,
+            reg, reg0, reg_en, reg_en0, Enable, IntoSignal, Reset, Signal, SignalValue,
         },
         simulation::Simulate,
-        unsigned::Unsigned,
+        unsigned::{Unsigned, U},
     };
 }

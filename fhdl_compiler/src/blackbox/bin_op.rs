@@ -1,4 +1,4 @@
-use fhdl_netlist::node::{BinOp as NodeBinOp, BinOpNode};
+use fhdl_netlist::node::{BinOp as NodeBinOp, BinOpArgs, BinOpNode};
 use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_span::Span;
 
@@ -39,11 +39,10 @@ impl BinOp {
 
     pub fn bin_op<'tcx>(
         &self,
-        compiler: &mut Compiler<'tcx>,
         lhs: &Item<'tcx>,
         rhs: &Item<'tcx>,
         output_ty: ItemTy<'tcx>,
-        ctx: &Context<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let _ = lhs.ty.node_ty();
@@ -53,21 +52,24 @@ impl BinOp {
         let mut subnode =
             |expr: &Item<'tcx>, expr_ty: ItemTy<'tcx>| -> Result<Item<'tcx>, Error> {
                 Ok(if should_convert_operands && expr_ty != output_ty {
-                    Conversion::convert(compiler, ctx.module_id, expr, output_ty, span)?
+                    Conversion::convert(expr, output_ty, ctx, span)?
                 } else {
                     expr.clone()
                 })
             };
 
-        let lhs = subnode(lhs, lhs.ty)?.node_out_id();
-        let rhs = subnode(rhs, rhs.ty)?.node_out_id();
+        let lhs = subnode(lhs, lhs.ty)?.port();
+        let rhs = subnode(rhs, rhs.ty)?.port();
 
         Ok(Item::new(
             output_ty,
-            compiler.netlist.add_and_get_out(
-                ctx.module_id,
-                BinOpNode::new(output_ty.node_ty(), self.0, lhs, rhs, None),
-            ),
+            ctx.module.add_and_get_port::<_, BinOpNode>(BinOpArgs {
+                ty: output_ty.node_ty(),
+                bin_op: self.0,
+                lhs,
+                rhs,
+                sym: None,
+            }),
         ))
     }
 }
@@ -75,7 +77,7 @@ impl BinOp {
 impl<'tcx> EvalExpr<'tcx> for BinOp {
     fn eval(
         &self,
-        compiler: &mut Compiler<'tcx>,
+        _: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
         output_ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
@@ -83,6 +85,6 @@ impl<'tcx> EvalExpr<'tcx> for BinOp {
     ) -> Result<Item<'tcx>, Error> {
         args!(args as lhs, rhs);
 
-        self.bin_op(compiler, lhs, rhs, output_ty, ctx, span)
+        self.bin_op(lhs, rhs, output_ty, ctx, span)
     }
 }

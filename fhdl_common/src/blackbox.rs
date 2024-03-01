@@ -41,7 +41,6 @@ pub enum BlackboxKind {
     SignalApply2,
     SignalMap,
     SignalReg,
-    SignalRegEn,
     SignalValue,
     SignalWatch,
     IntoSignal,

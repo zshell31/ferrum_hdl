@@ -1,48 +1,45 @@
 use std::fmt::Debug;
 
-use super::{IsNode, NodeKind, NodeOutput};
-use crate::{net_list::NodeOutIdx, node_ty::NodeTy, symbol::Symbol};
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Input {
-    output: NodeOutput,
+    pub output: [NodeOutput; 1],
 }
 
-impl Input {
-    pub fn new(ty: NodeTy, sym: Option<Symbol>) -> Self {
-        Self {
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+pub struct InputArgs {
+    pub ty: NodeTy,
+    pub sym: Option<Symbol>,
 }
 
-impl From<Input> for NodeKind {
-    fn from(node: Input) -> Self {
-        Self::Input(node)
+impl MakeNode<InputArgs> for Input {
+    fn make(module: &mut Module, args: InputArgs) -> crate::netlist::NodeId {
+        let InputArgs { ty, sym } = args;
+        module.add_node(Input {
+            output: [NodeOutput::wire(ty, sym)],
+        })
     }
 }
 
 impl IsNode for Input {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &[]
+    #[inline]
+    fn in_count(&self) -> usize {
+        0
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut []
+    #[inline]
+    fn out_count(&self) -> usize {
+        1
     }
 
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
 }

@@ -1,7 +1,9 @@
+use std::iter;
+
 use fhdl_common::BlackboxKind;
 use fhdl_netlist::{
-    net_list::{ModuleId, NodeId},
-    node::{Input, ModInst},
+    netlist::{Module, ModuleId, NodeId},
+    node::{Input, InputArgs, ModInst, ModInstArgs},
 };
 use once_cell::sync::Lazy;
 use rustc_hir::{
@@ -16,7 +18,11 @@ use rustc_middle::{
 use rustc_span::{Span, Symbol as RustSymbol};
 use tracing::debug;
 
-use super::{item::Item, item_ty::ItemTy, Compiler, Context};
+use super::{
+    item::{Item, ModuleExt},
+    item_ty::ItemTy,
+    Compiler, Context,
+};
 use crate::{
     blackbox::Blackbox,
     compiler::trie::Trie,
@@ -188,18 +194,18 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     pub fn make_input(
-        &mut self,
+        &self,
         local: Local,
         ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
     ) -> Item<'tcx> {
-        let item = self
-            .mk_item_from_ty(ty, ctx, &|compiler, node_ty, ctx| {
-                Some(
-                    compiler
-                        .netlist
-                        .add_and_get_out(ctx.module_id, Input::new(node_ty, None)),
-                )
+        let item = ctx
+            .module
+            .mk_item_from_ty(ty, &|node_ty, module| {
+                Some(module.add_and_get_port::<_, Input>(InputArgs {
+                    ty: node_ty,
+                    sym: None,
+                }))
             })
             .unwrap();
 
@@ -224,25 +230,31 @@ impl<'tcx> Compiler<'tcx> {
         false
     }
 
-    pub fn instantiate_module<'a>(
-        &mut self,
+    pub fn instantiate_module<'a, I>(
+        &self,
+        module: &mut Module,
         instant_mod_id: ModuleId,
-        inputs: impl IntoIterator<Item = &'a Item<'tcx>> + 'a,
-        ctx: &Context<'tcx>,
+        inputs: I,
     ) -> NodeId
     where
         'tcx: 'a,
+        I: IntoIterator<Item = &'a Item<'tcx>> + 'a,
+        I::IntoIter: DoubleEndedIterator,
     {
         let inputs = inputs.into_iter().flat_map(|input| input.iter());
 
-        let outputs = self
+        let instant_mod = self
             .netlist
-            .mod_outputs(instant_mod_id)
-            .map(|node_out_id| (self.netlist[node_out_id].ty, None));
+            .module(instant_mod_id)
+            .map(|module| module.borrow());
 
-        let mod_inst = ModInst::new(None, instant_mod_id, inputs, outputs);
+        let mod_inst = ModInstArgs {
+            module: instant_mod.as_deref(),
+            inputs,
+            outputs: iter::repeat(None).take(instant_mod.out_count()),
+        };
 
-        self.netlist.add(ctx.module_id, mod_inst)
+        module.add::<_, ModInst>(mod_inst)
     }
 
     pub fn find_blackbox(

@@ -1,15 +1,17 @@
-use fhdl_netlist::node::DFF;
+use fhdl_netlist::node::{DFFArgs, TyOrData, DFF};
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
 use crate::{
-    compiler::{item::Item, item_ty::ItemTy, Compiler, Context, SymIdent},
+    compiler::{
+        item::{Item, ModuleExt},
+        item_ty::ItemTy,
+        Compiler, Context, SymIdent,
+    },
     error::Error,
 };
 
-pub struct SignalReg {
-    pub has_en: bool,
-}
+pub struct SignalReg;
 
 impl<'tcx> EvalExpr<'tcx> for SignalReg {
     fn eval(
@@ -20,43 +22,28 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        let mod_id = ctx.module_id;
+        args!(args as clk, rst, en, init, comb);
 
-        let (clk, rst, en, rst_val, comb) = match self.has_en {
-            true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),
-            false => (&args[0], &args[1], None, &args[2], &args[3]),
-        };
+        let clk = clk.port();
+        let rst = ctx.module.to_bitvec(rst).port();
+        let en = ctx.module.to_bitvec(en).port();
+        let init = ctx.module.to_bitvec(init).port();
 
-        let clk = clk.node_out_id();
-        let rst = compiler.to_bitvec(mod_id, rst).node_out_id();
-        let en = en.map(|en| compiler.to_bitvec(mod_id, en).node_out_id());
-        let rst_val = compiler.to_bitvec(mod_id, rst_val).node_out_id();
-
-        let dff = compiler.netlist.add(
-            ctx.module_id,
-            DFF::new(
-                output_ty.to_bitvec(),
-                clk,
-                rst,
-                en,
-                rst_val,
-                None,
-                if en.is_none() {
-                    SymIdent::Dff
-                } else {
-                    SymIdent::DffEn
-                },
-            ),
-        );
-
-        let dff_out = compiler.netlist[dff].only_one_out().node_out_id();
-        let dff_out = compiler.from_bitvec(ctx.module_id, dff_out, output_ty);
+        let dff = ctx.module.add_and_get_port::<_, DFF>(DFFArgs {
+            clk,
+            rst: Some(rst),
+            en: Some(en),
+            init,
+            data: TyOrData::Ty(output_ty.to_bitvec()),
+            sym: SymIdent::Reg.into(),
+        });
+        let dff_out = ctx.module.from_bitvec(dff, output_ty);
 
         let comb = compiler.instantiate_closure(comb, &[dff_out.clone()], ctx, span)?;
         assert_eq!(comb.ty, output_ty);
 
-        let comb_out = compiler.to_bitvec(ctx.module_id, &comb).node_out_id();
-        compiler.netlist.set_dff_data(dff, comb_out);
+        let comb_out = ctx.module.to_bitvec(&comb).port();
+        DFF::set_data(&mut ctx.module, dff.node, comb_out);
 
         Ok(dff_out)
     }

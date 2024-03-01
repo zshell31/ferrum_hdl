@@ -1,7 +1,9 @@
+use std::iter;
+
 use fhdl_netlist::{
     const_val::ConstVal,
-    net_list::{ModuleId, NodeOutId},
-    node::{Mux, Splitter},
+    netlist::{IterMut, Module, Port},
+    node::{Mux, MuxArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
 };
 use rustc_span::Span;
@@ -9,7 +11,7 @@ use rustc_span::Span;
 use super::{args, EvalExpr};
 use crate::{
     compiler::{
-        item::Item,
+        item::{Item, ModuleExt},
         item_ty::{ItemTy, ItemTyKind},
         Compiler, Context, SymIdent,
     },
@@ -21,48 +23,41 @@ pub struct Index;
 impl<'tcx> EvalExpr<'tcx> for Index {
     fn eval(
         &self,
-        compiler: &mut Compiler<'tcx>,
+        _: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
         output_ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as rec, idx);
-        let mod_id = ctx.module_id;
 
         let item = match rec.ty.kind() {
             ItemTyKind::Node(NodeTy::Unsigned(count)) if *count != 0 => {
-                match compiler.to_const(idx) {
+                match ctx.module.to_const_val(idx) {
                     Some(idx) => {
-                        let rec = compiler.to_bitvec(mod_id, rec).node_out_id();
-                        Item::new(output_ty, bit(compiler, mod_id, rec, idx))
+                        let rec = ctx.module.to_bitvec(rec).port();
+                        Item::new(output_ty, bit(&mut ctx.module, rec, idx))
                     }
                     None => {
-                        let rec = compiler.to_bitvec(mod_id, rec).node_out_id();
+                        let rec = ctx.module.to_bitvec(rec).port();
                         make_mux(
-                            compiler,
-                            mod_id,
+                            &mut ctx.module,
                             idx,
                             *count,
                             output_ty,
-                            |compiler, case| bit(compiler, mod_id, rec, case),
+                            |module, case| bit(module, rec, case),
                         )
                     }
                 }
             }
-            ItemTyKind::Array(array_ty) => match compiler.to_const(idx) {
+            ItemTyKind::Array(array_ty) => match ctx.module.to_const_val(idx) {
                 Some(idx) => rec.by_idx(idx as usize).clone(),
                 None => make_mux(
-                    compiler,
-                    mod_id,
+                    &mut ctx.module,
                     idx,
                     array_ty.count(),
                     array_ty.ty(),
-                    |compiler, case| {
-                        compiler
-                            .to_bitvec(mod_id, &rec.by_idx(case as usize))
-                            .node_out_id()
-                    },
+                    |module, case| module.to_bitvec(&rec.by_idx(case as usize)).port(),
                 ),
             },
             _ => {
@@ -74,41 +69,37 @@ impl<'tcx> EvalExpr<'tcx> for Index {
     }
 }
 
-fn bit(
-    compiler: &mut Compiler<'_>,
-    mod_id: ModuleId,
-    value: NodeOutId,
-    bit: u128,
-) -> NodeOutId {
-    compiler.netlist.add_and_get_out(
-        mod_id,
-        Splitter::new(value, [(NodeTy::Bit, SymIdent::Bit)], Some(bit), false),
-    )
+fn bit(module: &mut Module, value: Port, bit: u128) -> Port {
+    module.add_and_get_port::<_, Splitter>(SplitterArgs {
+        input: value,
+        outputs: iter::once((NodeTy::Bit, SymIdent::Bit.into())),
+        start: Some(bit),
+        rev: false,
+    })
 }
 
 fn make_mux<'tcx>(
-    compiler: &mut Compiler<'tcx>,
-    mod_id: ModuleId,
+    module: &mut Module,
     idx: &Item<'tcx>,
     count: u128,
     output_ty: ItemTy<'tcx>,
-    mk_variant: impl Fn(&mut Compiler<'tcx>, u128) -> NodeOutId,
+    mk_variant: impl Fn(&mut Module, u128) -> Port,
 ) -> Item<'tcx> {
-    let sel = compiler.to_bitvec(mod_id, idx).node_out_id();
+    let sel = module.to_bitvec(idx).port();
     let sel_width = idx.width();
 
-    let mux = Mux::new(
-        output_ty.to_bitvec(),
+    let mux = MuxArgs {
+        ty: output_ty.to_bitvec(),
         sel,
-        (0 .. count).map(|case| {
-            let variant = mk_variant(compiler, case);
+        variants: IterMut::new(0 .. count, |module, case| {
+            let variant = mk_variant(module, case);
 
             (ConstVal::new(case, sel_width), variant)
         }),
-        None,
-        SymIdent::Mux,
-    );
-    let mux = compiler.netlist.add_and_get_out(mod_id, mux);
+        default: None,
+        sym: SymIdent::Mux.into(),
+    };
+    let mux = module.add_and_get_port::<_, Mux>(mux);
 
-    compiler.from_bitvec(mod_id, mux, output_ty)
+    module.from_bitvec(mux, output_ty)
 }

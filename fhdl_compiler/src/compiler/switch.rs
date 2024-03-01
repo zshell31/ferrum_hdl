@@ -6,7 +6,8 @@ use std::{
 
 use fhdl_netlist::{
     const_val::ConstVal,
-    node::{Mux, Splitter},
+    netlist::IterMut,
+    node::{Mux, MuxArgs, Splitter, SplitterArgs},
 };
 use petgraph::{
     algo::dominators::{simple_fast, Dominators},
@@ -30,7 +31,7 @@ use rustc_span::Span;
 use tracing::{debug, error, instrument};
 
 use super::{
-    item::{Group, Item},
+    item::{Group, Item, ModuleExt},
     item_ty::ItemTyKind,
     Compiler, Context, SymIdent,
 };
@@ -109,7 +110,7 @@ impl<'tcx> Switch<'tcx> {
         self.branches.len() + self.otherwise.is_some() as usize
     }
 
-    pub fn branches(&self) -> impl Iterator<Item = &Branch<'tcx>> {
+    pub fn branches(&self) -> impl DoubleEndedIterator<Item = &Branch<'tcx>> {
         assert_eq!(self.targets, self.branches_len());
         self.branches.iter().map(|branch| {
             assert_eq!(self.locals.len(), branch.locals.len());
@@ -428,39 +429,36 @@ impl<'tcx> Compiler<'tcx> {
 
             let switch = ctx.pop_switch().unwrap();
 
-            let mod_id = ctx.module_id;
-
             let (discr, discr_width) = match switch.discr.ty.kind() {
                 ItemTyKind::Enum(enum_ty) => {
                     let discr_ty = enum_ty.discr_ty();
-                    let discr = self.to_bitvec(mod_id, &switch.discr);
+                    let discr = ctx.module.to_bitvec(&switch.discr);
 
                     (
                         Item::new(discr_ty, {
-                            let splitter = self.netlist.add_and_get_out(
-                                mod_id,
-                                Splitter::new(
-                                    discr.node_out_id(),
-                                    [(discr_ty.node_ty(), SymIdent::Discr)],
-                                    None,
-                                    true,
-                                ),
-                            );
+                            let splitter = SplitterArgs {
+                                input: discr.port(),
+                                outputs: iter::once((
+                                    discr_ty.node_ty(),
+                                    SymIdent::Discr.into(),
+                                )),
+                                start: None,
+                                rev: true,
+                            };
+                            let splitter =
+                                ctx.module.add_and_get_port::<_, Splitter>(splitter);
 
                             let span = self.span_to_string(span, ctx.fn_did);
-                            self.netlist.add_span(splitter, span);
+                            ctx.module.add_span(splitter.node, span);
 
                             splitter
                         }),
                         enum_ty.discr_width(),
                     )
                 }
-                _ => (
-                    self.to_bitvec(mod_id, &switch.discr),
-                    switch.discr.ty.width(),
-                ),
+                _ => (ctx.module.to_bitvec(&switch.discr), switch.discr.ty.width()),
             };
-            let discr = discr.node_out_id();
+            let discr = discr.port();
 
             let output_ty = Ty::new_tup_from_iter(
                 self.tcx,
@@ -471,27 +469,32 @@ impl<'tcx> Compiler<'tcx> {
             let default = switch.otherwise().map(|otherwise| {
                 let item = Item::new(output_ty, Group::new(otherwise.values().cloned()));
 
-                self.to_bitvec(mod_id, &item).node_out_id()
+                ctx.module.to_bitvec(&item).port()
             });
 
-            let inputs = switch.branches().map(|variant| {
+            let variants = IterMut::new(switch.branches(), |module, variant| {
                 let case = ConstVal::new(variant.discr, discr_width);
 
                 let item =
                     Item::new(output_ty, Group::new(variant.locals.values().cloned()));
-                let input = self.to_bitvec(mod_id, &item).node_out_id();
+                let input = module.to_bitvec(&item).port();
 
                 (case, input)
             });
 
-            let mux =
-                Mux::new(output_ty.to_bitvec(), discr, inputs, default, SymIdent::Mux);
-            let mux = self.netlist.add_and_get_out(mod_id, mux);
+            let mux = MuxArgs {
+                ty: output_ty.to_bitvec(),
+                sel: discr,
+                variants,
+                default,
+                sym: SymIdent::Mux.into(),
+            };
+            let mux = ctx.module.add_and_get_port::<_, Mux>(mux);
 
             let node_span = self.span_to_string(span, ctx.fn_did);
-            self.netlist.add_span(mux, node_span);
+            ctx.module.add_span(mux.node, node_span);
 
-            let mux = self.from_bitvec(mod_id, mux, output_ty);
+            let mux = ctx.module.from_bitvec(mux, output_ty);
 
             for (local, item) in switch.locals.iter().zip(&*mux.group().items()) {
                 self.assign_local(*local, item, ctx)?;

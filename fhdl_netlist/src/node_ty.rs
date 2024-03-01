@@ -16,7 +16,7 @@ pub enum NodeTy {
 impl Display for NodeTy {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: Cow<'_, str> = match self {
-            Self::Bit => "Bit".into(),
+            Self::Bit => "bit".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
             Self::BitVec(n) => format!("bitvec[{n}]").into(),
             Self::Clock => "clock".into(),

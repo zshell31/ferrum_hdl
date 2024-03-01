@@ -3,134 +3,134 @@ use smallvec::SmallVec;
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    net_list::{ModuleId, NetList, NodeCursor, NodeId},
-    node::{BinOp, Case, Const, MultiConst, MuxInputs, NodeKind, NodeKindWithId},
-    visitor::Visitor,
+    netlist::{Cursor, Module, ModuleId, NetList, NodeId, Port},
+    node::{
+        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
+        MuxInputs, NodeKind, TyOrData, DFF,
+    },
 };
 
 const NODES_LIMIT_TO_INLINE: usize = 10;
 
-pub struct Transform<'n> {
-    netlist: &'n mut NetList,
-}
+pub struct Transform {}
 
-impl<'n> Transform<'n> {
-    pub fn new(net_list: &'n mut NetList) -> Self {
-        Self { netlist: net_list }
+impl Transform {
+    pub fn new() -> Self {
+        Self {}
     }
 
-    pub fn run(&mut self) {
-        self.visit_modules();
+    pub fn run(mut self, netlist: &mut NetList) {
+        if let Some(top) = netlist.top {
+            self.visit_module(netlist, top);
+        }
+    }
+
+    fn visit_module(&mut self, netlist: &NetList, mod_id: ModuleId) {
+        let mut module = netlist.module(mod_id).map(|module| module.borrow_mut());
+        let mut nodes = module.nodes();
+
+        while let Some(node_id) = nodes.next(&module) {
+            if let Some(mod_inst) = module[node_id].mod_inst() {
+                let mod_id = mod_inst.mod_id;
+
+                // transform nodes of module before inlining module
+                self.visit_module(netlist, mod_id);
+            }
+
+            let should_be_inlined = self.transform(netlist, &mut module, node_id);
+
+            if should_be_inlined {
+                let node_id = netlist.inline_mod(module.as_deref_mut(), node_id);
+
+                if let Some(node_id) = node_id {
+                    nodes.set_next(node_id);
+                }
+            }
+        }
     }
 
     fn transform(
         &mut self,
+        netlist: &NetList,
+        module: &mut Module,
         node_id: NodeId,
-        cursor: &mut NodeCursor,
-    ) -> Option<NodeKind> {
-        if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
-            let module_id = mod_inst.module_id();
+    ) -> bool {
+        let node = module.node(node_id);
 
-            // transform nodes of module before inlining module
-            self.visit_module(module_id);
-        };
+        let mut inline = false;
+        match &*node.kind {
+            NodeKind::Pass(pass) => {
+                match module.to_const(node.with(pass).input(module)) {
+                    Some(const_val) => {
+                        let output = pass.output[0];
 
-        let mut should_be_inlined = false;
-        let res = self.transform_(node_id, &mut should_be_inlined);
-
-        if should_be_inlined {
-            let node_id = self.netlist.inline_mod(node_id);
-            cursor.set_node_id(node_id);
-        }
-
-        res
-    }
-
-    fn transform_(
-        &mut self,
-        node_id: NodeId,
-        should_be_inlined: &mut bool,
-    ) -> Option<NodeKind> {
-        use NodeKindWithId as NodeKind;
-
-        let node = &self.netlist[node_id];
-        match node.kind() {
-            NodeKind::Pass(pass) => match self.netlist.to_const(pass.input()) {
-                Some(const_val) => {
-                    let output = pass.output();
-                    Some(Const::new(output.ty, const_val.val(), output.sym).into())
-                }
-                None => {
-                    if !self.netlist.is_output(node.only_one_out().node_out_id()) {
-                        self.netlist.reconnect(node_id);
-                    }
-                    None
-                }
-            },
-            NodeKind::ModInst(mod_inst) => {
-                let module_id = mod_inst.module_id();
-
-                let values = self
-                    .netlist
-                    .mod_outputs(module_id)
-                    .map(|node_out_id| {
-                        self.netlist
-                            .to_const(node_out_id)
-                            .map(|const_val| const_val.val())
-                    })
-                    .collect::<Option<SmallVec<[_; 8]>>>();
-
-                match values {
-                    Some(values) => {
-                        let outputs = self
-                            .netlist
-                            .mod_outputs(module_id)
-                            .map(|node_out_id| self.netlist[node_out_id]);
-
-                        Some(MultiConst::new(values, outputs).into())
+                        module.replace::<_, Const>(node_id, ConstArgs {
+                            ty: output.ty,
+                            value: const_val.val(),
+                            sym: output.sym,
+                        });
                     }
                     None => {
-                        match self.netlist.cfg().inline_mod {
-                            InlineMod::All => {
-                                *should_be_inlined = true;
-                            }
-                            InlineMod::Auto => {
-                                *should_be_inlined = node.inputs_len() == 0
-                                    || self.netlist[module_id].only_inputs
-                                    || self.netlist[module_id].len()
-                                        <= NODES_LIMIT_TO_INLINE
-                                    || node.inputs().all(|input| {
-                                        self.netlist[input.node_id()].is_const()
-                                    });
-                            }
-                            InlineMod::None => {
-                                *should_be_inlined = false;
-                            }
-                        };
-
-                        None
+                        if !module.is_output(Port::new(node_id, 0)) {
+                            module.reconnect(node_id);
+                        }
                     }
                 }
             }
-            NodeKind::Not(not) => self.netlist.to_const(not.input()).map(|const_val| {
-                let const_val = !const_val;
-                let output = not.output();
-                Const::new(output.ty, const_val.val(), output.sym).into()
-            }),
+            NodeKind::ModInst(mod_inst) => {
+                let orig_module = netlist[mod_inst.mod_id].borrow();
+
+                if orig_module.has_const_outputs() {
+                    let const_args = orig_module.outputs().iter().map(|port| {
+                        let const_val = orig_module.to_const(*port).unwrap();
+                        let port = orig_module[*port];
+
+                        ConstArgs {
+                            ty: port.ty,
+                            value: const_val.val(),
+                            sym: port.sym,
+                        }
+                    });
+
+                    module.replace::<_, MultiConst>(node_id, const_args);
+                } else {
+                    match netlist.cfg().inline_mod {
+                        InlineMod::All => {
+                            inline = true;
+                        }
+                        InlineMod::Auto => {
+                            inline = orig_module.inline
+                                || module.in_count() == 0
+                                || module.out_count() == 0
+                                || module.node_count() <= NODES_LIMIT_TO_INLINE
+                                || module.node_has_const_inputs(node_id)
+                        }
+                        InlineMod::None => {
+                            inline = false;
+                        }
+                    };
+                }
+            }
             NodeKind::BitNot(bit_not) => {
-                self.netlist.to_const(bit_not.input()).map(|const_val| {
+                if let Some(const_val) = module.to_const(node.with(bit_not).input(module))
+                {
                     let const_val = !const_val;
-                    let output = bit_not.output();
-                    Const::new(output.ty, const_val.val(), output.sym).into()
-                })
+                    let output = bit_not.output[0];
+                    module.replace::<_, Const>(node_id, ConstArgs {
+                        ty: output.ty,
+                        value: const_val.val(),
+                        sym: output.sym,
+                    });
+                }
             }
 
-            NodeKind::BinOp(bin_op) => match (
-                self.netlist.to_const(bin_op.left()),
-                self.netlist.to_const(bin_op.right()),
-            ) {
-                (Some(left), Some(right)) => {
-                    let const_val = match bin_op.bin_op() {
+            NodeKind::BinOp(bin_op) => {
+                let BinOpInputs { lhs, rhs } = node.with(bin_op).inputs(module);
+
+                if let (Some(left), Some(right)) =
+                    (module.to_const(lhs), module.to_const(rhs))
+                {
+                    let const_val = match bin_op.bin_op {
                         BinOp::Add => left + right,
                         BinOp::Sub => left - right,
                         BinOp::Mul => left * right,
@@ -151,55 +151,61 @@ impl<'n> Transform<'n> {
                         BinOp::Lt => (left < right).into(),
                     };
 
-                    let output = bin_op.output();
-                    Some(Const::new(output.ty, const_val.val(), output.sym).into())
+                    let output = bin_op.output[0];
+
+                    module.replace::<_, Const>(node_id, ConstArgs {
+                        ty: output.ty,
+                        value: const_val.val(),
+                        sym: output.sym,
+                    });
                 }
-                _ => None,
-            },
+            }
             NodeKind::Splitter(splitter) => {
-                if splitter.pass_all_bits(self.netlist) {
-                    self.netlist.reconnect(node_id);
-                    None
+                let splitter = node.with(splitter);
+
+                if splitter.pass_all_bits(module) {
+                    module.reconnect(node_id);
                 } else {
-                    let indices = splitter.eval_indices(self.netlist);
-                    let input = self.netlist.to_const(splitter.input());
+                    let indices = splitter.eval_indices(module);
+                    let input = splitter.input(module);
+                    let input_val = module.to_const(input);
 
-                    if let Some(input) = input {
-                        let values = indices
-                            .map(|(output, index)| {
-                                ConstVal::new(input.val() >> index, output.width()).val()
+                    if let Some(input_val) = input_val {
+                        let input_val = input_val.val();
+                        let const_args = indices
+                            .map(|(index, output)| {
+                                let value =
+                                    ConstVal::new(input_val >> index, output.width())
+                                        .val();
+
+                                ConstArgs {
+                                    ty: output.ty,
+                                    value,
+                                    sym: output.sym,
+                                }
                             })
-                            .collect::<Vec<_>>();
+                            .collect::<SmallVec<[ConstArgs; 1]>>()
+                            .into_iter();
 
-                        Some(
-                            MultiConst::new(values, splitter.outputs().iter().copied())
-                                .into(),
-                        )
+                        module.replace::<_, MultiConst>(node_id, const_args);
                     } else {
                         drop(indices);
 
-                        let input = splitter.input();
+                        let input_id = splitter.input(module).node;
+                        let input = &module[input_id];
 
-                        let input_id = input.node_id();
-                        let input = &self.netlist[input_id];
-
-                        #[allow(clippy::single_match)]
-                        match input.kind() {
-                            NodeKind::Merger(merger) => {
-                                if splitter.rev() != merger.rev() // TODO: maybe it's unnecessary
-                                    && self.netlist.is_reversible(input_id, node_id)
-                                {
-                                    self.netlist.reconnect_from_to(input_id, node_id);
-                                }
+                        if let NodeKind::Merger(merger) = &*input.kind {
+                            if splitter.rev != merger.rev // TODO: maybe it's unnecessary
+                                    && module.is_reversible(input_id, node_id)
+                            {
+                                module
+                                    .reconnect_from_inputs_to_outputs(input_id, node_id);
                             }
-                            _ => {}
                         }
-
-                        None
                     }
                 }
             }
-            NodeKindWithId::Merger(merger) => {
+            NodeKind::Merger(merger) => {
                 // let sym = output.sym;
 
                 // if !*rev {
@@ -223,9 +229,8 @@ impl<'n> Transform<'n> {
                 // }
 
                 let mut val = Some(ConstVal::new(0, 0));
-                merger
-                    .inputs()
-                    .for_each(|input| match self.netlist.to_const(input) {
+                node.with(merger).inputs(module).for_each(|input| {
+                    match module.to_const(input) {
                         Some(new_val) => {
                             if let Some(val) = val.as_mut() {
                                 val.shift(new_val);
@@ -234,35 +239,46 @@ impl<'n> Transform<'n> {
                         None => {
                             val = None;
                         }
-                    });
+                    }
+                });
 
-                val.map(|const_val| {
-                    let output = merger.output();
-                    Const::new(output.ty, const_val.val(), output.sym).into()
-                })
+                if let Some(const_val) = val {
+                    let output = merger.output[0];
+                    module.replace::<_, Const>(node_id, ConstArgs {
+                        ty: output.ty,
+                        value: const_val.val(),
+                        sym: output.sym,
+                    });
+                }
             }
 
-            NodeKindWithId::ZeroExtend(zero_extend) => {
-                let output = zero_extend.output();
-                match self.netlist.to_const(zero_extend.input()) {
+            NodeKind::ZeroExtend(zero_extend) => {
+                let zero_extend = node.with(zero_extend);
+                let output = zero_extend.output[0];
+                let input = zero_extend.input(module);
+
+                match module.to_const(input) {
                     Some(const_val) => {
-                        Some(Const::new(output.ty, const_val.val(), output.sym).into())
+                        module.replace::<_, Const>(node_id, ConstArgs {
+                            ty: output.ty,
+                            value: const_val.val(),
+                            sym: output.sym,
+                        });
                     }
                     None => {
-                        if self.netlist[zero_extend.input()].width() == output.width() {
-                            self.netlist.reconnect(node_id);
+                        if module[input].width() == output.width() {
+                            module.reconnect(node_id);
                         }
-
-                        None
                     }
                 }
             }
 
-            NodeKind::Mux(node) => {
-                let MuxInputs { sel, variants } = node.inputs();
+            NodeKind::Mux(mux) => {
+                let mux = node.with(mux);
+                let MuxInputs { sel, cases } = mux.inputs(module);
 
-                if let Some(new_input) = self.netlist.to_const(sel).and_then(|sel| {
-                    for (case, input) in variants {
+                if let Some(new_port) = module.to_const(sel).and_then(|sel| {
+                    for (case, input) in cases {
                         match case {
                             Case::Val(case) => {
                                 if case == sel {
@@ -277,34 +293,61 @@ impl<'n> Transform<'n> {
 
                     None
                 }) {
-                    let out_id = self.netlist[node_id].only_one_out().node_out_id().idx();
-                    self.netlist
-                        .reconnect_input_by_ind(node_id, out_id, new_input);
+                    let old_port = Port::new(node_id, 0);
+                    module.reconnect_all_outgoing(old_port, new_port);
+                }
+            }
+
+            NodeKind::DFF(dff) => {
+                let dff = node.with(dff);
+                let DFFInputs {
+                    clk,
+                    mut rst,
+                    mut en,
+                    init,
+                    data,
+                } = dff.inputs(module);
+
+                let mut replace = false;
+
+                let mut true_rst = false;
+                if let Some(const_val) = rst.and_then(|rst| module.to_const(rst)) {
+                    if const_val.val() == 0 {
+                        rst = None;
+                        replace = true;
+                    } else {
+                        true_rst = true;
+                    }
                 }
 
-                None
+                let mut false_en = false;
+                if let Some(const_val) = en.and_then(|en| module.to_const(en)) {
+                    if const_val.val() > 0 {
+                        en = None;
+                        replace = true;
+                    } else {
+                        false_en = true;
+                    }
+                };
+
+                if replace {
+                    let sym = dff.output[0].sym;
+                    module.replace::<_, DFF>(node_id, DFFArgs {
+                        clk,
+                        rst,
+                        en,
+                        init,
+                        data: TyOrData::Data(data),
+                        sym,
+                    });
+                } else if true_rst || false_en {
+                    let old_port = Port::new(node_id, 0);
+                    module.reconnect_all_outgoing(old_port, init);
+                }
             }
-            _ => None,
-        }
-    }
-}
+            _ => {}
+        };
 
-impl<'n> Visitor for Transform<'n> {
-    fn visit_modules(&mut self) {
-        if let Some(top) = self.netlist.top_module() {
-            self.visit_module(top);
-        }
+        inline
     }
-
-    fn visit_module(&mut self, module_id: ModuleId) {
-        let mut cursor = self.netlist.mod_cursor(module_id);
-        while let Some(node_id) = self.netlist.next(&mut cursor) {
-            let new_node = self.transform(node_id, &mut cursor);
-            if let Some(new_node) = new_node {
-                self.netlist.replace(node_id, new_node);
-            }
-        }
-    }
-
-    fn visit_node(&mut self, _node_id: NodeId) {}
 }

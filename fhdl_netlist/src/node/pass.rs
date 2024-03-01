@@ -1,64 +1,54 @@
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    node_ty::NodeTy,
+    netlist::{Cursor, Module, NodeId, Port, WithId},
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Pass {
-    input: NodeOutIdx,
-    output: NodeOutput,
+    pub output: [NodeOutput; 1],
 }
 
-impl Pass {
-    pub fn new(ty: NodeTy, input: NodeOutId, sym: Option<Symbol>) -> Self {
-        Self {
-            input: input.into(),
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+#[derive(Debug)]
+pub struct PassArgs {
+    pub input: Port,
+    pub sym: Option<Symbol>,
 }
 
-impl WithId<ModuleId, &'_ Pass> {
-    pub fn input(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.input)
-    }
-}
+impl MakeNode<PassArgs> for Pass {
+    fn make(module: &mut Module, args: PassArgs) -> NodeId {
+        let ty = module[args.input].ty;
 
-impl From<Pass> for NodeKind {
-    fn from(node: Pass) -> Self {
-        Self::Pass(node)
+        let node_id = module.add_node(Pass {
+            output: [NodeOutput::wire(ty, args.sym)],
+        });
+
+        module.add_edge(args.input, Port::new(node_id, 0));
+
+        node_id
     }
 }
 
 impl IsNode for Pass {
-    type Inputs = NodeOutIdx;
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.input
+    #[inline]
+    fn in_count(&self) -> usize {
+        1
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.input
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let input = &net_list[node.input()];
-        assert_eq!(self.output.width(), input.width());
+impl WithId<NodeId, &'_ Pass> {
+    pub fn input(&self, module: &Module) -> Port {
+        let mut incoming = module.incoming(self.id);
+        incoming.next(module).unwrap()
     }
 }

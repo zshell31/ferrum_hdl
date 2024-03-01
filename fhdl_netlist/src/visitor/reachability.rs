@@ -1,84 +1,87 @@
+use std::collections::VecDeque;
+
+use either::Either;
 use rustc_hash::FxHashSet;
 
-use super::Visitor;
-use crate::{
-    net_list::{ModuleId, NetList, NodeId, NodeOutId},
-    node::NodeKindWithId,
-};
+use crate::netlist::{Cursor, Module, ModuleId, NetList, Port, WithId};
 
-pub struct Reachability<'n> {
-    netlist: &'n mut NetList,
-    node_out_ids: Vec<NodeOutId>,
-    modules: FxHashSet<ModuleId>,
+pub struct Reachability {
+    ports: Vec<Port>,
+    modules: VecDeque<ModuleId>,
+    handled: FxHashSet<ModuleId>,
 }
 
-impl<'n> Reachability<'n> {
-    pub fn new(net_list: &'n mut NetList) -> Self {
-        let mut modules = FxHashSet::default();
-        if let Some(top) = net_list.top_module() {
-            modules.insert(top);
-        }
-
+impl Reachability {
+    pub fn new() -> Self {
         Self {
-            netlist: net_list,
-            node_out_ids: Default::default(),
-            modules,
+            ports: Default::default(),
+            modules: Default::default(),
+            handled: Default::default(),
         }
     }
 
-    pub fn run(&mut self) {
-        self.visit_modules()
-    }
-}
+    pub fn run(mut self, netlist: &NetList) {
+        if let Some(top) = netlist.top {
+            self.modules.push_back(top);
+        }
 
-impl<'n> Visitor for Reachability<'n> {
-    fn visit_modules(&mut self) {
-        for module_id in self.netlist.modules() {
-            if self.modules.contains(&module_id) {
-                self.visit_module(module_id);
+        while let Some(module_id) = self.modules.pop_front() {
+            if !self.handled.contains(&module_id) {
+                let mut module = netlist[module_id].borrow_mut();
+                self.visit_module(&mut module);
+
+                self.handled.insert(module_id);
             }
         }
     }
 
-    fn visit_module(&mut self, module_id: ModuleId) {
-        self.node_out_ids.clear();
+    fn visit_module(&mut self, module: &mut Module) {
+        self.ports.clear();
+        self.ports.extend(module.outputs().iter().rev());
 
-        self.node_out_ids
-            .extend(self.netlist.mod_outputs(module_id));
-
-        while let Some(node_out_id) = self.node_out_ids.pop() {
-            let node_out = &self.netlist[node_out_id];
+        while let Some(port) = self.ports.pop() {
+            let node_out = &module[port];
             if !node_out.skip || node_out.ty.width() == 0 {
                 continue;
             }
 
-            let node_id = node_out_id.node_id();
-            if let NodeKindWithId::ModInst(mod_inst) = self.netlist[node_id].kind() {
-                if mod_inst.empty_ports() {
+            if let Some(mod_inst) = module[port.node].mod_inst() {
+                if !mod_inst.has_ports() {
                     continue;
+                }
+
+                self.modules.push_back(mod_inst.mod_id);
+            }
+
+            let mut exclude = None;
+            if let Some(dff) = module[port.node].dff() {
+                let dff = WithId::new(port.node, dff);
+                let inputs = dff.inputs(module);
+                let init = inputs.init;
+
+                if module.is_const(init)
+                    && module
+                        .outgoing(init)
+                        .into_iter(module)
+                        .all(|node| node == port.node)
+                {
+                    module[init].skip = true;
+                    module[init.node].skip = true;
+                    exclude = Some(init);
                 }
             }
 
-            let node_out = &mut self.netlist[node_out_id];
-            node_out.skip = false;
+            module[port].skip = false;
+            module[port.node].skip = false;
+            module.skip = false;
 
-            let mod_id = node_id.module_id();
-
-            self.netlist[mod_id].skip = false;
-            let node = &mut self.netlist[node_id];
-            node.skip = false;
-
-            if let NodeKindWithId::ModInst(mod_inst) = node.kind() {
-                let module_id = mod_inst.module_id();
-                self.modules.insert(module_id);
-            }
-
-            self.node_out_ids
-                .extend(node.inputs().map(|input| input.into_inner()));
+            let incoming = module.incoming(port.node).into_iter(module);
+            let incoming = if let Some(exclude) = exclude {
+                Either::Left(incoming.filter(move |port| *port != exclude))
+            } else {
+                Either::Right(incoming)
+            };
+            self.ports.extend(incoming);
         }
-    }
-
-    fn visit_node(&mut self, _node_id: NodeId) {
-        unreachable!()
     }
 }

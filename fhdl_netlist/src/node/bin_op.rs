@@ -1,8 +1,8 @@
 use std::fmt::{self, Display};
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    netlist::{Cursor, Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -65,79 +65,27 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct BinOpNode {
-    bin_op: BinOp,
-    inputs: (NodeOutIdx, NodeOutIdx),
-    output: NodeOutput,
+    pub bin_op: BinOp,
+    pub output: [NodeOutput; 1],
 }
 
-impl BinOpNode {
-    pub fn new(
-        ty: NodeTy,
-        bin_op: BinOp,
-        input1: NodeOutId,
-        input2: NodeOutId,
-        sym: Option<Symbol>,
-    ) -> Self {
-        Self {
-            bin_op,
-            inputs: (input1.into(), input2.into()),
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn bin_op(&self) -> BinOp {
-        self.bin_op
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+#[derive(Debug)]
+pub struct BinOpArgs {
+    pub ty: NodeTy,
+    pub bin_op: BinOp,
+    pub lhs: Port,
+    pub rhs: Port,
+    pub sym: Option<Symbol>,
 }
 
-impl WithId<ModuleId, &'_ BinOpNode> {
-    pub fn left(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.inputs.0)
-    }
+impl BinOpArgs {
+    fn assert(&self, module: &Module) {
+        let lhs = &module[self.lhs];
+        let rhs = &module[self.rhs];
 
-    pub fn right(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.inputs.1)
-    }
-}
-
-impl From<BinOpNode> for NodeKind {
-    fn from(node: BinOpNode) -> Self {
-        Self::BinOp(node)
-    }
-}
-
-impl IsNode for BinOpNode {
-    type Inputs = (NodeOutIdx, NodeOutIdx);
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
-    }
-
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
-        &self.output
-    }
-
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        &mut self.output
-    }
-
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let lhs = &net_list[node.left()];
-        let rhs = &net_list[node.right()];
-
-        match self.bin_op() {
+        match self.bin_op {
             BinOp::Add
             | BinOp::And
             | BinOp::BitAnd
@@ -150,12 +98,68 @@ impl IsNode for BinOpNode {
             | BinOp::Rem
             | BinOp::Shl
             | BinOp::Shr => {
-                assert_eq!(self.output.width(), lhs.width());
-                assert_eq!(self.output.width(), rhs.width());
+                assert_eq!(self.ty.width(), lhs.width());
+                assert_eq!(self.ty.width(), rhs.width());
             }
             BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
                 assert_eq!(lhs.width(), rhs.width());
             }
+        }
+    }
+}
+
+impl MakeNode<BinOpArgs> for BinOpNode {
+    fn make(module: &mut Module, args: BinOpArgs) -> NodeId {
+        args.assert(module);
+
+        let BinOpArgs {
+            bin_op,
+            lhs,
+            rhs,
+            ty,
+            sym,
+        } = args;
+
+        let node_id = module.add_node(BinOpNode {
+            bin_op,
+            output: [NodeOutput::wire(ty, sym)],
+        });
+        module.add_edge(lhs, Port::new(node_id, 0));
+        module.add_edge(rhs, Port::new(node_id, 1));
+
+        node_id
+    }
+}
+
+impl IsNode for BinOpNode {
+    #[inline]
+    fn in_count(&self) -> usize {
+        2
+    }
+
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        &self.output
+    }
+
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.output
+    }
+}
+
+pub struct BinOpInputs {
+    pub lhs: Port,
+    pub rhs: Port,
+}
+
+impl WithId<NodeId, &'_ BinOpNode> {
+    pub fn inputs(&self, module: &Module) -> BinOpInputs {
+        let mut incoming = module.incoming(self.id);
+
+        BinOpInputs {
+            lhs: incoming.next(module).unwrap(),
+            rhs: incoming.next(module).unwrap(),
         }
     }
 }

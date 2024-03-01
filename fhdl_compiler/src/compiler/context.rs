@@ -1,4 +1,4 @@
-use fhdl_netlist::net_list::ModuleId;
+use fhdl_netlist::netlist::Module;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
@@ -38,10 +38,10 @@ impl<'tcx> Locals<'tcx> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Context<'tcx> {
     pub generic_args: GenericArgsRef<'tcx>,
-    pub module_id: ModuleId,
+    pub module: Module,
     pub locals: Locals<'tcx>,
     pub mir: &'tcx Body<'tcx>,
     pub fn_did: DefId,
@@ -52,13 +52,13 @@ pub struct Context<'tcx> {
 impl<'tcx> Context<'tcx> {
     pub fn new(
         fn_did: DefId,
+        module: Module,
         generic_args: GenericArgsRef<'tcx>,
-        module_id: ModuleId,
         mir: &'tcx Body<'tcx>,
     ) -> Self {
         Self {
             generic_args,
-            module_id,
+            module,
             locals: Default::default(),
             mir,
             fn_did,
@@ -80,8 +80,8 @@ impl<'tcx> Context<'tcx> {
         self.consts.insert(const_, item);
     }
 
-    pub fn find_const(&self, const_: &MirConst<'tcx>) -> Option<&Item<'tcx>> {
-        self.consts.get(const_)
+    pub fn find_const(&self, const_: &MirConst<'tcx>) -> Option<Item<'tcx>> {
+        self.consts.get(const_).cloned()
     }
 
     pub fn push_switch(&mut self, switch: Switch<'tcx>) {

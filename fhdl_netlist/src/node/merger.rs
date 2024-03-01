@@ -1,105 +1,77 @@
 use std::fmt::Debug;
 
-use smallvec::SmallVec;
-
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    netlist::{Cursor, CursorMut, Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Merger {
-    inputs: SmallVec<[NodeOutIdx; 4]>,
-    output: NodeOutput,
-    rev: bool,
+    pub inputs: u32,
+    pub output: [NodeOutput; 1],
+    pub rev: bool,
 }
 
-impl Merger {
-    pub fn new<I>(
-        width: u128,
-        inputs: I,
-        rev: bool,
-        sym: impl Into<Option<Symbol>>,
-    ) -> Self
-    where
-        I: IntoIterator<Item = NodeOutId>,
-        I::IntoIter: DoubleEndedIterator,
-    {
-        let inputs = inputs.into_iter().map(Into::into);
-        let inputs = if !rev {
-            inputs.collect()
-        } else {
-            inputs.rev().collect()
-        };
+#[derive(Debug)]
+pub struct MergerArgs<I> {
+    pub width: u128,
+    pub inputs: I,
+    pub rev: bool,
+    pub sym: Option<Symbol>,
+}
 
-        Self {
-            inputs,
-            output: NodeOutput::wire(NodeTy::BitVec(width), sym.into()),
-            rev,
+impl<I> MakeNode<MergerArgs<I>> for Merger
+where
+    I: CursorMut<Item = Port>,
+{
+    fn make(module: &mut Module, mut args: MergerArgs<I>) -> NodeId {
+        let node_id = module.add_node(Merger {
+            inputs: 0,
+            output: [NodeOutput::wire(NodeTy::BitVec(args.width), args.sym)],
+            rev: args.rev,
+        });
+
+        let mut inputs = 0;
+        let mut width_in = 0;
+        while let Some(input) = args.inputs.next(module) {
+            module.add_edge(input, Port::new(node_id, inputs));
+
+            width_in += module[input].width();
+            inputs += 1;
         }
-    }
 
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+        assert!(inputs > 0);
+        assert_eq!(args.width, width_in);
 
-    pub fn inputs_len(&self) -> usize {
-        self.inputs.len()
-    }
+        if let NodeKind::Merger(merger) = &mut *module[node_id].kind {
+            merger.inputs = inputs;
+        }
 
-    pub fn inputs_is_empty(&self) -> bool {
-        self.inputs.is_empty()
-    }
-
-    pub fn rev(&self) -> bool {
-        self.rev
-    }
-}
-
-impl WithId<ModuleId, &'_ Merger> {
-    pub fn inputs(&self) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
-        let module_id = self.id();
-        self.inputs
-            .iter()
-            .map(move |input| NodeOutId::make(module_id, *input))
-    }
-}
-
-impl From<Merger> for NodeKind {
-    fn from(node: Merger) -> Self {
-        Self::Merger(node)
+        node_id
     }
 }
 
 impl IsNode for Merger {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        self.inputs.as_slice()
+    #[inline]
+    fn in_count(&self) -> usize {
+        self.inputs as usize
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        self.inputs.as_mut_slice()
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let total = node
-            .inputs()
-            .map(|input| net_list[input].width())
-            .sum::<u128>();
-
-        assert_eq!(total, self.output.width());
+impl WithId<NodeId, &'_ Merger> {
+    pub fn inputs<'m>(&self, module: &'m Module) -> impl Iterator<Item = Port> + 'm {
+        module.incoming(self.id).into_iter(module)
     }
 }

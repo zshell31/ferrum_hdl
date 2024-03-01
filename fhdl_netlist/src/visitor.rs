@@ -1,16 +1,16 @@
-mod assert;
+mod codegen;
 mod dump;
 mod reachability;
 mod set_names;
 mod transform;
 
-use dump::Dump;
+use codegen::Verilog;
 use reachability::Reachability;
 use set_names::SetNames;
 use transform::Transform;
 
-use self::assert::Assert;
-use crate::net_list::{ModuleId, NetList, NodeId};
+use self::dump::Dump;
+use crate::netlist::{Module, ModuleId, NetList, WithId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
@@ -18,40 +18,39 @@ pub enum ParamKind {
     Output,
 }
 
-pub trait Visitor {
-    fn visit_modules(&mut self);
-
-    fn visit_module(&mut self, module_id: ModuleId);
-
-    fn visit_node(&mut self, node_id: NodeId);
-}
-
 impl NetList {
-    pub fn assert(&self) {
-        Assert::new(self).run()
-    }
-
-    pub fn assert_mod(&self, module_id: ModuleId) {
-        Assert::new(self).visit_module(module_id);
-    }
-
     pub fn transform(&mut self) {
-        Transform::new(self).run();
+        Transform::new().run(self);
     }
 
     pub fn reachability(&mut self) {
-        Reachability::new(self).run();
+        Reachability::new().run(self);
     }
 
     pub fn set_names(&mut self) {
-        SetNames::new(self).run();
+        SetNames::new().run(self);
+    }
+
+    pub fn synth_verilog(&self) -> String {
+        Verilog::new(self).synth()
     }
 
     pub fn dump(&self, skip: bool) {
-        Dump::new(self, skip).run()
+        Dump::new(skip).run(self)
     }
 
-    pub fn dump_mod(&self, mod_id: ModuleId, skip: bool) {
-        Dump::new(self, skip).visit_module(mod_id);
+    pub fn dump_by_mod_id(&self, mod_id: ModuleId, skip: bool) {
+        let module = self.module(mod_id).map(|module| module.borrow());
+        Dump::new(skip).visit_module(self, module.as_deref());
+    }
+
+    pub fn dump_mod(&self, module: WithId<ModuleId, &Module>, skip: bool) {
+        Dump::new(skip).visit_module(self, module);
+    }
+
+    pub fn run_visitors(&mut self) {
+        self.transform();
+        self.reachability();
+        self.set_names();
     }
 }

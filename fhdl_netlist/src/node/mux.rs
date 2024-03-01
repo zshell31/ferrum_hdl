@@ -3,20 +3,93 @@ use std::{fmt::Debug, iter};
 use either::Either;
 use smallvec::SmallVec;
 
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
     const_val::ConstVal,
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    netlist::{Cursor, CursorMut, Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone)]
 pub struct Mux {
-    cases: SmallVec<[ConstVal; 2]>,
-    inputs: SmallVec<[NodeOutIdx; 3]>,
-    output: NodeOutput,
-    has_default: bool,
+    pub cases: SmallVec<[ConstVal; 2]>,
+    pub inputs: u32,
+    pub output: [NodeOutput; 1],
+    pub has_default: bool,
+}
+
+#[derive(Debug)]
+pub struct MuxArgs<V> {
+    pub ty: NodeTy,
+    pub sel: Port,
+    pub variants: V,
+    pub default: Option<Port>,
+    pub sym: Option<Symbol>,
+}
+
+impl<V> MakeNode<MuxArgs<V>> for Mux
+where
+    V: CursorMut<Item = (ConstVal, Port)>,
+{
+    fn make(module: &mut Module, mut args: MuxArgs<V>) -> NodeId {
+        let sel_width = module[args.sel].width();
+        assert!(sel_width != 0);
+
+        let node_id = module.add_node(Mux {
+            cases: SmallVec::new(),
+            inputs: 0,
+            output: [NodeOutput::wire(args.ty, args.sym)],
+            has_default: args.default.is_some(),
+        });
+
+        module.add_edge(args.sel, Port::new(node_id, 0));
+
+        let mut inputs = 1;
+        let mut cases = SmallVec::with_capacity(args.variants.size());
+        while let Some((case, input)) = args.variants.next(module) {
+            assert_eq!(case.width(), sel_width);
+            assert_eq!(module[input].ty, args.ty);
+
+            cases.push(case);
+            module.add_edge(input, Port::new(node_id, inputs));
+            inputs += 1;
+        }
+
+        if let Some(default) = args.default {
+            assert_eq!(module[default].ty, args.ty);
+
+            cases.push(ConstVal::default());
+            module.add_edge(default, Port::new(node_id, inputs));
+            inputs += 1;
+        }
+
+        assert!(cases.len() >= 2);
+
+        if let NodeKind::Mux(mux) = &mut *module[node_id].kind {
+            mux.cases = cases;
+            mux.inputs = inputs;
+        }
+
+        node_id
+    }
+}
+
+impl IsNode for Mux {
+    #[inline]
+    fn in_count(&self) -> usize {
+        self.inputs as usize
+    }
+
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        &self.output
+    }
+
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.output
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -25,61 +98,15 @@ pub enum Case {
     Default,
 }
 
-pub type Variants<'n> = impl Iterator<Item = (Case, NodeOutId)> + 'n;
+pub type Cases<'n> = impl Iterator<Item = (Case, Port)> + 'n;
 
 pub struct MuxInputs<'n> {
-    pub sel: NodeOutId,
-    pub variants: Variants<'n>,
+    pub sel: Port,
+    pub cases: Cases<'n>,
 }
 
-impl Mux {
-    pub fn new(
-        ty: NodeTy,
-        sel: NodeOutId,
-        variants: impl IntoIterator<Item = (ConstVal, NodeOutId)>,
-        default: Option<NodeOutId>,
-        sym: impl Into<Option<Symbol>>,
-    ) -> Self {
-        let variants = variants.into_iter();
-        let (size_hint, _) = variants.size_hint();
-        let mut cases = SmallVec::with_capacity(size_hint);
-        let mut inputs = SmallVec::with_capacity(size_hint + 1);
-
-        inputs.push(sel.into());
-
-        for (case, input) in variants {
-            assert!(case.width() != 0);
-            cases.push(case);
-            inputs.push(input.into());
-        }
-
-        let has_default = default.is_some();
-        if let Some(default) = default {
-            cases.push(ConstVal::default());
-            inputs.push(default.into());
-        }
-
-        Self {
-            cases,
-            inputs,
-            output: NodeOutput::reg(ty, sym.into(), None),
-            has_default,
-        }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.cases.is_empty()
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
-}
-
-impl WithId<ModuleId, &'_ Mux> {
-    pub fn inputs(&self) -> MuxInputs<'_> {
-        let module_id = self.id();
-
+impl WithId<NodeId, &'_ Mux> {
+    pub fn inputs<'n>(&'n self, module: &'n Module) -> MuxInputs<'n> {
         let cases = if self.has_default {
             Either::Left(self.cases.iter().map(|case| {
                 if !case.is_zero_sized() {
@@ -98,55 +125,12 @@ impl WithId<ModuleId, &'_ Mux> {
             )
         };
 
+        let mut inputs = module.incoming(self.id).into_iter(module);
+        let sel = Iterator::next(&mut inputs).unwrap();
+
         MuxInputs {
-            sel: NodeOutId::make(module_id, self.inputs[0]),
-            variants: cases.zip(
-                self.inputs
-                    .iter()
-                    .skip(1)
-                    .map(move |input| NodeOutId::make(module_id, *input)),
-            ),
-        }
-    }
-}
-
-impl From<Mux> for NodeKind {
-    fn from(node: Mux) -> Self {
-        Self::Mux(node)
-    }
-}
-
-impl IsNode for Mux {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
-    }
-
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
-        &self.output
-    }
-
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        &mut self.output
-    }
-
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let MuxInputs { sel, variants } = node.inputs();
-
-        let sel_width = net_list[sel].width();
-
-        for (case, input) in variants {
-            if let Case::Val(case) = case {
-                assert_eq!(case.width(), sel_width);
-            }
-            assert_eq!(self.output.width(), net_list[input].width());
+            sel,
+            cases: cases.zip(inputs),
         }
     }
 }

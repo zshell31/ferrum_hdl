@@ -1,5 +1,7 @@
 use std::{
-    cmp, iter,
+    cmp,
+    fmt::{self, Display},
+    iter,
     ops::{Deref, DerefMut},
 };
 
@@ -36,6 +38,12 @@ pub struct Named<T> {
     pub name: Symbol,
 }
 
+impl<T: Display> Display for Named<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} ({})", self.inner, self.name)
+    }
+}
+
 impl<T> Named<T> {
     pub fn new(inner: T, name: Symbol) -> Self {
         Self { inner, name }
@@ -60,6 +68,12 @@ impl<T> DerefMut for Named<T> {
 pub struct ArrayTy<'tcx> {
     ty: ItemTy<'tcx>,
     count: u128,
+}
+
+impl<'tcx> Display for ArrayTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "[ {}; {} ]", self.ty, self.count)
+    }
 }
 
 impl<'tcx> ArrayTy<'tcx> {
@@ -90,6 +104,20 @@ impl<'tcx> ArrayTy<'tcx> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructTy<'tcx> {
     tys: &'tcx [Named<ItemTy<'tcx>>],
+}
+
+impl<'tcx> Display for StructTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{{ {} }}",
+            self.tys
+                .iter()
+                .map(|ty| ty.to_string())
+                .intersperse(", ".to_string())
+                .collect::<String>()
+        )
+    }
 }
 
 impl<'tcx> StructTy<'tcx> {
@@ -135,6 +163,20 @@ pub struct EnumTy<'tcx> {
     data_width: u128,
     discr: Option<&'tcx [u128]>,
     variants: &'tcx [Named<ItemTy<'tcx>>],
+}
+
+impl<'tcx> Display for EnumTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "enum {{ {} }}",
+            self.variants
+                .iter()
+                .map(|variant| variant.to_string())
+                .intersperse(", ".to_string())
+                .collect::<String>()
+        )
+    }
 }
 
 impl<'tcx> EnumTy<'tcx> {
@@ -203,6 +245,12 @@ pub struct ClosureTy<'tcx> {
     pub ty: StructTy<'tcx>,
 }
 
+impl<'tcx> Display for ClosureTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "closure {}", self.ty)
+    }
+}
+
 impl<'tcx> ClosureTy<'tcx> {
     pub fn new(
         fn_did: DefId,
@@ -224,6 +272,18 @@ pub enum ItemTyKind<'tcx> {
     Struct(StructTy<'tcx>),
     Closure(ClosureTy<'tcx>),
     Enum(EnumTy<'tcx>),
+}
+
+impl<'tcx> Display for ItemTyKind<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Node(ty) => Display::fmt(ty, f),
+            Self::Array(ty) => Display::fmt(ty, f),
+            Self::Struct(ty) => Display::fmt(ty, f),
+            Self::Closure(ty) => Display::fmt(ty, f),
+            Self::Enum(ty) => Display::fmt(ty, f),
+        }
+    }
 }
 
 impl<'tcx> ItemTyKind<'tcx> {
@@ -329,6 +389,12 @@ impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemTy<'tcx>(Interned<'tcx, WithTypeInfo<ItemTyKind<'tcx>>>);
 
+impl<'tcx> Display for ItemTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self.kind(), f)
+    }
+}
+
 impl<'tcx> ItemTy<'tcx> {
     pub fn new(kind: &'tcx WithTypeInfo<ItemTyKind<'tcx>>) -> Self {
         Self(Interned::new_unchecked(kind))
@@ -347,7 +413,16 @@ impl<'tcx> ItemTy<'tcx> {
     #[allow(clippy::wrong_self_convention)]
     #[inline]
     pub fn to_bitvec(&self) -> NodeTy {
-        NodeTy::BitVec(self.width())
+        match self.kind() {
+            ItemTyKind::Node(node_ty) => *node_ty,
+            ItemTyKind::Array(array_ty) if array_ty.count() == 1 => {
+                array_ty.ty().to_bitvec()
+            }
+            ItemTyKind::Struct(struct_ty) if struct_ty.len() == 1 => {
+                struct_ty.by_idx(0).to_bitvec()
+            }
+            _ => NodeTy::BitVec(self.width()),
+        }
     }
 
     #[inline]
@@ -418,8 +493,18 @@ impl<'tcx> From<u128> for Generic<'tcx> {
 
 impl<'tcx> Compiler<'tcx> {
     #[inline]
-    pub fn alloc_ty(&self, ty: impl Into<ItemTyKind<'tcx>>) -> ItemTy<'tcx> {
-        ItemTy::new(self.alloc(WithTypeInfo::new(ty.into())))
+    pub fn alloc_ty(&mut self, ty: impl Into<ItemTyKind<'tcx>>) -> ItemTy<'tcx> {
+        let ty = ty.into();
+
+        // for resolving types like "Unsigned<UnevaluatedConst .. >"
+        // and "Unsigned<16>" if they are actually the same
+        #[allow(clippy::map_entry)]
+        if !self.allocated_ty.contains_key(&ty) {
+            self.allocated_ty
+                .insert(ty, ItemTy::new(self.alloc(WithTypeInfo::new(ty))));
+        }
+
+        self.allocated_ty.get(&ty).copied().unwrap()
     }
 
     pub fn resolve_ty(
@@ -658,27 +743,6 @@ impl<'tcx> Compiler<'tcx> {
             .ok_or_else(|| SpanError::new(SpanErrorKind::NotSynthGenParam, span).into())
             .and_then(|const_| self.eval_const(const_, span))
             .map(Generic::Const)
-
-        // arg.as_const().and_then(|const_| {
-        //     Self::eval_const()
-        // })
-
-        // let cons_val = arg.as_const().and_then(|cons| match cons.kind() {
-        //     ConstKind::Unevaluated(unevaluated) => {
-        //         use rustc_middle::mir::UnevaluatedConst;
-
-        //         utils::resolve_unevaluated(
-        //             self.tcx,
-        //             UnevaluatedConst::new(unevaluated.def, unevaluated.args),
-        //         )
-        //     }
-        //     ConstKind::Value(val_tree) => utils::eval_val_tree(val_tree).map(Into::into),
-        //     _ => None,
-        // });
-
-        // cons_val
-        //     .map(Generic::Const)
-        //     .ok_or_else(|| )
     }
 
     fn resolve_tuple_ty(

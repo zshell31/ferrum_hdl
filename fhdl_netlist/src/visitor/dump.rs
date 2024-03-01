@@ -1,74 +1,60 @@
-use crate::{
-    net_list::{ModuleId, NetList, NodeId},
-    visitor::Visitor,
-};
+use crate::netlist::{Cursor, IndexType, Module, ModuleId, NetList, WithId};
 
-pub struct Dump<'n> {
-    netlist: &'n NetList,
+pub struct Dump {
     skip: bool,
 }
 
-impl<'n> Dump<'n> {
-    pub fn new(net_list: &'n NetList, skip: bool) -> Self {
-        Self {
-            netlist: net_list,
-            skip,
-        }
+impl Dump {
+    pub fn new(skip: bool) -> Self {
+        Self { skip }
     }
 
-    pub fn run(&mut self) {
-        self.visit_modules();
-    }
-}
-
-impl<'n> Visitor for Dump<'n> {
-    fn visit_modules(&mut self) {
-        for module_id in self.netlist.modules() {
-            let module = &self.netlist[module_id];
+    pub fn run(&mut self, netlist: &NetList) {
+        for module in netlist.modules().rev() {
+            let module = module.map(|module| module.borrow());
             if self.skip && module.skip {
                 continue;
             }
-            self.visit_module(module_id);
+            self.visit_module(netlist, module.as_deref());
         }
 
         println!("\n");
     }
 
-    fn visit_module(&mut self, module_id: ModuleId) {
-        let module = &self.netlist[module_id];
-        module.dump(module_id);
+    pub(super) fn visit_module(
+        &mut self,
+        netlist: &NetList,
+        module: WithId<ModuleId, &Module>,
+    ) {
+        module.dump();
 
         let tab: &'static str = "        ";
-        let mut cursor = self.netlist.mod_cursor(module_id);
-        while let Some(node_id) = self.netlist.next(&mut cursor) {
-            let node = &self.netlist[node_id];
+
+        let mut nodes = module.nodes();
+        while let Some(node_id) = nodes.next(*module) {
+            let node = module.node(node_id);
 
             if self.skip && node.skip {
                 continue;
             }
 
-            let prefix = format!("{:>4}    ", node_id.idx());
+            let prefix = format!("{:>4}    ", node_id.as_u32());
 
-            node.dump(self.netlist, &prefix, tab);
+            node.dump(netlist, *module, &prefix, tab);
 
             println!("\n{}links:", tab);
-            for out in node.node_out_ids() {
-                if self.netlist.links(out).next().is_some() {
-                    println!(
-                        "{}{} -> {}",
-                        tab,
-                        out.idx(),
-                        self.netlist
-                            .links(out)
-                            .map(|node| node.node_id().idx().to_string())
-                            .intersperse(", ".to_string())
-                            .collect::<String>()
-                    );
+            for port in node.out_ports() {
+                let links = module
+                    .outgoing(port)
+                    .into_iter(*module)
+                    .map(|node_id| node_id.as_u32().to_string())
+                    .intersperse(", ".to_string())
+                    .collect::<String>();
+                if !links.is_empty() {
+                    println!("{}{} -> {}", tab, port, links);
                 }
             }
             println!();
         }
     }
-
-    fn visit_node(&mut self, _node_id: NodeId) {}
 }

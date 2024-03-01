@@ -6,35 +6,30 @@ mod input;
 mod merger;
 mod mod_inst;
 mod mux;
-mod not;
 mod pass;
 mod splitter;
 mod zero_extend;
 
-use std::{mem, rc::Rc};
-
-use auto_enums::auto_enum;
+use std::rc::Rc;
 
 pub(crate) use self::cons::MultiConst;
 pub use self::{
-    bin_op::{BinOp, BinOpNode},
-    bit_not::BitNot,
-    cons::Const,
-    dff::{DFFInputs, DFF},
-    input::Input,
-    merger::Merger,
-    mod_inst::ModInst,
-    mux::{Case, Mux, MuxInputs},
-    not::Not,
-    pass::Pass,
-    splitter::{Indices, Splitter},
-    zero_extend::ZeroExtend,
+    bin_op::{BinOp, BinOpArgs, BinOpInputs, BinOpNode},
+    bit_not::{BitNot, BitNotArgs},
+    cons::{Const, ConstArgs},
+    dff::{DFFArgs, DFFInputs, TyOrData, DFF},
+    input::{Input, InputArgs},
+    merger::{Merger, MergerArgs},
+    mod_inst::{ModInst, ModInstArgs},
+    mux::{Case, Mux, MuxArgs, MuxInputs},
+    pass::{Pass, PassArgs},
+    splitter::{Indices, Splitter, SplitterArgs},
+    zero_extend::{ZeroExtend, ZeroExtendArgs},
 };
 use crate::{
-    const_val::ConstVal,
-    net_list::{
-        list::ListItem, Idx, InOut, ModuleId, NetList, NodeId, NodeIdx, NodeInId,
-        NodeOutId, NodeOutIdx, WithId,
+    netlist::{
+        Cursor, Edges, IncomingDir, IndexType, List, ListItem, Module, NetList, NodeId,
+        OutgoingDir, Port, WithId,
     },
     node_ty::NodeTy,
     symbol::Symbol,
@@ -43,7 +38,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub enum NetKind {
     Wire,
-    Reg(Option<usize>),
+    Reg,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -59,8 +54,8 @@ impl NodeOutput {
         Self::new(ty, NetKind::Wire, sym)
     }
 
-    pub fn reg(ty: NodeTy, sym: Option<Symbol>, init: Option<usize>) -> Self {
-        Self::new(ty, NetKind::Reg(init), sym)
+    pub fn reg(ty: NodeTy, sym: Option<Symbol>) -> Self {
+        Self::new(ty, NetKind::Reg, sym)
     }
 
     fn new(ty: NodeTy, kind: NetKind, sym: Option<Symbol>) -> Self {
@@ -80,60 +75,60 @@ impl NodeOutput {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node {
     pub skip: bool,
+    pub(crate) kind: Box<NodeKind>,
+    pub(crate) incoming: List<Edges, IncomingDir>,
+    pub(crate) outgoing: List<Edges, OutgoingDir>,
+    next: NodeId,
+    prev: NodeId,
     span: Option<Rc<String>>,
-    kind: Box<NodeKind>,
-    module_id: ModuleId,
-    node_idx: NodeIdx,
-    next: Option<NodeIdx>,
-    prev: Option<NodeIdx>,
 }
 
-impl ListItem<NodeIdx> for Node {
-    fn idx(&self) -> NodeIdx {
-        self.node_idx
-    }
-
-    fn next(&self) -> Option<NodeIdx> {
+impl ListItem<NodeId> for Node {
+    #[inline]
+    fn next(&self) -> NodeId {
         self.next
     }
 
-    fn set_next(&mut self, next: Option<NodeIdx>) {
+    #[inline]
+    fn set_next(&mut self, next: NodeId) {
         self.next = next;
     }
 
-    fn prev(&self) -> Option<NodeIdx> {
+    #[inline]
+    fn prev(&self) -> NodeId {
         self.prev
     }
 
-    fn set_prev(&mut self, prev: Option<NodeIdx>) {
+    #[inline]
+    fn set_prev(&mut self, prev: NodeId) {
         self.prev = prev;
     }
 }
 
 impl Node {
-    pub fn new(node_id: NodeId, kind: NodeKind) -> Self {
-        let (module_id, node_idx) = node_id.split();
-
+    pub fn new(kind: NodeKind) -> Self {
         Self {
-            kind: Box::new(kind),
             skip: true,
+            kind: Box::new(kind),
             span: None,
-            module_id,
-            node_idx,
-            next: None,
-            prev: None,
+            incoming: Default::default(),
+            outgoing: Default::default(),
+            next: NodeId::EMPTY,
+            prev: NodeId::EMPTY,
         }
     }
 
-    pub fn clone_from(node_id: NodeId, node: &Self) -> Self {
-        let kind = node.kind().clone();
-        let span = node.span.clone();
-
-        let mut node = Self::new(node_id, kind);
-        node.span = span;
+    pub(crate) fn new_from(
+        &self,
+        calc_node_id: impl Fn(NodeId) -> NodeId + Copy,
+    ) -> Self {
+        let mut node = Self::new(self.kind.as_ref().clone());
+        node.next = calc_node_id(self.next);
+        node.prev = calc_node_id(self.prev);
+        node.span = self.span.clone();
 
         node
     }
@@ -146,214 +141,12 @@ impl Node {
         self.span.as_ref().map(|s| s.as_str())
     }
 
-    pub fn kind(&self) -> NodeKindWithId<'_> {
-        NodeKindWithId::new(self.module_id, &self.kind)
-    }
-
-    pub fn kind_mut(&mut self) -> NodeKindWithIdMut<'_> {
-        NodeKindWithIdMut::new(self.module_id, &mut self.kind)
-    }
-
-    pub fn next(&self) -> Option<NodeId> {
-        ListItem::next(self).map(|next| NodeId::combine(self.module_id, next))
-    }
-
-    pub fn set_next(&mut self, node_id: Option<NodeId>) {
-        ListItem::set_next(
-            self,
-            node_id.map(|node_id| {
-                let (module_id, node_idx) = node_id.split();
-                assert_eq!(module_id, self.module_id);
-                node_idx
-            }),
-        );
-    }
-
-    pub fn prev(&self) -> Option<NodeId> {
-        ListItem::prev(self).map(|prev| NodeId::combine(self.module_id, prev))
-    }
-
-    pub fn set_prev(&mut self, node_id: Option<NodeId>) {
-        ListItem::set_prev(
-            self,
-            node_id.map(|node_id| {
-                let (module_id, node_idx) = node_id.split();
-                assert_eq!(module_id, self.module_id);
-                node_idx
-            }),
-        )
-    }
-
-    #[inline]
-    pub fn node_id(&self) -> NodeId {
-        NodeId::combine(self.module_id, self.node_idx)
-    }
-
-    pub fn inputs(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = WithId<NodeInId, NodeOutId>> + '_ {
-        let module_id = self.module_id;
-        let node_id = self.node_id();
-        InOut::<NodeOutIdx>::items(self.kind.inputs()).map(move |(ind, node_out_idx)| {
-            WithId::new(
-                NodeInId::new(node_id, ind),
-                NodeOutId::make(module_id, *node_out_idx),
-            )
-        })
-    }
-
-    pub fn inputs_mut(
-        &mut self,
-    ) -> impl DoubleEndedIterator<Item = WithId<NodeInId, &mut NodeOutIdx>> + '_ {
-        let node_id = self.node_id();
-        InOut::<NodeOutIdx>::items_mut(self.kind.inputs_mut()).map(
-            move |(ind, node_out_id)| {
-                WithId::new(NodeInId::new(node_id, ind), node_out_id)
-            },
-        )
-    }
-
-    pub fn input_by_ind(&self, ind: usize) -> WithId<NodeInId, NodeOutId> {
-        let module_id = self.module_id;
-        WithId::new(
-            NodeInId::new(self.node_id(), ind),
-            NodeOutId::make(
-                module_id,
-                *InOut::<NodeOutIdx>::by_ind(self.kind.inputs(), ind),
-            ),
-        )
-    }
-
-    pub fn input_by_ind_mut(&mut self, ind: usize) -> WithId<NodeInId, &mut NodeOutIdx> {
-        WithId::new(
-            NodeInId::new(self.node_id(), ind),
-            InOut::<NodeOutIdx>::by_ind_mut(self.kind.inputs_mut(), ind),
-        )
-    }
-
-    pub fn inputs_len(&self) -> usize {
-        InOut::<NodeOutIdx>::items_len(self.kind.inputs())
-    }
-
-    pub fn outputs(
-        &self,
-    ) -> impl DoubleEndedIterator<Item = WithId<NodeOutId, &NodeOutput>> + '_ {
-        let node_id = self.node_id();
-        InOut::<NodeOutput>::items(self.kind.outputs())
-            .map(move |(ind, output)| WithId::new(NodeOutId::new(node_id, ind), output))
-    }
-
-    pub fn outputs_mut(
-        &mut self,
-    ) -> impl DoubleEndedIterator<Item = WithId<NodeOutId, &mut NodeOutput>> + '_ {
-        let node_id = self.node_id();
-        InOut::<NodeOutput>::items_mut(self.kind.outputs_mut())
-            .map(move |(ind, output)| WithId::new(NodeOutId::new(node_id, ind), output))
-    }
-
-    pub fn output_by_ind(&self, ind: usize) -> WithId<NodeOutId, &NodeOutput> {
-        WithId::new(
-            NodeOutId::new(self.node_id(), ind),
-            InOut::<NodeOutput>::by_ind(self.kind.outputs(), ind),
-        )
-    }
-
-    pub fn output_by_ind_mut(
-        &mut self,
-        ind: usize,
-    ) -> WithId<NodeOutId, &mut NodeOutput> {
-        WithId::new(
-            NodeOutId::new(self.node_id(), ind),
-            InOut::<NodeOutput>::by_ind_mut(self.kind.outputs_mut(), ind),
-        )
-    }
-
-    pub fn node_out_ids(&self) -> impl DoubleEndedIterator<Item = NodeOutId> + '_ {
-        let node_id = self.node_id();
-        InOut::<NodeOutput>::items(self.kind.outputs())
-            .map(move |(ind, _)| NodeOutId::new(node_id, ind))
-    }
-
-    pub fn outputs_len(&self) -> usize {
-        InOut::<NodeOutput>::items_len(self.kind.outputs())
-    }
-
-    pub fn only_one_out(&self) -> WithId<NodeOutId, &NodeOutput> {
-        self.output_by_ind(0)
-    }
-
-    pub fn only_one_out_mut(&mut self) -> WithId<NodeOutId, &mut NodeOutput> {
-        assert_eq!(self.outputs_len(), 1);
-        self.output_by_ind_mut(0)
-    }
-
-    pub fn assert(&self, net_list: &NetList) {
-        self.kind.assert(self.module_id, net_list)
-    }
-
-    pub(crate) fn dump(&self, net_list: &NetList, prefix: &str, tab: &str) {
-        println!(
-            "{}{} (skip: {}, prev: {:?}, next: {:?}, span: {})",
-            prefix,
-            self.kind.dump(),
-            self.skip,
-            self.prev.map(|node_id| node_id.idx()),
-            self.next.map(|node_id| node_id.idx()),
-            self.span.as_ref().map(|s| s.as_str()).unwrap_or_default()
-        );
-
-        match self.kind() {
-            NodeKindWithId::ModInst(mod_inst) => {
-                println!(
-                    "{}mod_id = {} ({})",
-                    tab,
-                    mod_inst.module_id().idx(),
-                    net_list[mod_inst.module_id()].name
-                );
-            }
-            NodeKindWithId::Splitter(splitter) => {
-                println!("{}start = {:?}", tab, splitter.start(),);
-            }
-            NodeKindWithId::Const(cons) => {
-                let value = cons.value();
-                let width = cons.output().width();
-                println!("{}const = {}", tab, ConstVal::new(value, width));
-            }
-            _ => {}
-        }
-
-        println!(
-            "{}inputs: {}",
-            tab,
-            self.inputs()
-                .map(|inp| format!("{} ({})", inp.node_id().idx(), inp.idx()))
-                .intersperse(", ".to_string())
-                .collect::<String>()
-        );
-
-        println!(
-            "{}outputs: {}",
-            tab,
-            self.outputs()
-                .map(|out| format!(
-                    "{} ({})",
-                    out.sym.map(|sym| sym.as_str()).unwrap_or("_"),
-                    out.ty
-                ))
-                .intersperse(", ".to_string())
-                .collect::<String>()
-        );
-    }
-
     pub fn is_input(&self) -> bool {
         matches!(&*self.kind, NodeKind::Input(_))
     }
 
     pub fn is_expr(&self) -> bool {
-        matches!(
-            &*self.kind,
-            NodeKind::Not(_) | NodeKind::BitNot(_) | NodeKind::BinOp(_)
-        )
+        matches!(&*self.kind, NodeKind::BitNot(_) | NodeKind::BinOp(_))
     }
 
     pub fn is_const(&self) -> bool {
@@ -379,21 +172,214 @@ impl Node {
     pub fn is_mod_inst(&self) -> bool {
         matches!(&*self.kind, NodeKind::ModInst(_))
     }
+
+    pub fn mod_inst(&self) -> Option<&ModInst> {
+        match &*self.kind {
+            NodeKind::ModInst(mod_inst) => Some(mod_inst),
+            _ => None,
+        }
+    }
+
+    pub fn mod_inst_mut(&mut self) -> Option<&mut ModInst> {
+        match &mut *self.kind {
+            NodeKind::ModInst(mod_inst) => Some(mod_inst),
+            _ => None,
+        }
+    }
+
+    pub fn dff(&self) -> Option<&DFF> {
+        match &*self.kind {
+            NodeKind::DFF(dff) => Some(dff),
+            _ => None,
+        }
+    }
+
+    pub fn dff_mut(&mut self) -> Option<&mut DFF> {
+        match &mut *self.kind {
+            NodeKind::DFF(dff) => Some(dff),
+            _ => None,
+        }
+    }
 }
 
-pub trait IsNode: Into<NodeKind> {
-    type Inputs: InOut<NodeOutIdx> + ?Sized;
-    type Outputs: InOut<NodeOutput> + ?Sized;
+pub trait MakeNode<Args> {
+    fn make(module: &mut Module, args: Args) -> NodeId;
+}
 
-    fn inputs(&self) -> &Self::Inputs;
+pub trait IsNode {
+    fn in_count(&self) -> usize;
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs;
+    #[inline]
+    fn out_count(&self) -> usize {
+        self.outputs().len()
+    }
 
-    fn outputs(&self) -> &Self::Outputs;
+    fn outputs(&self) -> &[NodeOutput];
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs;
+    fn outputs_mut(&mut self) -> &mut [NodeOutput];
+}
 
-    fn assert(&self, _module_id: ModuleId, _net_list: &NetList) {}
+impl IsNode for Node {
+    #[inline]
+    fn in_count(&self) -> usize {
+        self.kind.in_count()
+    }
+
+    #[inline]
+    fn out_count(&self) -> usize {
+        self.kind.out_count()
+    }
+
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        self.kind.outputs()
+    }
+
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        self.kind.outputs_mut()
+    }
+}
+
+impl<'m, N: IsNode> WithId<NodeId, &'m N> {
+    pub fn outputs(self) -> impl Iterator<Item = WithId<Port, &'m NodeOutput>> + 'm {
+        let node_id = self.id;
+        self.inner
+            .outputs()
+            .iter()
+            .enumerate()
+            .map(move |(idx, node_out)| {
+                WithId::new(Port::new(node_id, idx as u32), node_out)
+            })
+    }
+
+    pub fn out_ports(self) -> impl Iterator<Item = Port> {
+        let out_count = self.out_count();
+        let node_id = self.id;
+        (0 .. out_count).map(move |port| Port::new(node_id, port as u32))
+    }
+
+    pub fn only_one_out(self) -> WithId<Port, &'m NodeOutput> {
+        assert_eq!(self.out_count(), 1);
+        WithId::new(Port::new(self.id, 0), &self.inner.outputs()[0])
+    }
+}
+
+impl WithId<NodeId, &'_ Node> {
+    pub(crate) fn dump(
+        &self,
+        netlist: &NetList,
+        module: &Module,
+        prefix: &str,
+        tab: &str,
+    ) {
+        trait Dump {
+            fn dump(&self) -> String;
+        }
+
+        impl<T: ToString> Dump for Option<T> {
+            fn dump(&self) -> String {
+                match self {
+                    Some(value) => value.to_string(),
+                    None => "_".to_string(),
+                }
+            }
+        }
+
+        println!(
+            "{}{} (is_skip: {}, prev: {}, next: {})",
+            prefix,
+            self.kind.dump(),
+            self.skip,
+            self.prev,
+            self.next
+        );
+
+        let mut show_inputs = true;
+        match &*self.kind {
+            NodeKind::ModInst(mod_inst) => {
+                println!(
+                    "{}mod_id = {} ({})",
+                    tab,
+                    mod_inst.mod_id,
+                    netlist[mod_inst.mod_id].borrow().name
+                );
+            }
+            NodeKind::Splitter(splitter) => {
+                println!("{}start = {}", tab, splitter.start.dump());
+            }
+            NodeKind::DFF(dff) => {
+                let DFFInputs {
+                    clk,
+                    rst,
+                    en,
+                    init,
+                    data,
+                } = self.with(dff).inputs(module);
+
+                show_inputs = false;
+                println!(
+                    "{}clk = {}, rst = {}, en = {}, init = {}, data = {}",
+                    tab,
+                    clk,
+                    rst.dump(),
+                    en.dump(),
+                    init,
+                    data
+                );
+            }
+            NodeKind::Const(cons) => {
+                show_inputs = false;
+                println!("{}value = {}", tab, cons.value());
+            }
+            NodeKind::MultiConst(multi_cons) => {
+                show_inputs = false;
+                println!(
+                    "{}values = [{}]",
+                    tab,
+                    multi_cons
+                        .values()
+                        .map(|value| value.to_string())
+                        .intersperse(", ".to_string())
+                        .collect::<String>()
+                );
+            }
+            _ => {}
+        }
+
+        if show_inputs {
+            println!(
+                "{}inputs:\n{}",
+                tab,
+                module
+                    .incoming(self.id)
+                    .into_iter(module)
+                    .map(|input| format!("{}{}{}", tab, tab, input))
+                    .intersperse("\n".to_string())
+                    .collect::<String>()
+            );
+        }
+
+        println!(
+            "{}outputs:\n{}",
+            tab,
+            self.outputs()
+                .map(|out| format!(
+                    "{}{}{} ({}){}",
+                    tab,
+                    tab,
+                    out.sym.map(|sym| sym.as_str()).unwrap_or("_"),
+                    out.ty,
+                    if module.is_output(out.id) {
+                        " MOD_OUT"
+                    } else {
+                        ""
+                    }
+                ))
+                .intersperse("\n".to_string())
+                .collect::<String>()
+        );
+    }
 }
 
 macro_rules! define_nodes {
@@ -407,7 +393,47 @@ macro_rules! define_nodes {
             )+
         }
 
+        $(
+            impl From<$node> for NodeKind {
+                fn from(kind: $node) -> Self {
+                    Self::$kind(kind)
+                }
+            }
+        )+
+
         impl NodeKind {
+            pub fn in_count(&self) -> usize {
+                match self {
+                    $(
+                        Self::$kind(kind) => kind.in_count(),
+                    )+
+                }
+            }
+
+            pub fn out_count(&self) -> usize {
+                match self {
+                    $(
+                        Self::$kind(kind) => kind.out_count(),
+                    )+
+                }
+            }
+
+            pub fn outputs(&self) -> &[NodeOutput] {
+                match self {
+                    $(
+                        Self::$kind(kind) => kind.outputs(),
+                    )+
+                }
+            }
+
+            pub fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+                match self {
+                    $(
+                        Self::$kind(kind) => kind.outputs_mut(),
+                    )+
+                }
+            }
+
             pub(crate) fn dump(&self) -> &'static str {
                 match self {
                     $(
@@ -415,203 +441,21 @@ macro_rules! define_nodes {
                     )+
                 }
             }
-
-            pub(crate) fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-                match self {
-                    $(
-                        Self::$kind(node) => node.assert(module_id, net_list),
-                    )+
-                }
-
-            }
         }
-
-        // should be the same as Node
-        #[derive(Debug)]
-        pub enum NodeInputs {
-            $(
-                $kind($node),
-            )+
-        }
-
-        impl InOut<NodeOutIdx> for NodeInputs {
-            fn items_len(&self) -> usize {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutIdx>::items_len(node.inputs()),
-                    )+
-                }
-            }
-
-            #[auto_enum(DoubleEndedIterator)]
-            fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &NodeOutIdx)> + '_ {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutIdx>::items(node.inputs()),
-                    )+
-                }
-            }
-
-            #[auto_enum(DoubleEndedIterator)]
-            fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut NodeOutIdx)> + '_ {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutIdx>::items_mut(node.inputs_mut()),
-                    )+
-                }
-            }
-
-            fn by_ind(&self, ind: usize) -> &NodeOutIdx {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutIdx>::by_ind(node.inputs(), ind),
-                    )+
-                }
-            }
-
-            fn by_ind_mut(&mut self, ind: usize) -> &mut NodeOutIdx {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutIdx>::by_ind_mut(node.inputs_mut(), ind),
-                    )+
-                }
-            }
-
-        }
-
-        // should be the same as Node
-        #[derive(Debug)]
-        pub enum NodeOutputs {
-            $(
-                $kind($node),
-            )+
-        }
-
-        impl InOut<NodeOutput> for NodeOutputs {
-            fn items_len(&self) -> usize {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutput>::items_len(node.outputs()),
-                    )+
-                }
-            }
-
-            #[auto_enum(DoubleEndedIterator)]
-            fn items(&self) -> impl DoubleEndedIterator<Item = (usize, &NodeOutput)> + '_ {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutput>::items(node.outputs()),
-                    )+
-                }
-            }
-
-            #[auto_enum(DoubleEndedIterator)]
-            fn items_mut(&mut self) -> impl DoubleEndedIterator<Item = (usize, &mut NodeOutput)> + '_ {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutput>::items_mut(node.outputs_mut()),
-                    )+
-                }
-            }
-
-            fn by_ind(&self, ind: usize) -> &NodeOutput {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutput>::by_ind(node.outputs(), ind),
-                    )+
-                }
-            }
-
-            fn by_ind_mut(&mut self, ind: usize) -> &mut NodeOutput {
-                match self {
-                    $(
-                        Self::$kind(node) => InOut::<NodeOutput>::by_ind_mut(node.outputs_mut(), ind),
-                    )+
-                }
-            }
-        }
-
-        impl IsNode for NodeKind {
-            type Inputs = NodeInputs;
-            type Outputs = NodeOutputs;
-
-            fn inputs(&self) -> &NodeInputs {
-                unsafe { mem::transmute(self) }
-            }
-
-            fn inputs_mut(&mut self) -> &mut NodeInputs {
-                unsafe { mem::transmute(self) }
-        }
-
-            fn outputs(&self) -> &NodeOutputs {
-                unsafe { mem::transmute(self) }
-            }
-
-            fn outputs_mut(&mut self) -> &mut NodeOutputs {
-                unsafe { mem::transmute(self) }
-            }
-        }
-
-        pub enum NodeKindWithId<'n> {
-            $(
-                $kind(WithId<ModuleId, &'n $node>),
-            )+
-        }
-
-        impl<'n> NodeKindWithId<'n> {
-            fn new(module_id: ModuleId, kind: &'n NodeKind) -> Self {
-                match kind {
-                    $(
-                        NodeKind::$kind(kind) => Self::$kind(WithId::new(module_id, kind)),
-                    )+
-                }
-            }
-
-            pub fn clone(self) -> NodeKind {
-                match self {
-                    $(
-                        Self::$kind(with_id) => NodeKind::$kind(with_id.into_inner().clone()),
-                    )+
-                }
-            }
-        }
-
-        pub enum NodeKindWithIdMut<'n> {
-            $(
-                $kind(WithId<ModuleId, &'n mut $node>),
-            )+
-        }
-
-        impl<'n> NodeKindWithIdMut<'n> {
-            fn new(module_id: ModuleId, kind: &'n mut NodeKind) -> Self {
-                match kind {
-                    $(
-                        NodeKind::$kind(kind) => Self::$kind(WithId::new(module_id, kind)),
-                    )+
-                }
-            }
-        }
-
     };
 }
 
-impl !Sync for NodeKind {}
-impl !Send for NodeKind {}
-
 define_nodes!(
-    Input => Input,
-    Pass => Pass,
-    ModInst => ModInst,
-    Const => Const,
-    MultiConst => MultiConst,
-    Splitter => Splitter,
-    Merger => Merger,
-    ZeroExtend => ZeroExtend,
-    Mux => Mux,
     BinOp => BinOpNode,
     BitNot => BitNot,
-    Not => Not,
+    Const => Const,
     DFF => DFF,
+    Input => Input,
+    Merger => Merger,
+    ModInst => ModInst,
+    MultiConst => MultiConst,
+    Mux => Mux,
+    Pass => Pass,
+    Splitter => Splitter,
+    ZeroExtend => ZeroExtend,
 );
-
-impl NodeKind {}

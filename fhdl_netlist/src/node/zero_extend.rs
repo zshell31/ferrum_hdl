@@ -1,71 +1,60 @@
-use super::{IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
+    netlist::{Cursor, Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct ZeroExtend {
-    input: NodeOutIdx,
-    output: NodeOutput,
+    pub output: [NodeOutput; 1],
 }
 
-impl ZeroExtend {
-    pub fn new(ty: NodeTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
-        Self {
-            input: input.into(),
-            output: NodeOutput::wire(ty, sym.into()),
+#[derive(Debug)]
+pub struct ZeroExtendArgs {
+    pub ty: NodeTy,
+    pub input: Port,
+    pub sym: Option<Symbol>,
+}
+
+impl MakeNode<ZeroExtendArgs> for ZeroExtend {
+    fn make(module: &mut Module, args: ZeroExtendArgs) -> NodeId {
+        let width_in = module[args.input].width();
+        let width_out = args.ty.width();
+        if width_in > width_out {
+            panic!("ZeroExtend: output width {width_out} < input width {width_in}",);
         }
-    }
 
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
-}
+        let node_id = module.add_node(ZeroExtend {
+            output: [NodeOutput::wire(args.ty, args.sym)],
+        });
 
-impl WithId<ModuleId, &'_ ZeroExtend> {
-    pub fn input(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.input)
-    }
-}
+        module.add_edge(args.input, Port::new(node_id, 0));
 
-impl From<ZeroExtend> for NodeKind {
-    fn from(node: ZeroExtend) -> Self {
-        Self::ZeroExtend(node)
+        node_id
     }
 }
 
 impl IsNode for ZeroExtend {
-    type Inputs = NodeOutIdx;
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.input
+    #[inline]
+    fn in_count(&self) -> usize {
+        1
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.input
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let input = net_list[node.input()].width();
-        let output = self.output.width();
-
-        if input > output {
-            panic!(
-                "ZeroExtend: output width {} < input width {}",
-                output, input
-            );
-        }
+impl WithId<NodeId, &'_ ZeroExtend> {
+    pub fn input(&self, module: &Module) -> Port {
+        let mut incoming = module.incoming(self.id);
+        incoming.next(module).unwrap()
     }
 }

@@ -1,6 +1,10 @@
 use std::{convert::identity, fmt::Debug, iter, ops::Deref};
 
-use fhdl_netlist::{net_list::ModuleId, node::Pass, symbol::Symbol};
+use fhdl_netlist::{
+    netlist::{Module, ModuleId},
+    node::{Pass, PassArgs},
+    symbol::Symbol,
+};
 use rustc_hir::{def::DefKind, def_id::DefId, definitions::DefPathData};
 use rustc_index::IndexVec;
 use rustc_middle::{
@@ -22,7 +26,7 @@ use super::{
 };
 use crate::{
     blackbox::{bin_op::BinOp, un_op::BitNot},
-    compiler::{cons_::scalar_to_u128, pins::Idents},
+    compiler::{cons_::scalar_to_u128, item::ModuleExt, pins::Idents},
     error::{Error, SpanError, SpanErrorKind},
 };
 
@@ -111,17 +115,15 @@ impl<'tcx> Compiler<'tcx> {
                 return Err(SpanError::new(SpanErrorKind::UnsupportedLoops, span).into());
             }
 
-            let module_id = self.netlist.add_module(module_sym, top_module);
-            debug!("module_id = {module_id:?}");
-
+            let mut module = Module::new(module_sym, top_module);
             let mod_span = self.span_to_string(span, fn_did);
-            self.netlist.add_mod_span(module_id, mod_span);
+            module.set_span(mod_span);
 
             if !top_module && inline {
-                self.netlist[module_id].inline = true;
+                module.inline = true;
             }
 
-            let mut ctx = Context::new(fn_did, fn_generics, module_id, mir);
+            let mut ctx = Context::new(fn_did, module, fn_generics, mir);
 
             let inputs = mir
                 .local_decls
@@ -138,7 +140,7 @@ impl<'tcx> Compiler<'tcx> {
                             if place.projection.is_empty() =>
                         {
                             let name = var_debug_info.name.as_str();
-                            self.assign_names_to_item(name, input, true);
+                            ctx.module.assign_names_to_item(name, input, true);
                         }
                         VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
                             ctx.add_const(const_, input.clone());
@@ -155,22 +157,23 @@ impl<'tcx> Compiler<'tcx> {
                 let span = var_debug_info.source_info.span;
                 match var_debug_info.value {
                     VarDebugInfoContents::Place(place) => {
-                        let item = self.visit_rhs_place(&place, &ctx, span)?;
-                        self.assign_names_to_item(name, &item, true);
+                        let item = self.visit_rhs_place(&place, &mut ctx, span)?;
+                        ctx.module.assign_names_to_item(name, &item, true);
                     }
                     VarDebugInfoContents::Const(ConstOperand { const_, .. }) => {
                         if let Some(item) = ctx.find_const(&const_) {
-                            self.assign_names_to_item(name, item, true);
+                            ctx.module.assign_names_to_item(name, &item, true);
                         }
                     }
                 }
             }
 
-            let output = ctx.locals.get_mut(RETURN_PLACE);
-            self.visit_fn_output(ctx.module_id, output);
+            self.visit_fn_output(&mut ctx);
 
             if top_module {
                 if let Some(synth_attrs) = &synth_attrs {
+                    let output = ctx.locals.get(RETURN_PLACE);
+
                     if !synth_attrs.constr.is_empty() {
                         let idents = Idents::from_debug_info(mir);
                         let inputs_and_outputs =
@@ -186,6 +189,8 @@ impl<'tcx> Compiler<'tcx> {
                     }
                 }
             }
+
+            let module_id = self.netlist.add_module(ctx.module);
 
             self.evaluated_modules.insert(mono_item, module_id);
 
@@ -247,28 +252,30 @@ impl<'tcx> Compiler<'tcx> {
             .collect()
     }
 
-    pub fn visit_fn_output(&mut self, mod_id: ModuleId, output: &mut Item<'tcx>) {
-        output.traverse(|node_out_id| {
-            let node = &self.netlist[node_out_id.node_id()];
+    pub fn visit_fn_output(&self, ctx: &mut Context<'tcx>) {
+        let module = &mut ctx.module;
+        let output = ctx.locals.get_mut(RETURN_PLACE);
+
+        output.traverse(|port| {
+            let node = module.node(port.node);
 
             // Add pass if node is input or already added as output
-            let node_out_id = if node.is_input() || self.netlist.is_output(*node_out_id) {
-                let ty = node.only_one_out().ty;
+            let port = if node.is_input() || module.is_output(*port) {
                 let sym = node.only_one_out().sym;
-                let new_node_out_id = self
-                    .netlist
-                    .add_and_get_out(mod_id, Pass::new(ty, *node_out_id, sym));
-                *node_out_id = new_node_out_id;
 
-                new_node_out_id
+                let new_port =
+                    module.add_and_get_port::<_, Pass>(PassArgs { input: *port, sym });
+                *port = new_port;
+
+                new_port
             } else {
-                *node_out_id
+                *port
             };
 
-            self.netlist.add_output(node_out_id);
+            module.add_output(port);
         });
 
-        self.assign_names_to_item("out", output, false)
+        module.assign_names_to_item("out", output, false)
     }
 
     pub fn visit_blocks(
@@ -332,7 +339,7 @@ impl<'tcx> Compiler<'tcx> {
 
                             let bin_op = BinOp::try_from_op(*bin_op, span)?;
 
-                            Some(bin_op.bin_op(self, &lhs, &rhs, output_ty, ctx, span)?)
+                            Some(bin_op.bin_op(&lhs, &rhs, output_ty, ctx, span)?)
                         }
                         Rvalue::UnaryOp(UnOp::Not, operand) => {
                             let expr = self.visit_operand(operand, ctx, span)?;
@@ -402,8 +409,7 @@ impl<'tcx> Compiler<'tcx> {
                                             )
                                         };
 
-                                        Some(self.enum_variant_to_bitvec(
-                                            ctx.module_id,
+                                        Some(ctx.module.enum_variant_to_bitvec(
                                             data_part,
                                             ty,
                                             variant_idx,
@@ -675,7 +681,7 @@ impl<'tcx> Compiler<'tcx> {
                             }
 
                             if let Ok(ty) = self.resolve_ty(ty, ctx.generic_args, span) {
-                                if let Some(item) = self.mk_zero_sized_val(ty, ctx) {
+                                if let Some(item) = ctx.module.mk_zero_sized_val(ty) {
                                     return Ok(item);
                                 }
                             }
@@ -696,10 +702,15 @@ impl<'tcx> Compiler<'tcx> {
                                 false,
                             )?;
 
-                            let module =
-                                self.instantiate_module(module_id, iter::empty(), ctx);
+                            let mod_inst_id = self.instantiate_module(
+                                &mut ctx.module,
+                                module_id,
+                                iter::empty(),
+                            );
 
-                            return Ok(self.combine_outputs(module, output_ty));
+                            return Ok(ctx
+                                .module
+                                .combine_outputs(mod_inst_id, output_ty));
                         }
 
                         if let Some(item) =
@@ -740,7 +751,7 @@ impl<'tcx> Compiler<'tcx> {
     pub fn visit_rhs_place(
         &mut self,
         place: &Place<'tcx>,
-        ctx: &Context<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
@@ -760,14 +771,11 @@ impl<'tcx> Compiler<'tcx> {
                 PlaceElem::Subtype(_) => item,
                 PlaceElem::Field(idx, _) => item.by_field(idx),
                 PlaceElem::Downcast(_, variant_idx) => {
-                    let mod_id = ctx.module_id;
-
                     let enum_ty = item.ty.enum_ty();
-                    let variant = self.to_bitvec(mod_id, &item);
+                    let variant = ctx.module.to_bitvec(&item);
 
-                    self.enum_variant_from_bitvec(
-                        mod_id,
-                        variant.node_out_id(),
+                    ctx.module.enum_variant_from_bitvec(
+                        variant.port(),
                         enum_ty,
                         variant_idx,
                     )
@@ -800,10 +808,11 @@ impl<'tcx> Compiler<'tcx> {
 
         let is_std_call = self.is_std_call(fn_did);
 
-        if (instance_did.is_local() && !self.has_blackbox(fn_did))
+        if ((instance_did.is_local() || is_std_call)
+            && !self.has_blackbox(fn_did)
+            && !self.has_blackbox(instance_did))
             || self.is_synth(instance_did)
             || self.is_synth(fn_did)
-            || is_std_call
         {
             let inputs = self.visit_operands(inputs, ctx, span)?;
             let output_ty = self.fn_output(instance_did, instance.args);
@@ -812,13 +821,14 @@ impl<'tcx> Compiler<'tcx> {
             let module_id =
                 self.visit_fn((instance_did, instance.def).into(), instance.args, false)?;
             if is_std_call {
-                self.netlist[module_id].inline = true;
+                self.netlist[module_id].borrow_mut().inline = true;
             }
-            let module = self.instantiate_module(module_id, inputs.iter(), ctx);
+            let mod_inst_id =
+                self.instantiate_module(&mut ctx.module, module_id, inputs.iter());
             let span = self.span_to_string(span, ctx.fn_did);
-            self.netlist.add_span(module, span);
+            ctx.module.add_span(mod_inst_id, span);
 
-            Ok(self.combine_outputs(module, output_ty))
+            Ok(ctx.module.combine_outputs(mod_inst_id, output_ty))
         } else {
             let blackbox = self
                 .find_blackbox(instance_did, span)
@@ -897,24 +907,24 @@ impl<'tcx> Compiler<'tcx> {
 
         let module_id = self.visit_fn(fn_did.into(), fn_generics, false)?;
 
-        let module = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
-            self.netlist[module_id].inline = true;
+        let mod_inst_id = if let DefKind::Closure = self.tcx.def_kind(fn_did) {
+            self.netlist[module_id].borrow_mut().inline = true;
             self.instantiate_module(
+                &mut ctx.module,
                 module_id,
                 iter::once(closure).chain(inputs.iter()),
-                ctx,
             )
         } else {
-            self.instantiate_module(module_id, inputs, ctx)
+            self.instantiate_module(&mut ctx.module, module_id, inputs)
         };
 
         let node_span = self.span_to_string(span, ctx.fn_did);
-        self.netlist.add_span(module, node_span);
+        ctx.module.add_span(mod_inst_id, node_span);
 
         let output_ty = self.fn_output(fn_did, fn_generics);
         let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
-        let mut outputs = CombineOutputs::new(self, module);
+        let mut outputs = CombineOutputs::new(&ctx.module, mod_inst_id);
 
         Ok(outputs.next_output(output_ty))
     }

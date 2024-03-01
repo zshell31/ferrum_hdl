@@ -11,7 +11,8 @@ pub type Reset<D: ClockDomain> = Signal<D, bool>;
 impl<D: ClockDomain> Reset<D> {
     #[synth(inline)]
     pub fn reset() -> Self {
-        Self::lift(false)
+        let rst = Self::lift(false);
+        rst
     }
 
     pub fn reset_src() -> (Source<bool>, Self) {
@@ -25,7 +26,8 @@ pub type Enable<D: ClockDomain> = Signal<D, bool>;
 impl<D: ClockDomain> Enable<D> {
     #[synth(inline)]
     pub fn enable() -> Self {
-        Self::lift(true)
+        let en = Self::lift(true);
+        en
     }
 
     pub fn enable_src() -> (Source<bool>, Self) {
@@ -33,28 +35,16 @@ impl<D: ClockDomain> Enable<D> {
     }
 }
 
-#[blackbox(SignalReg)]
+#[synth(inline)]
+#[inline]
 pub fn reg<D: ClockDomain, T: SignalValue>(
-    _clock: Clock<D>,
+    clk: Clock<D>,
     rst: &Reset<D>,
-    rst_val: &T,
+    init: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let mut rst = rst.clone();
-    let rst_val = rst_val.borrow().clone();
-
-    let mut next_val = rst_val.clone();
-    Signal::new(move |ctx| {
-        if rst.next(ctx) {
-            // Asynchronous reset
-            next_val = rst_val.clone();
-            next_val.clone()
-        } else {
-            let val = next_val.clone();
-            next_val = (comb_fn)(val.clone());
-            val
-        }
-    })
+    let en = Enable::enable();
+    reg_en(clk, rst, &en, init, comb_fn)
 }
 
 #[synth(inline)]
@@ -68,23 +58,23 @@ pub fn reg0<D: ClockDomain, T: SignalValue + Default>(
     reg
 }
 
-#[blackbox(SignalRegEn)]
+#[blackbox(SignalReg)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     rst: &Reset<D>,
     en: &Enable<D>,
-    rst_val: &T,
+    init: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let mut rst = rst.clone();
     let mut en = en.clone();
-    let rst_val = rst_val.borrow().clone();
+    let init = init.borrow().clone();
 
-    let mut next_val = rst_val.clone();
+    let mut next_val = init.clone();
     Signal::new(move |ctx| {
         if rst.next(ctx) {
             // Asynchronous reset
-            next_val = rst_val.clone();
+            next_val = init.clone();
             next_val.clone()
         } else if en.next(ctx) {
             let val = next_val.clone();

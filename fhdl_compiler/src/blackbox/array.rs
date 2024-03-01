@@ -4,7 +4,7 @@ use rustc_span::Span;
 use super::{args, EvalExpr};
 use crate::{
     compiler::{
-        item::{Group, Item},
+        item::{Group, Item, ModuleExt},
         item_ty::ItemTy,
         Compiler, Context,
     },
@@ -34,11 +34,8 @@ impl<'tcx> EvalExpr<'tcx> for Chain {
         let array = Item::new(
             array_ty,
             Group::try_new((0 .. count).map(|idx| {
-                let idx =
-                    compiler
-                        .netlist
-                        .const_val(ctx.module_id, idx_ty.to_bitvec(), idx);
-                let idx = compiler.from_bitvec(ctx.module_id, idx, idx_ty);
+                let idx = ctx.module.const_val(idx_ty.to_bitvec(), idx);
+                let idx = ctx.module.from_bitvec(idx, idx_ty);
 
                 let inputs = &[idx, prev.clone()];
 

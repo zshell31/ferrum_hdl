@@ -1,4 +1,4 @@
-use fhdl_netlist::node::BitNot as BitNotNode;
+use fhdl_netlist::node::{BitNot as BitNotNode, BitNotArgs};
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
@@ -11,18 +11,19 @@ pub struct BitNot;
 
 impl BitNot {
     pub fn not<'tcx>(
-        compiler: &mut Compiler<'tcx>,
+        _: &mut Compiler<'tcx>,
         expr: &Item<'tcx>,
-        ctx: &Context<'tcx>,
+        ctx: &mut Context<'tcx>,
     ) -> Result<Item<'tcx>, Error> {
         let ty = expr.ty;
 
         Ok(Item::new(
             ty,
-            compiler.netlist.add_and_get_out(
-                ctx.module_id,
-                BitNotNode::new(ty.node_ty(), expr.node_out_id(), None),
-            ),
+            ctx.module.add_and_get_port::<_, BitNotNode>(BitNotArgs {
+                ty: ty.node_ty(),
+                input: expr.port(),
+                sym: None,
+            }),
         ))
     }
 }

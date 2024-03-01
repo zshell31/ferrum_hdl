@@ -14,7 +14,7 @@ mod trie;
 use std::{
     env,
     fmt::Display,
-    fs, io,
+    fs, io, iter,
     mem::transmute,
     path::{Component, Path as StdPath, PathBuf},
     time::Instant,
@@ -25,9 +25,8 @@ pub use context::Context;
 use fhdl_cli::CompilerArgs;
 use fhdl_common::{BlackboxKind, NonEmptyStr};
 use fhdl_netlist::{
-    backend::Verilog,
-    net_list::{ModuleId, NetList, NodeOutId},
-    node::{Splitter, ZeroExtend},
+    netlist::{Module, ModuleId, NetList, Port},
+    node::{Splitter, SplitterArgs, ZeroExtend, ZeroExtendArgs},
     node_ty::NodeTy,
 };
 use rustc_data_structures::fx::FxHashMap;
@@ -45,7 +44,10 @@ use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
 pub use sym_ident::SymIdent;
 
 use self::{
-    item_ty::ItemTy, mir::DefIdOrPromoted, pins::PinConstraints, switch::SwitchBlocks,
+    item_ty::{ItemTy, ItemTyKind},
+    mir::DefIdOrPromoted,
+    pins::PinConstraints,
+    switch::SwitchBlocks,
 };
 use crate::error::{Error, SpanError};
 
@@ -188,6 +190,7 @@ pub struct Compiler<'tcx> {
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     switch_meta: FxHashMap<DefId, SwitchBlocks>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
+    allocated_ty: FxHashMap<ItemTyKind<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
     pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
 }
@@ -211,6 +214,7 @@ impl<'tcx> Compiler<'tcx> {
             evaluated_modules: Default::default(),
             switch_meta: Default::default(),
             item_ty: Default::default(),
+            allocated_ty: Default::default(),
             file_names: Default::default(),
             pin_constr: Default::default(),
         }
@@ -246,23 +250,16 @@ impl<'tcx> Compiler<'tcx> {
 
         let elapsed = Instant::now();
 
-        self.visit_fn(
+        let top = self.visit_fn(
             DefId::from(self.top_module.hir_id().owner).into(),
             GenericArgs::empty(),
             true,
         )?;
 
-        self.netlist.assert();
-        self.netlist.transform();
-        self.netlist.reachability();
-        self.netlist.set_names();
+        self.netlist.run_visitors();
 
-        if self.args.dump_netlist {
-            self.netlist.dump(true);
-        } else {
-            let verilog = Verilog::new(&self.netlist).generate();
-            fs::write(path, verilog)?;
-        }
+        let verilog = self.netlist.synth_verilog();
+        fs::write(path, verilog)?;
 
         self.print_message(
             &"Synthesized",
@@ -273,7 +270,8 @@ impl<'tcx> Compiler<'tcx> {
             let constr_path = root_dir.join("constr");
             fs::create_dir_all(&constr_path)?;
 
-            self.write_pin_constraints(constr_path)?;
+            let top = self.netlist[top].borrow();
+            self.write_pin_constraints(&top, constr_path)?;
         }
 
         Ok(())
@@ -322,23 +320,27 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     pub fn trunc_or_extend(
-        &mut self,
-        mod_id: ModuleId,
-        from: NodeOutId,
+        module: &mut Module,
+        from: Port,
         from_ty: NodeTy,
         to_ty: NodeTy,
-    ) -> NodeOutId {
+    ) -> Port {
         let from_width = from_ty.width();
         let to_width = to_ty.width();
 
         if from_width >= to_width {
-            self.netlist.add_and_get_out(
-                mod_id,
-                Splitter::new(from, [(to_ty, None)], None, false),
-            )
+            module.add_and_get_port::<_, Splitter>(SplitterArgs {
+                input: from,
+                outputs: iter::once((to_ty, None)),
+                start: None,
+                rev: false,
+            })
         } else {
-            self.netlist
-                .add_and_get_out(mod_id, ZeroExtend::new(to_ty, from, None))
+            module.add_and_get_port::<_, ZeroExtend>(ZeroExtendArgs {
+                ty: to_ty,
+                input: from,
+                sym: None,
+            })
         }
     }
 

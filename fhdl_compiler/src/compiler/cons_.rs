@@ -42,7 +42,7 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         unevaluated: UnevaluatedConst<'tcx>,
         ty: Ty<'tcx>,
-        ctx: &Context<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Option<Item<'tcx>> {
         debug!("resolve_unevaluated: unevaluated = {unevaluated:?} ty = {ty:?}");
@@ -52,14 +52,17 @@ impl<'tcx> Compiler<'tcx> {
             .ok()?;
 
         match ty.kind() {
+            ItemTyKind::Node(node_ty @ NodeTy::Bit) => {
+                let val = self.const_eval_resolve(unevaluated)?;
+                let val = const_val_to_u128(val)?;
+
+                Some(Item::new(ty, ctx.module.const_val(*node_ty, val)))
+            }
             ItemTyKind::Node(node_ty @ NodeTy::Unsigned(n)) if *n <= 128 => {
                 let val = self.const_eval_resolve(unevaluated)?;
                 let val = const_val_to_u128(val)?;
 
-                Some(Item::new(
-                    ty,
-                    self.netlist.const_val(ctx.module_id, *node_ty, val),
-                ))
+                Some(Item::new(ty, ctx.module.const_val(*node_ty, val)))
             }
             ItemTyKind::Array(array_ty) => {
                 if let ItemTyKind::Node(node_ty @ NodeTy::Unsigned(8)) =
@@ -96,11 +99,7 @@ impl<'tcx> Compiler<'tcx> {
 
                                     Some(Item::new(
                                         item_ty,
-                                        self.netlist.const_val(
-                                            ctx.module_id,
-                                            *node_ty,
-                                            val,
-                                        ),
+                                        ctx.module.const_val(*node_ty, val),
                                     ))
                                 }))?,
                             ));
@@ -134,14 +133,11 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         ty: Ty<'tcx>,
         value: u128,
-        ctx: &Context<'tcx>,
+        ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         let ty = self.resolve_ty(ty, ctx.generic_args, span)?;
 
-        Ok(Item::new(
-            ty,
-            self.netlist.const_val(ctx.module_id, ty.to_bitvec(), value),
-        ))
+        Ok(Item::new(ty, ctx.module.const_val(ty.to_bitvec(), value)))
     }
 }

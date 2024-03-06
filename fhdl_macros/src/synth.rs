@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashSet, rc::Rc};
 
 use darling::{ast::NestedMeta, util::Flag, FromMeta};
 use fhdl_common::{
     Constraint, NonEmptyAsciiStr, NonEmptyStr, Pin, SynthAttrs as CommonSynthAttrs,
     Vendor,
 };
+use indexmap::{IndexMap, IndexSet};
 use proc_macro::TokenStream;
 use proc_macro2::{Ident, TokenStream as TokenStream2};
 use quote::{quote, ToTokens};
@@ -30,7 +31,9 @@ enum PinDescr {
 impl From<PinDescr> for Pin {
     fn from(descr: PinDescr) -> Self {
         match descr {
-            PinDescr::Short(name) => Pin { name },
+            PinDescr::Short(name) => Pin {
+                name: Rc::new(name),
+            },
             PinDescr::Detailed(pin) => pin,
         }
     }
@@ -94,19 +97,101 @@ impl FromMeta for PinDescrs {
     }
 }
 
+#[derive(Debug, Default)]
+struct Pins(IndexMap<Ident, PinDescrs>);
+
+impl FromMeta for Pins {
+    fn from_expr(expr: &Expr) -> darling::Result<Self> {
+        if let Expr::Tuple(tuple) = expr {
+            Self::from_tuple(tuple)
+        } else {
+            Err(darling::Error::unexpected_expr_type(expr).with_span(&expr.span()))
+        }
+    }
+    fn from_list(nested: &[NestedMeta]) -> darling::Result<Self> {
+        fn from_path(path: &syn::Path) -> darling::Result<Ident> {
+            if path.segments.len() == 1
+                && path.leading_colon.is_none()
+                && path.segments[0].arguments.is_empty()
+            {
+                Ok(path.segments[0].ident.clone())
+            } else {
+                Err(darling::Error::custom("Key must be an identifier").with_span(path))
+            }
+        }
+
+        let pairs = nested.iter().map(
+            |item| -> darling::Result<(&syn::Path, darling::Result<PinDescrs>)> {
+                match *item {
+                    NestedMeta::Meta(ref inner) => {
+                        let path = inner.path();
+                        Ok((
+                            path,
+                            FromMeta::from_meta(inner).map_err(|e| e.at_path(path)),
+                        ))
+                    }
+                    NestedMeta::Lit(_) => {
+                        Err(darling::Error::unsupported_format("expression"))
+                    }
+                }
+            },
+        );
+
+        let mut errors = darling::Error::accumulator();
+        let mut seen_keys = HashSet::with_capacity(nested.len());
+        let mut map = IndexMap::with_capacity(nested.len());
+
+        for item in pairs {
+            if let Some((path, value)) = errors.handle(item) {
+                let key: Ident = match from_path(path) {
+                    Ok(k) => k,
+                    Err(e) => {
+                        errors.push(e);
+                        errors.handle(value);
+
+                        continue;
+                    }
+                };
+
+                let already_seen = seen_keys.contains(&key);
+
+                if already_seen {
+                    errors.push(
+                        darling::Error::duplicate_field(&key.to_string()).with_span(path),
+                    );
+                }
+
+                match value {
+                    Ok(_) if already_seen => {}
+                    Ok(val) => {
+                        map.insert(key.clone(), val);
+                    }
+                    Err(e) => {
+                        errors.push(e);
+                    }
+                }
+
+                seen_keys.insert(key);
+            }
+        }
+
+        errors.finish_with(Pins(map))
+    }
+}
+
 #[derive(Debug, FromMeta)]
 struct Constraint_ {
     vendor: Vendor,
     name: SpannedValue<NonEmptyStr>,
     #[darling(default)]
-    pins: SpannedValue<HashMap<Ident, PinDescrs>>,
+    pins: SpannedValue<Pins>,
 }
 
 impl Constraint_ {
     fn try_from_tuple(tuple: &ExprTuple) -> darling::Result<Self> {
         let this = Self::from_tuple(tuple)?;
 
-        if !this.pins.is_empty() {
+        if !this.pins.0.is_empty() {
             Ok(this)
         } else {
             Err(darling::Error::custom("pins are not specified")
@@ -123,6 +208,7 @@ impl From<Constraint_> for Constraint {
             pins: constr
                 .pins
                 .into_inner()
+                .0
                 .into_iter()
                 .map(|(ident, pins)| (ident.to_string(), pins.into()))
                 .collect(),
@@ -164,7 +250,7 @@ impl FromMeta for Constraints_ {
 
                 Ok(Self(constr))
             }
-            _ => Ok(Self::default()),
+            _ => Err(darling::Error::unexpected_expr_type(expr).with_span(&expr.span())),
         }
     }
 }
@@ -287,7 +373,7 @@ impl SynthAttrs {
         let attrs = syn::parse::<SynthAttrs_>(attrs)?;
 
         let mut idents = None;
-        let mut names = HashSet::<String>::default();
+        let mut names = IndexSet::<String>::default();
         let mut constrs = SmallVec::with_capacity(attrs.constr.0.len());
 
         let mut errors = darling::Error::accumulator();
@@ -305,7 +391,7 @@ impl SynthAttrs {
             }
             names.insert(name);
 
-            if !constr.pins.is_empty() {
+            if !constr.pins.0.is_empty() {
                 if idents.is_none() {
                     let item_fn = syn::parse::<ItemFn>(input.clone())?;
 
@@ -331,7 +417,7 @@ impl SynthAttrs {
                 let idents = idents.as_ref().unwrap();
 
                 for ident in idents {
-                    if !constr.pins.contains_key(ident) {
+                    if !constr.pins.0.contains_key(ident) {
                         errors.push(
                             darling::Error::custom(format_args!(
                                 "pins are not specified for ident '{}' for constraint '{}'",
@@ -343,7 +429,7 @@ impl SynthAttrs {
                     }
                 }
 
-                for ident in constr.pins.keys() {
+                for ident in constr.pins.0.keys() {
                     if !idents.contains(ident) {
                         errors.push(
                             darling::Error::custom(format_args!(

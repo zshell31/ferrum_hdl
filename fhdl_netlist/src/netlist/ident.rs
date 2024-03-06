@@ -98,6 +98,12 @@ impl Port {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PortPos {
+    Input(usize),
+    Output(usize),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct WithId<I, T> {
     pub id: I,

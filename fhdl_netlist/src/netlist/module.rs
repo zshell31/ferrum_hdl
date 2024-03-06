@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use super::{
     graph::{IncomingEdges, OutgoingEdges},
     list::{List, ListCursor, ListStorage},
-    Graph, IndexType, ListItem, ModuleId, NodeId, Port, WithId,
+    Graph, IndexType, ListItem, ModuleId, NodeId, Port, PortPos, WithId,
 };
 use crate::{
     const_val::ConstVal,
@@ -322,6 +322,20 @@ impl Module {
         self.outputs
             .iter()
             .all(|port| self.graph[port.node].is_const())
+    }
+
+    pub fn port_pos(&self, port: Port) -> Option<PortPos> {
+        self.inputs
+            .get_index_of(&port)
+            .map(PortPos::Input)
+            .or_else(|| self.outputs.get_index_of(&port).map(PortPos::Output))
+    }
+
+    pub fn get_port_by_pos(&self, port_pos: PortPos) -> Port {
+        match port_pos {
+            PortPos::Input(idx) => self.inputs[idx],
+            PortPos::Output(idx) => self.outputs[idx],
+        }
     }
 
     #[inline]

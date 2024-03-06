@@ -24,9 +24,10 @@ ferrum_hdl = { path = "../" }
 fhdl_cli = { path = "../fhdl_cli" }
 fhdl_common = { path = "../fhdl_common" }
 fhdl_netlist = { path = "../fhdl_netlist" }
+indexmap = { workspace = true, features = ["serde"] }
 itertools = { workspace = true }
 once_cell = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["rc"] }
 serde_json = { workspace = true }
 thiserror = "1.0"
 tracing = { workspace = true }

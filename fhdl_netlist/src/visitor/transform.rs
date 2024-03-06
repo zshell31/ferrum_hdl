@@ -331,15 +331,19 @@ impl Transform {
                 };
 
                 if replace {
+                    let rst_kind = dff.rst_kind;
+                    let rst_pol = dff.rst_pol;
+                    let sym = dff.output[0].sym;
+
                     module.replace::<_, DFF>(node_id, DFFArgs {
-                        rst_kind: dff.rst_kind,
-                        rst_pol: dff.rst_pol,
+                        rst_kind,
+                        rst_pol,
                         clk,
                         rst,
                         en,
                         init,
                         data: TyOrData::Data(data),
-                        sym: dff.output[0].sym,
+                        sym,
                     });
                 } else if true_rst || false_en {
                     let old_port = Port::new(node_id, 0);

@@ -9,7 +9,7 @@ bumpalo = { workspace = true, features = ["collections"] }
 clap = { workspace = true }
 derive-where = "1.2.5"
 either = { workspace = true }
-indexmap = "2.2.2"
+indexmap = { workspace = true }
 fhdl_const_func = { path = "../fhdl_const_func/" }
 ferrum_hdl = { path = "../" }
 once_cell = { workspace = true }

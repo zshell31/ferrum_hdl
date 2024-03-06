@@ -1,6 +1,7 @@
-use std::collections::HashMap;
+use std::rc::Rc;
 
 use darling::FromMeta;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 
@@ -13,14 +14,14 @@ pub enum Vendor {
 
 #[derive(Debug, Clone, FromMeta, Serialize, Deserialize)]
 pub struct Pin {
-    pub name: NonEmptyAsciiStr,
+    pub name: Rc<NonEmptyAsciiStr>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Constraint {
     pub vendor: Vendor,
     pub name: NonEmptyStr,
-    pub pins: HashMap<String, SmallVec<[Pin; 1]>>,
+    pub pins: IndexMap<String, SmallVec<[Pin; 1]>>,
 }
 
 impl Constraint {

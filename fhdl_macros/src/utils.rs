@@ -130,7 +130,7 @@ pub trait MetaExt: FromMeta + Sized {
             .into_iter()
             .collect::<Vec<_>>();
 
-        Self::from_list(&items)
+        Self::from_list(&items).map_err(|e| e.with_span(&tuple.span()))
     }
 
     fn from_paren(paren: &ExprParen) -> darling::Result<Self> {

@@ -12,6 +12,7 @@ darling = "0.20.6"
 either = { workspace = true }
 fhdl_common = { path = "../fhdl_common/" }
 fhdl_const_func = { path = "../fhdl_const_func/" }
+indexmap = { workspace = true, features = ["serde"] }
 proc-macro2 = "1.0"
 quote = "1.0"
 serde = { workspace = true }

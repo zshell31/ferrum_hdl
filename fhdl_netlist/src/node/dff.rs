@@ -1,3 +1,5 @@
+use ferrum_hdl::domain::{Polarity, SyncKind};
+
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
     netlist::{Cursor, Module, NodeId, Port, WithId},
@@ -7,6 +9,8 @@ use crate::{
 
 #[derive(Debug, Clone, Copy)]
 pub struct DFF {
+    pub rst_kind: SyncKind,
+    pub rst_pol: Polarity,
     pub has_rst: bool,
     pub has_en: bool,
     pub has_data: bool,
@@ -24,6 +28,8 @@ pub enum TyOrData {
 pub struct DFFArgs {
     pub clk: Port,
     pub rst: Option<Port>,
+    pub rst_kind: SyncKind,
+    pub rst_pol: Polarity,
     pub en: Option<Port>,
     pub init: Port,
     pub data: TyOrData,
@@ -68,6 +74,8 @@ impl MakeNode<DFFArgs> for DFF {
         let DFFArgs {
             clk,
             rst,
+            rst_kind,
+            rst_pol,
             en,
             init,
             data,
@@ -80,6 +88,8 @@ impl MakeNode<DFFArgs> for DFF {
         };
 
         let node_id = module.add_node(DFF {
+            rst_kind,
+            rst_pol,
             has_rst: rst.is_some(),
             has_en: en.is_some(),
             has_data,

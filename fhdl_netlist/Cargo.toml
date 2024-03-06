@@ -11,6 +11,7 @@ derive-where = "1.2.5"
 either = { workspace = true }
 indexmap = "2.2.2"
 fhdl_const_func = { path = "../fhdl_const_func/" }
+ferrum_hdl = { path = "../" }
 once_cell = { workspace = true }
 rustc-hash = "1.1.0"
 serde = { workspace = true }

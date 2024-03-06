@@ -333,6 +333,7 @@ dependencies = [
  "clap",
  "derive-where",
  "either",
+ "ferrum_hdl",
  "fhdl_const_func",
  "indexmap",
  "once_cell",

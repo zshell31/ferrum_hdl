@@ -5,6 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
+use either::Either;
 use ferrum_hdl::const_functions::{clog2, clog2_len};
 use fhdl_common::BlackboxTy;
 use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
@@ -235,6 +236,29 @@ impl<'tcx> EnumTy<'tcx> {
     #[inline]
     pub fn by_variant_idx(&self, variant_idx: VariantIdx) -> Variant<'tcx> {
         self.by_idx(variant_idx.as_usize())
+    }
+
+    #[inline]
+    pub fn discriminants(&self) -> impl Iterator<Item = Variant<'tcx>> + '_ {
+        match self.discr {
+            Some(discr) => Either::Left(discr.iter().enumerate().map(|(idx, discr)| {
+                let ty = self.variants[idx];
+
+                Variant { discr: *discr, ty }
+            })),
+            None => Either::Right((0 .. self.variants.len()).map(|idx| {
+                let ty = self.variants[idx];
+
+                Variant {
+                    discr: idx as u128,
+                    ty,
+                }
+            })),
+        }
+    }
+
+    pub fn is_fieldless(&self) -> bool {
+        self.variants.iter().all(|variant| variant.width() == 0)
     }
 }
 

@@ -9,7 +9,7 @@ use derive_where::derive_where;
 pub use fhdl_macros::SignalValue;
 use fhdl_macros::{blackbox, blackbox_ty, synth};
 pub use ops::IntoSignal;
-pub use reg::{reg, reg0, reg_en, reg_en0, Enable, Reset};
+pub use reg::{dff, reg, reg0, reg_en, reg_en0, Enable, Reset};
 pub use sim::{SignalIterExt, Source};
 pub use wrapped::Wrapped;
 

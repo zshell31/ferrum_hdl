@@ -1,3 +1,4 @@
+use ferrum_hdl::domain::{Polarity, SyncKind};
 use fhdl_netlist::node::{DFFArgs, TyOrData, DFF};
 use rustc_span::Span;
 
@@ -8,7 +9,7 @@ use crate::{
         item_ty::ItemTy,
         Compiler, Context, SymIdent,
     },
-    error::Error,
+    error::{Error, SpanError, SpanErrorKind},
 };
 
 pub struct SignalReg;
@@ -22,16 +23,30 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        args!(args as clk, rst, en, init, comb);
+        args!(args as clk, rst, en, init, comb, rst_kind, rst_pol);
 
         let clk = clk.port();
         let rst = ctx.module.to_bitvec(rst).port();
         let en = ctx.module.to_bitvec(en).port();
         let init = ctx.module.to_bitvec(init).port();
 
+        let rst_kind = ctx
+            .module
+            .to_const_val(rst_kind)
+            .and_then(SyncKind::from_val)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::InvalidResetKind, span))?;
+
+        let rst_pol = ctx
+            .module
+            .to_const_val(rst_pol)
+            .and_then(Polarity::from_val)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::InvalidResetPolarity, span))?;
+
         let dff = ctx.module.add_and_get_port::<_, DFF>(DFFArgs {
             clk,
             rst: Some(rst),
+            rst_kind,
+            rst_pol,
             en: Some(en),
             init,
             data: TyOrData::Ty(output_ty.to_bitvec()),

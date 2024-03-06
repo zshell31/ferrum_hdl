@@ -3,7 +3,7 @@ use std::borrow::Borrow;
 use fhdl_macros::{blackbox, synth};
 
 use super::{Signal, SignalValue, Source};
-use crate::domain::{Clock, ClockDomain};
+use crate::domain::{Clock, ClockDomain, Polarity, SyncKind};
 
 #[allow(type_alias_bounds)]
 pub type Reset<D: ClockDomain> = Signal<D, bool>;
@@ -44,7 +44,8 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let en = Enable::enable();
-    reg_en(clk, rst, &en, init, comb_fn)
+    let reg = reg_en(clk, rst, &en, init, comb_fn);
+    reg
 }
 
 #[synth(inline)]
@@ -58,13 +59,36 @@ pub fn reg0<D: ClockDomain, T: SignalValue + Default>(
     reg
 }
 
-#[blackbox(SignalReg)]
+#[synth(inline)]
+#[inline]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
+    clk: Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    let reg = dff::<D, T>(
+        clk,
+        rst,
+        en,
+        init,
+        comb_fn,
+        D::RESET_KIND,
+        D::RESET_POLARITY,
+    );
+    reg
+}
+
+#[blackbox(SignalReg)]
+pub fn dff<D: ClockDomain, T: SignalValue>(
     _clock: Clock<D>,
     rst: &Reset<D>,
     en: &Enable<D>,
     init: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
+    _rst_kind: SyncKind,
+    _rst_polarity: Polarity,
 ) -> Signal<D, T> {
     let mut rst = rst.clone();
     let mut en = en.clone();

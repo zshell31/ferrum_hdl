@@ -34,12 +34,14 @@ pub mod prelude {
         cast::{Cast, CastFrom},
         const_helpers::{Assert, ConstConstr, IsTrue},
         domain::{
-            clk_divider, hz_to_period, Clock, ClockDomain, TestDomain, MICROSECOND,
-            MILLISECOND, NANOSECOND, PICOSECOND, SECOND, TD16, TD4, TD8,
+            clk_divider, hz_to_period, Clock, ClockDomain, Polarity, SyncKind,
+            TestDomain, MICROSECOND, MILLISECOND, NANOSECOND, PICOSECOND, SECOND, TD16,
+            TD4, TD8,
         },
         index::{idx_constr, Idx},
         signal::{
-            reg, reg0, reg_en, reg_en0, Enable, IntoSignal, Reset, Signal, SignalValue,
+            dff, reg, reg0, reg_en, reg_en0, Enable, IntoSignal, Reset, Signal,
+            SignalValue,
         },
         simulation::Simulate,
         unsigned::{Unsigned, U},

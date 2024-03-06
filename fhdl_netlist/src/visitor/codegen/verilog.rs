@@ -1,3 +1,4 @@
+use ferrum_hdl::domain::{Polarity, SyncKind};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -470,7 +471,10 @@ impl<'n> Verilog<'n> {
                 self.buffer
                     .write_fmt(format_args!("always @(posedge {clk}"));
                 if let Some(rst) = rst {
-                    self.buffer.write_fmt(format_args!(" or posedge {rst}"));
+                    if let SyncKind::Async = dff.rst_kind {
+                        let polarity = dff.rst_pol;
+                        self.buffer.write_fmt(format_args!(" or {polarity} {rst}"));
+                    }
                 }
                 self.buffer.write_str(") begin\n");
 
@@ -480,7 +484,14 @@ impl<'n> Verilog<'n> {
                     let mut else_ = false;
                     if let Some(rst) = rst {
                         self.buffer.write_tab();
-                        self.buffer.write_fmt(format_args!("if ({rst})\n"));
+                        match dff.rst_pol {
+                            Polarity::ActiveHigh => {
+                                self.buffer.write_fmt(format_args!("if ({rst})\n"));
+                            }
+                            Polarity::ActiveLow => {
+                                self.buffer.write_fmt(format_args!("if (!{rst})\n"));
+                            }
+                        }
 
                         self.buffer.push_tab();
 

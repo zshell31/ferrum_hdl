@@ -67,6 +67,10 @@ pub enum SpanErrorKind {
     UnsupportedConversion,
     #[error("loops are unsupported")]
     UnsupportedLoops,
+    #[error("invalid reset kind")]
+    InvalidResetKind,
+    #[error("invalid reset polarity")]
+    InvalidResetPolarity,
 
     #[error("not synthesizable type '{0}'")]
     NotSynthType(String),

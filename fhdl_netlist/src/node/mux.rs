@@ -39,7 +39,7 @@ where
         let node_id = module.add_node(Mux {
             cases: SmallVec::new(),
             inputs: 0,
-            output: [NodeOutput::wire(args.ty, args.sym)],
+            output: [NodeOutput::reg(args.ty, args.sym)],
             has_default: args.default.is_some(),
         });
 

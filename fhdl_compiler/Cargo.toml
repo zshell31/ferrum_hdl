@@ -1,7 +1,12 @@
 [package]
 name = "fhdl_compiler"
-version = "0.2.0"
+version.workspace = true
+description = "The Ferrum HDL compiler"
+repository.workspace = true
+keywords.workspace = true
+authors.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "fhdl"

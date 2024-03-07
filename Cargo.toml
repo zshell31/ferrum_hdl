@@ -6,7 +6,8 @@ members = [
   "fhdl_compiler",
   "fhdl_const_func",
   "fhdl_macros",
-  "fhdl_netlist"
+  "fhdl_netlist",
+  "fhdl_sim"
 ]
 
 [workspace.package]

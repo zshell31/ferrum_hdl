@@ -1,3 +1,4 @@
+#![deny(unused_must_use)]
 #![feature(negative_impls)]
 #![feature(iter_intersperse)]
 #![feature(type_alias_impl_trait)]

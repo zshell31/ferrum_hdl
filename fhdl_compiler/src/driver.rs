@@ -1,3 +1,4 @@
+#![deny(unused_must_use)]
 #![feature(rustc_private)]
 #![feature(iter_intersperse)]
 #![feature(min_specialization)]

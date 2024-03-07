@@ -1,35 +1,33 @@
-use std::fmt::{Arguments, Write};
+use std::{
+    fmt::Arguments,
+    io::{Result, Write},
+};
 
-#[derive(Default)]
-pub struct Buffer {
-    pub buffer: String,
+pub struct Buffer<W> {
+    pub inner: W,
     pub tab: u8,
 }
 
 const TAB: &str = "    ";
 
-impl Buffer {
-    pub fn new() -> Self {
-        Self::default()
+impl<W: Write> Buffer<W> {
+    pub fn new(inner: W) -> Self {
+        Self { inner, tab: 0 }
     }
 
-    pub fn new_with_ident(ident: u8) -> Self {
-        Self {
-            tab: ident,
-            ..Default::default()
-        }
+    pub fn write_char(&mut self, c: char) -> Result<()> {
+        let mut b = [0; 2];
+        let b = c.encode_utf8(&mut b).as_bytes();
+
+        self.inner.write_all(b)
     }
 
-    pub fn write_char(&mut self, c: char) {
-        self.buffer.write_char(c).unwrap();
+    pub fn write_str(&mut self, s: &str) -> Result<()> {
+        self.inner.write_all(s.as_bytes())
     }
 
-    pub fn write_str(&mut self, s: &str) {
-        self.buffer.write_str(s).unwrap();
-    }
-
-    pub fn write_fmt(&mut self, args: Arguments<'_>) {
-        self.buffer.write_fmt(args).unwrap();
+    pub fn write_fmt(&mut self, args: Arguments<'_>) -> Result<()> {
+        self.inner.write_fmt(args)
     }
 
     pub fn push_tab(&mut self) {
@@ -37,46 +35,46 @@ impl Buffer {
     }
 
     pub fn pop_tab(&mut self) {
-        if self.tab > 0 {
-            self.tab -= 1;
-        }
+        self.tab = self.tab.saturating_sub(1);
     }
 
-    pub fn write_tab(&mut self) {
+    pub fn write_tab(&mut self) -> Result<()> {
         for _ in 0 .. self.tab {
-            self.write_str(TAB);
+            self.write_str(TAB)?;
         }
+
+        Ok(())
     }
 
-    pub fn write_eol(&mut self) {
-        self.write_char('\n');
+    #[inline]
+    pub fn write_eol(&mut self) -> Result<()> {
+        self.write_char('\n')
     }
 
-    pub fn extend(&mut self, buffer: Buffer) {
-        self.buffer.push_str(&buffer.buffer);
-    }
-
-    pub fn write_template(&mut self, template: Arguments<'_>) {
+    pub fn write_template(&mut self, template: Arguments<'_>) -> Result<()> {
         for line in template.to_string().trim().lines() {
-            self.write_tab();
-            self.write_str(line);
-            self.write_eol();
+            self.write_tab()?;
+            self.write_str(line)?;
+            self.write_eol()?;
         }
-        self.write_eol();
+
+        Ok(())
     }
 
     pub fn intersperse<T>(
         &mut self,
         sep: &str,
         iter: impl IntoIterator<Item = T>,
-        f: impl Fn(&mut Self, T),
-    ) {
+        f: impl Fn(&mut Self, T) -> Result<()>,
+    ) -> Result<()> {
         let mut peekable = iter.into_iter().peekable();
         while let Some(item) = peekable.next() {
-            f(self, item);
+            f(self, item)?;
             if peekable.peek().is_some() {
-                self.write_str(sep);
+                self.write_str(sep)?;
             }
         }
+
+        Ok(())
     }
 }

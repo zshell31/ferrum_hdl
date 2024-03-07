@@ -1,12 +1,13 @@
 [workspace]
 members = [
   ".",
+  "fhdl_cli",
   "fhdl_common",
   "fhdl_compiler",
   "fhdl_const_func",
   "fhdl_macros",
   "fhdl_netlist",
-  "fhdl_cli"
+  "fhdl_sim"
 ]
 
 [workspace.package]

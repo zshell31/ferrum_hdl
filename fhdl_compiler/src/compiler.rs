@@ -258,8 +258,7 @@ impl<'tcx> Compiler<'tcx> {
 
         self.netlist.run_visitors();
 
-        let verilog = self.netlist.synth_verilog();
-        fs::write(path, verilog)?;
+        self.netlist.synth_verilog_into_file(path)?;
 
         self.print_message(
             &"Synthesized",

@@ -4,6 +4,12 @@ mod reachability;
 mod set_names;
 mod transform;
 
+use std::{
+    fs::File,
+    io::{self, BufWriter, Write},
+    path::Path,
+};
+
 use codegen::Verilog;
 use reachability::Reachability;
 use set_names::SetNames;
@@ -31,8 +37,14 @@ impl NetList {
         SetNames::new().run(self);
     }
 
-    pub fn synth_verilog(&self) -> String {
-        Verilog::new(self).synth()
+    pub fn synth_verilog_into_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let file = BufWriter::new(File::create(path)?);
+        self.synth_verilog(file)
+    }
+
+    #[inline]
+    pub fn synth_verilog<W: Write>(&self, writer: W) -> io::Result<()> {
+        Verilog::new(self, writer).synth()
     }
 
     pub fn dump(&self, skip: bool) {

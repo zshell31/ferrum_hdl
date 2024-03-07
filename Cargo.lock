@@ -347,6 +347,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "fhdl_sim"
+version = "0.2.0"
+
+[[package]]
 name = "fixedbitset"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

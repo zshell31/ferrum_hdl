@@ -1,5 +1,4 @@
 #![deny(unused_must_use)]
-#![feature(negative_impls)]
 #![feature(iter_intersperse)]
 #![feature(type_alias_impl_trait)]
 #![feature(pattern)]
@@ -9,7 +8,6 @@ use std::hash::BuildHasherDefault;
 use indexmap::{IndexMap, IndexSet};
 use rustc_hash::FxHasher;
 
-pub mod arena;
 pub mod buffer;
 pub mod cfg;
 pub mod const_val;

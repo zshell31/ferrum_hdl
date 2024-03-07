@@ -1,14 +1,10 @@
-use once_cell::sync::Lazy;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::{
     netlist::{Cursor, Module, ModuleId, NetList, WithId},
     node::{IsNode, Node},
     symbol::Symbol,
 };
-
-static DEFAULT_SYMBOLS: Lazy<FxHashSet<&'static str>> =
-    Lazy::new(|| ["input", "output", "reg", "self"].into_iter().collect());
 
 pub struct SetNames {
     idents: FxHashMap<(ModuleId, Symbol), usize>,
@@ -60,7 +56,7 @@ impl SetNames {
 
     fn set_node_out_names(&mut self, mod_id: ModuleId, node: &mut Node) {
         if let Some(mod_inst) = node.mod_inst_mut() {
-            let sym = mod_inst.name.unwrap_or_else(|| Symbol::new("__mod"));
+            let sym = mod_inst.name.unwrap_or_else(|| Symbol::intern("__mod"));
             mod_inst.name = Some(self.handle_sym(mod_id, sym));
         }
 
@@ -80,21 +76,6 @@ impl SetNames {
 }
 
 fn ident(sym: Symbol, count: Option<usize>) -> (Symbol, usize) {
-    let sym = if !sym.is_empty() {
-        let (suffix, prefix) = match sym.split_once_with_delim('$') {
-            Some(splitted) => splitted,
-            None => (sym.as_str(), ""),
-        };
-
-        if DEFAULT_SYMBOLS.contains(suffix) || !prefix.is_empty() {
-            Symbol::new_from_args(format_args!("_{sym}"))
-        } else {
-            sym
-        }
-    } else {
-        sym
-    };
-
     match count {
         Some(mut count) => {
             count += 1;
@@ -106,10 +87,10 @@ fn ident(sym: Symbol, count: Option<usize>) -> (Symbol, usize) {
 
 fn make_sym(sym: Symbol, count: usize) -> Symbol {
     if sym.is_empty() {
-        Symbol::new_from_args(format_args!("_${}", count + 1))
+        Symbol::intern_args(format_args!("_${}", count + 1))
     } else if count == 0 {
         sym
     } else {
-        Symbol::new_from_args(format_args!("{}_{}", sym, count))
+        Symbol::intern_args(format_args!("{}_{}", sym, count))
     }
 }

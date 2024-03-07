@@ -5,13 +5,13 @@ edition = "2021"
 
 [dependencies]
 auto_enums = "0.8.2"
-bumpalo = { workspace = true, features = ["collections"] }
 clap = { workspace = true }
 derive-where = "1.2.5"
 either = { workspace = true }
 indexmap = { workspace = true }
 fhdl_const_func = { path = "../fhdl_const_func/" }
 ferrum_hdl = { path = "../" }
+lasso = { version = "0.7.2", features = ["multi-threaded"] }
 once_cell = { workspace = true }
 rustc-hash = "1.1.0"
 serde = { workspace = true }

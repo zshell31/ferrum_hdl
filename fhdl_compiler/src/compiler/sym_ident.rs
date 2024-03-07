@@ -34,7 +34,7 @@ impl SymIdent {
 impl From<SymIdent> for Symbol {
     #[inline]
     fn from(ident: SymIdent) -> Self {
-        Symbol::new(ident.as_str())
+        Symbol::intern(ident.as_str())
     }
 }
 

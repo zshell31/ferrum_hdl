@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Debug, Display},
     hash::Hash,
+    num::NonZeroU32,
     ops::{Deref, DerefMut},
 };
 
@@ -9,11 +10,9 @@ pub trait IndexType: Debug + Copy + Eq + Hash {
 
     fn new(idx: u32) -> Self;
 
-    #[inline]
-    fn from_usize(idx: usize) -> Self {
-        assert!(idx <= u32::MAX as usize);
-        Self::new(idx as u32)
-    }
+    fn from_usize(idx: usize) -> Self;
+
+    fn try_from_usize(idx: usize) -> Option<Self>;
 
     fn as_u32(&self) -> u32;
 
@@ -22,48 +21,80 @@ pub trait IndexType: Debug + Copy + Eq + Hash {
         self.as_u32() as usize
     }
 
-    #[inline]
-    fn is_empty(&self) -> bool {
-        *self == Self::EMPTY
-    }
+    fn is_empty(&self) -> bool;
 
-    #[inline]
-    fn into_opt(self) -> Option<Self> {
-        if !self.is_empty() {
-            Some(self)
-        } else {
-            None
-        }
-    }
+    fn into_opt(self) -> Option<Self>;
 }
 
 macro_rules! idx_ty {
     ($name:ident) => {
-        #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        #[repr(transparent)]
-        pub struct $name(u32);
+        idx_ty!($name, false);
+
+        impl Debug for $name {
+            #[inline]
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.debug_tuple(stringify!($name))
+                    .field(&self.to_string())
+                    .finish()
+            }
+        }
 
         impl Display for $name {
             #[inline]
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                if self.is_empty() {
-                    f.write_str("_")
-                } else {
-                    Display::fmt(&self.0, f)
+                match self.into_opt() {
+                    Some(val) => Display::fmt(&val, f),
+                    None => f.write_str("_"),
                 }
             }
         }
+    };
+    ($name:ident, $skip:literal) => {
+        #[derive(Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[repr(transparent)]
+        pub struct $name(Option<NonZeroU32>);
 
         impl IndexType for $name {
-            const EMPTY: Self = Self(u32::MAX);
+            const EMPTY: Self = Self(None);
+
             #[inline]
             fn new(idx: u32) -> Self {
-                Self(idx)
+                Self(Some(unsafe { NonZeroU32::new_unchecked(idx + 1) }))
             }
 
             #[inline]
             fn as_u32(&self) -> u32 {
-                self.0
+                match self.0 {
+                    Some(val) => val.get() - 1,
+                    None => panic!("{} is empty", stringify!($name)),
+                }
+            }
+
+            #[inline]
+            fn from_usize(idx: usize) -> Self {
+                match Self::try_from_usize(idx) {
+                    Some(this) => this,
+                    None => panic!("{} reached u32::MAX limit", stringify!($name)),
+                }
+            }
+
+            #[inline]
+            fn try_from_usize(idx: usize) -> Option<Self> {
+                if idx < u32::MAX as usize {
+                    Some(Self::new(idx as u32))
+                } else {
+                    None
+                }
+            }
+
+            #[inline]
+            fn is_empty(&self) -> bool {
+                self.0.is_none()
+            }
+
+            #[inline]
+            fn into_opt(self) -> Option<Self> {
+                self.0.map(|_| self)
             }
         }
     };
@@ -72,6 +103,7 @@ macro_rules! idx_ty {
 idx_ty!(ModuleId);
 idx_ty!(NodeId);
 idx_ty!(EdgeId);
+idx_ty!(Symbol, true);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Port {

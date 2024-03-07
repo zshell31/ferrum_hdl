@@ -106,7 +106,7 @@ impl<'tcx> Compiler<'tcx> {
                     let promoted_mir = self.tcx.promoted_mir(fn_did);
                     let mir = &promoted_mir[promoted];
                     module_sym =
-                        Symbol::new_from_args(format_args!("{}_promoted", module_sym));
+                        Symbol::intern_args(format_args!("{}_promoted", module_sym));
                     (mir, true)
                 }
             };
@@ -227,7 +227,7 @@ impl<'tcx> Compiler<'tcx> {
             }
         }
 
-        Symbol::new(&name)
+        Symbol::intern(&name)
     }
 
     pub fn visit_fn_inputs<'a>(

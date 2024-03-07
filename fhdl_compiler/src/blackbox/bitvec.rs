@@ -38,7 +38,7 @@ impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
 
         let sym = ctx.module[rec]
             .sym
-            .map(|sym| Symbol::new_from_args(format_args!("{}_slice", sym)));
+            .map(|sym| Symbol::intern_args(format_args!("{}_slice", sym)));
 
         Ok(Item::new(
             output_ty,

@@ -457,7 +457,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
         match &item.kind {
             ItemKind::Port(port) => {
                 let port = *port;
-                let sym = Some(Symbol::new(ident));
+                let sym = Some(Symbol::intern(ident));
 
                 if self[port].sym.is_none() || force {
                     self[port].sym = sym;
@@ -551,7 +551,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                         input: port,
                         outputs: ty.tys().enumerate().map(|(idx, _)| {
                             let ident =
-                                sym.map(|sym| Symbol::new(tuple_field_name(sym, idx)));
+                                sym.map(|sym| Symbol::intern(tuple_field_name(sym, idx)));
 
                             (ty.ty().to_bitvec(), ident)
                         }),
@@ -577,8 +577,9 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                     let splitter = SplitterArgs {
                         input: port,
                         outputs: ty.named_tys().map(|ty| {
-                            let ident = sym
-                                .map(|sym| Symbol::new(struct_field_name(sym, ty.name)));
+                            let ident = sym.map(|sym| {
+                                Symbol::intern(struct_field_name(sym, ty.name))
+                            });
                             (ty.to_bitvec(), ident)
                         }),
                         start: None,

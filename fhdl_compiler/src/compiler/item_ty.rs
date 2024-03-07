@@ -805,7 +805,7 @@ impl<'tcx> Compiler<'tcx> {
         let tcx = self.tcx;
         let fields = fields.into_iter().map(|field| {
             (
-                Symbol::new(field.ident(tcx).as_str()),
+                Symbol::intern(field.ident(tcx).as_str()),
                 field.ty(tcx, adt_generics),
             )
         });
@@ -851,7 +851,7 @@ impl<'tcx> Compiler<'tcx> {
                 )?;
                 let item_ty = compiler.alloc_ty(ItemTyKind::Struct(struct_ty));
 
-                Ok(Named::new(item_ty, Symbol::new(variant.name.as_str())))
+                Ok(Named::new(item_ty, Symbol::intern(variant.name.as_str())))
             })?;
 
         let (discr_width, discr) = if discr_seq {

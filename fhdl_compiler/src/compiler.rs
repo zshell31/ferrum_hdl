@@ -33,7 +33,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
-    ItemId as HirItemId, ItemKind,
+    AssocItemKind, ItemKind,
 };
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::{
@@ -94,24 +94,9 @@ fn init_compiler<'tcx>(
     args: &'tcx CompilerArgs,
     arena: &'tcx Bump,
 ) -> Result<Compiler<'tcx>, Error> {
-    let top_module = find_top_module(tcx)?;
     let crates = Crates::find_crates(tcx)?;
 
-    Ok(Compiler::new(tcx, top_module, crates, args, arena))
-}
-
-fn find_top_module(tcx: TyCtxt<'_>) -> Result<HirItemId, Error> {
-    let hir = tcx.hir();
-    for item_id in hir.items() {
-        let item = hir.item(item_id);
-        if let ItemKind::Fn(_, _, _) = item.kind {
-            if item.ident.as_str() == "top_module" {
-                return Ok(item_id);
-            }
-        }
-    }
-
-    Err(Error::MissingTopModule)
+    Ok(Compiler::new(tcx, crates, args, arena))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -184,7 +169,6 @@ pub struct Compiler<'tcx> {
     pub netlist: NetList,
     pub args: &'tcx CompilerArgs,
     arena: &'tcx Bump,
-    top_module: HirItemId,
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
@@ -198,7 +182,6 @@ pub struct Compiler<'tcx> {
 impl<'tcx> Compiler<'tcx> {
     fn new(
         tcx: TyCtxt<'tcx>,
-        top_module: HirItemId,
         crates: Crates,
         args: &'tcx CompilerArgs,
         arena: &'tcx Bump,
@@ -208,7 +191,6 @@ impl<'tcx> Compiler<'tcx> {
             netlist: NetList::new(args.netlist.clone()),
             args,
             arena,
-            top_module,
             crates,
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
@@ -226,12 +208,50 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
+    fn find_top_module(&self) -> Result<DefId, Error> {
+        let hir = self.tcx.hir();
+        for item_id in hir.items() {
+            let item = hir.item(item_id);
+            match item.kind {
+                ItemKind::Fn(_, _, _) => {
+                    let def_id = item_id.owner_id.to_def_id();
+                    if item.ident.as_str() == "top" {
+                        return Ok(def_id);
+                    }
+                    if let Some(synth) = self.find_synth(def_id) {
+                        if synth.top {
+                            return Ok(def_id);
+                        }
+                    }
+                }
+                ItemKind::Impl(impl_) => {
+                    for impl_item in impl_.items {
+                        let def_id = impl_item.id.owner_id.to_def_id();
+                        if let AssocItemKind::Fn { .. } = impl_item.kind {
+                            if impl_item.ident.as_str() == "top" {
+                                return Ok(impl_item.id.owner_id.to_def_id());
+                            }
+                        }
+                        if let Some(synth) = self.find_synth(def_id) {
+                            if synth.top {
+                                return Ok(def_id);
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        Err(Error::MissingTop)
+    }
+
     fn synth_inner(&mut self) -> Result<(), Error> {
         let crate_name = self.tcx.crate_name(LOCAL_CRATE);
 
         let root_dir = &env::var("CARGO_MANIFEST_DIR").unwrap();
         let root_dir = StdPath::new(&root_dir);
-        let name = "top_module";
+        let name = "top";
 
         let synth_path = root_dir.join("synth").join("verilog");
         fs::create_dir_all(&synth_path)?;
@@ -250,11 +270,8 @@ impl<'tcx> Compiler<'tcx> {
 
         let elapsed = Instant::now();
 
-        let top = self.visit_fn(
-            DefId::from(self.top_module.hir_id().owner).into(),
-            GenericArgs::empty(),
-            true,
-        )?;
+        let top = self.find_top_module()?;
+        let top = self.visit_fn(top.into(), GenericArgs::empty(), true)?;
 
         self.netlist.run_visitors();
 

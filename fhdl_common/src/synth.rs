@@ -32,12 +32,13 @@ impl Constraint {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct SynthAttrs {
+    pub top: bool,
     pub inline: bool,
     pub constr: SmallVec<[Constraint; 1]>,
 }
 
 impl SynthAttrs {
     pub fn only_inline(&self) -> bool {
-        self.constr.is_empty()
+        !self.top && self.constr.is_empty()
     }
 }

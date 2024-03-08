@@ -7,8 +7,8 @@ use rustc_span::Span;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("cannot find 'top_module' function")]
-    MissingTopModule,
+    #[error("cannot find 'top' function")]
+    MissingTop,
     #[error("cannot find crate '{0}'")]
     MissingCrate(&'static str),
     #[error("{0}")]

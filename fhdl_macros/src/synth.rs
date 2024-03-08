@@ -257,6 +257,7 @@ impl FromMeta for Constraints_ {
 
 #[derive(Debug, FromMeta)]
 struct SynthAttrs_ {
+    top: Flag,
     inline: Flag,
     #[darling(default)]
     constr: Constraints_,
@@ -448,9 +449,11 @@ that is not input or output",
 
         errors.finish()?;
 
+        let top = attrs.top.is_present();
         let inline = attrs.inline.is_present();
 
         Ok(Self(CommonSynthAttrs {
+            top,
             inline,
             constr: constrs,
         }))

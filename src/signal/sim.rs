@@ -4,14 +4,24 @@ use super::{Signal, SignalValue};
 use crate::{
     bit::Bit,
     domain::ClockDomain,
-    simulation::{SimCtx, Simulate},
+    eval::{Eval, EvalCtx},
 };
 
-impl<D: ClockDomain, T: SignalValue> Simulate for Signal<D, T> {
+impl<D: ClockDomain, T: SignalValue> Eval<D> for Signal<D, T> {
     type Value = T;
 
-    fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
+    fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
         self.next(ctx)
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
+    pub fn source(value: T) -> (Source<T>, Signal<D, T>) {
+        let source = Source::new(value);
+        let source_clone = source.clone();
+        let signal = Signal::new(move |_| source_clone.value());
+
+        (source, signal)
     }
 }
 
@@ -38,7 +48,7 @@ impl<T: SignalValue> Source<T> {
 }
 
 impl Source<Bit> {
-    pub fn revert(&self) {
+    pub fn invert(&self) {
         self.0.replace_with(|val| !(*val));
     }
 }

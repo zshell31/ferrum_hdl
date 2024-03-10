@@ -25,44 +25,52 @@ pub type U<const N: usize> = Unsigned<N>;
 
 impl<const N: usize> PartialEq for Unsigned<N> {
     #[blackbox(OpEq)]
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
     }
 
     #[allow(clippy::partialeq_ne_impl)]
     #[blackbox(OpNe)]
+    #[inline]
     fn ne(&self, other: &Self) -> bool {
         !self.eq(other)
     }
 }
 
 impl<const N: usize> PartialOrd for Unsigned<N> {
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 
     #[blackbox(OpLt)]
+    #[inline]
     fn lt(&self, other: &Self) -> bool {
         matches!(self.partial_cmp(other), Some(Less))
     }
 
     #[blackbox(OpLe)]
+    #[inline]
     fn le(&self, other: &Self) -> bool {
         matches!(self.partial_cmp(other), Some(Less | Equal))
     }
 
     #[blackbox(OpGt)]
+    #[inline]
     fn gt(&self, other: &Self) -> bool {
         matches!(self.partial_cmp(other), Some(Greater))
     }
 
     #[blackbox(OpGe)]
+    #[inline]
     fn ge(&self, other: &Self) -> bool {
         matches!(self.partial_cmp(other), Some(Greater | Equal))
     }
 }
 
 impl<const N: usize> Ord for Unsigned<N> {
+    #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.cmp(&other.0)
     }
@@ -96,10 +104,12 @@ macro_rules! impl_for_unsigned_prim_ty {
             impl BitPack for $prim {
                 type Packed = BitVec<{ <$prim as BitSize>::BITS }>;
 
+                #[inline]
                 fn pack(self) -> Self::Packed {
                     self.cast()
                 }
 
+                #[inline]
                 fn unpack(bitvec: Self::Packed) -> Self {
                     bitvec.cast()
                 }
@@ -189,6 +199,7 @@ impl<const N: usize> PartialOrd<Unsigned<N>> for u128 {
 
 impl<const N: usize> Unsigned<N> {
     #[synth(inline)]
+    #[inline]
     pub fn idx<T>(&self, idx: T) -> bool
     where
         Idx<N>: CastFrom<T>,
@@ -198,6 +209,7 @@ impl<const N: usize> Unsigned<N> {
     }
 
     #[blackbox(Index)]
+    #[inline]
     fn idx_(&self, idx: Idx<N>) -> bool
     where
         ConstConstr<{ idx_constr(N) }>:,
@@ -213,6 +225,7 @@ impl<const N: usize> Unsigned<N> {
 
 impl<const N: usize> Default for Unsigned<N> {
     #[synth(inline)]
+    #[inline]
     fn default() -> Self {
         0_u8.cast()
     }
@@ -268,6 +281,7 @@ macro_rules! impl_op {
                 type Output = Self;
 
                 #[blackbox([<Op $trait>])]
+                #[inline]
                 fn $method(self, rhs: Self) -> Self::Output {
                     Self(self.0.$method(rhs.0))
                 }
@@ -285,6 +299,7 @@ macro_rules! impl_ops_for_prim {
                     type Output = Unsigned<N>;
 
                     #[blackbox([<Op $trait>])]
+                    #[inline]
                     fn $method(self, rhs: $prim) -> Self::Output {
                         Unsigned::<N>(self.0.$method(rhs))
                     }
@@ -294,6 +309,7 @@ macro_rules! impl_ops_for_prim {
                     type Output = Unsigned<N>;
 
                     #[blackbox([<Op $trait>])]
+                    #[inline]
                     fn $method(self, rhs: Unsigned<N>) -> Self::Output {
                         Unsigned::<N>(self.$method(rhs.0))
                     }
@@ -333,6 +349,7 @@ macro_rules! impl_shift_ops {
                 type Output = Self;
 
                 #[blackbox(OpShl)]
+                #[inline]
                 fn shl(self, rhs: $prim) -> Self::Output {
                     Self(self.0.shl(rhs))
                 }
@@ -342,6 +359,7 @@ macro_rules! impl_shift_ops {
                 type Output = Self;
 
                 #[blackbox(OpShr)]
+                #[inline]
                 fn shr(self, rhs: $prim) -> Self::Output {
                     Self(self.0.shr(rhs))
                 }
@@ -359,6 +377,7 @@ where
     type Output = Unsigned<N>;
 
     #[blackbox(OpShl)]
+    #[inline]
     fn shl(self, rhs: Unsigned<N>) -> Self::Output {
         Self(self.0.shl(rhs.0))
     }
@@ -368,6 +387,7 @@ impl<const N: usize> Not for Unsigned<N> {
     type Output = Self;
 
     #[blackbox(OpNot)]
+    #[inline]
     fn not(self) -> Self::Output {
         Self(self.0.not())
     }

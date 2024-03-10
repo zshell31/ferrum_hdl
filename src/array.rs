@@ -8,9 +8,9 @@ use crate::{
     cast::{Cast, CastFrom},
     const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
+    eval::{Eval, EvalCtx},
     index::{idx_constr, Idx},
     signal::{Signal, SignalValue},
-    simulation::{SimCtx, Simulate},
 };
 
 pub type Array<const N: usize, T> = [T; N];
@@ -194,10 +194,10 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for [Signal<D, T>; N
     }
 }
 
-impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for [Signal<D, T>; N] {
+impl<const N: usize, D: ClockDomain, T: SignalValue> Eval<D> for [Signal<D, T>; N] {
     type Value = [T; N];
 
-    fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
+    fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
         array_from_iter((0 .. N).map(|ind| self[ind].next(ctx)))
     }
 }
@@ -218,7 +218,7 @@ mod tests {
     use crate::{
         bit::{Bit, H, L},
         bitvec::BitVec,
-        domain::TD4,
+        domain::{Clock, TD4},
         signal::SignalIterExt,
     };
 
@@ -229,13 +229,14 @@ mod tests {
 
     #[test]
     fn unbundle() {
+        let clk = Clock::<TD4>::new();
         let s = [[H, H, L], [L, H, L], [H, L, H], [L, L, H]]
             .into_iter()
             .into_signal::<TD4>();
 
         let res = s.unbundle();
 
-        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.eval(&clk).take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],
@@ -245,6 +246,7 @@ mod tests {
 
     #[test]
     fn bundle() {
+        let clk = Clock::<TD4>::new();
         let s = [
             [H, L, H, L].into_signal::<TD4>(),
             [H, H, L, L].into_signal::<TD4>(),
@@ -253,7 +255,7 @@ mod tests {
 
         let res = s.bundle();
 
-        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.eval(&clk).take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],

@@ -6,7 +6,7 @@ use std::{
 pub use fhdl_macros::BitPack;
 use fhdl_macros::{blackbox, synth};
 
-use crate::{bitvec::BitVec, cast::CastFrom};
+use crate::{bitvec::BitVec, cast::CastFrom, prelude::SignalValue};
 
 pub trait BitSize: Sized {
     const BITS: usize;
@@ -59,15 +59,18 @@ impl<T> BitPack for PhantomData<T> {
 
 pub trait BitPackExt<const N: usize>
 where
-    Self: BitPack<Packed = BitVec<N>>,
+    Self: BitPack<Packed = BitVec<N>> + SignalValue,
 {
     #[blackbox(BitPackMsb)]
-    fn msb(self) -> bool {
-        self.pack().msb()
+    fn msb(&self) -> bool {
+        self.clone().pack().msb()
     }
 }
 
-impl<const N: usize, T> BitPackExt<N> for T where T: BitPack<Packed = BitVec<N>> {}
+impl<const N: usize, T> BitPackExt<N> for T where
+    T: BitPack<Packed = BitVec<N>> + SignalValue
+{
+}
 
 #[cfg(test)]
 mod tests {

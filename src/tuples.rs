@@ -6,8 +6,8 @@ use crate::{
     bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
     domain::ClockDomain,
+    eval::{Eval, EvalCtx},
     signal::{Signal, SignalValue},
-    simulation::{SimCtx, Simulate},
 };
 
 impl_tuple_traits!(1);
@@ -27,11 +27,16 @@ impl_tuple_traits!(12);
 mod tests {
     use super::*;
     use crate::{
-        array::Array, bit::Bit, domain::TD4, signal::SignalIterExt, unsigned::Unsigned,
+        array::Array,
+        bit::Bit,
+        domain::{Clock, TD4},
+        signal::SignalIterExt,
+        unsigned::Unsigned,
     };
 
     #[test]
     fn unbundle() {
+        let clk = Clock::<TD4>::new();
         let s: Signal<TD4, (Unsigned<4>, Bit)> = [
             (0_u8, false),
             (1, true),
@@ -47,7 +52,7 @@ mod tests {
         let res = s.unbundle();
 
         assert_eq!(
-            res.simulate()
+            res.eval(&clk)
                 .take(6)
                 .map(Cast::cast::<(u8, bool)>)
                 .collect::<Vec<_>>(),
@@ -64,6 +69,7 @@ mod tests {
 
     #[test]
     fn bundle() {
+        let clk = Clock::<TD4>::new();
         let s: (Signal<TD4, Unsigned<4>>, Signal<TD4, Bit>) = (
             [0_u8, 1, 2, 3, 4, 5]
                 .into_iter()
@@ -78,7 +84,7 @@ mod tests {
         let res = s.bundle();
 
         assert_eq!(
-            res.simulate()
+            res.eval(&clk)
                 .take(6)
                 .map(Cast::cast::<(u8, bool)>)
                 .collect::<Vec<_>>(),

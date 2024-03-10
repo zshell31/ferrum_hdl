@@ -1,12 +1,12 @@
 use std::{
+    cell::Cell,
     fmt::{self, Display},
     marker::PhantomData,
+    rc::Rc,
 };
 
 use derive_where::derive_where;
 use fhdl_macros::blackbox_ty;
-
-use crate::bit::{self, Bit};
 
 pub const SECOND: usize = 1_000_000_000_000;
 pub const MILLISECOND: usize = 1_000_000_000;
@@ -83,26 +83,63 @@ pub trait ClockDomain: 'static {
     const RESET_POLARITY: Polarity;
 }
 
-// Clock is made as the non zero sized type to generate the netlist correctly
-#[derive_where(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
+enum ClockState {
+    Rising,
+    Falling,
+}
+
+impl Display for ClockState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Rising => "rising",
+            Self::Falling => "falling",
+        })
+    }
+}
+
+#[derive_where(Debug, Clone)]
 #[blackbox_ty(Clock)]
 pub struct Clock<D: ClockDomain> {
-    _bit: Bit,
+    state: Rc<Cell<ClockState>>,
     _dom: PhantomData<D>,
 }
 
+impl<D: ClockDomain> Display for Clock<D> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.state.get().fmt(f)
+    }
+}
+
 impl<D: ClockDomain> Default for Clock<D> {
+    #[inline]
     fn default() -> Self {
-        Self {
-            _bit: bit::L,
-            _dom: PhantomData,
-        }
+        Self::new()
     }
 }
 
 impl<D: ClockDomain> Clock<D> {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: Rc::new(Cell::new(ClockState::Falling)),
+            _dom: PhantomData,
+        }
+    }
+
+    pub fn is_rising(&self) -> bool {
+        matches!(self.state.get(), ClockState::Rising)
+    }
+
+    pub fn is_falling(&self) -> bool {
+        matches!(self.state.get(), ClockState::Falling)
+    }
+
+    pub fn invert(&self) {
+        self.state.update(|state| match state {
+            ClockState::Rising => ClockState::Falling,
+            ClockState::Falling => ClockState::Rising,
+        });
     }
 }
 

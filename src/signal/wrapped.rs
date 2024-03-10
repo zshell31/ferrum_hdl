@@ -4,11 +4,7 @@ use derive_where::derive_where;
 use fhdl_macros::{blackbox, blackbox_ty};
 
 use super::{IntoSignal, Signal, SignalValue};
-use crate::{
-    domain::ClockDomain,
-    simulation::SimCtx,
-    watchable::{AsDisplay, Watchable},
-};
+use crate::{domain::ClockDomain, eval::EvalCtx};
 
 #[derive_where(Debug; T)]
 #[blackbox_ty(Wrapped)]
@@ -33,16 +29,8 @@ impl<D: ClockDomain, T: SignalValue> Wrapped<D, T> {
         RefCell::borrow(&self.0.next).value()
     }
 
-    pub(crate) fn next(&mut self, ctx: &mut SimCtx) {
+    pub(crate) fn next(&mut self, ctx: &mut EvalCtx) {
         self.0.next(ctx);
-    }
-
-    #[blackbox(SignalWatch)]
-    pub fn watch(self, name: &'static str) -> Self
-    where
-        T: Watchable<AsDisplay>,
-    {
-        Self(self.0.watch(name))
     }
 }
 

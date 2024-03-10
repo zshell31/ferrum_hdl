@@ -1,16 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
-use ferrum_hdl::{
-    bit::Bit,
-    bitpack::BitPackExt,
-    cast::Cast,
-    const_functions::clog2,
-    const_helpers::ConstConstr,
-    domain::{clk_divider, Clock, ClockDomain, SECOND},
-    signal::{reg, Reset, Signal},
-    unsigned::Unsigned,
-};
+use ferrum_hdl::{bitpack::BitPackExt, prelude::*};
 
 pub const fn second_periods<D: ClockDomain>() -> usize {
     clk_divider::<D>(SECOND)
@@ -28,29 +19,12 @@ where
     ConstConstr<{ blinking_count::<D>() }>:,
 {
     reg::<D, _>(
-        clk,
+        &clk,
         &rst,
         &0_u8.cast(),
         |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
     )
-    .map(|value| (value.clone().msb().cast(), value))
-}
-
-pub struct ZynqMiniDom;
-
-impl ClockDomain for ZynqMiniDom {
-    const FREQ: usize = 50_000_000;
-}
-
-#[cfg(not(test))]
-const BL_COUNT: usize = blinking_count::<ZynqMiniDom>();
-
-#[cfg(not(test))]
-pub fn top_module(
-    clk: Clock<ZynqMiniDom>,
-    rst: Reset<ZynqMiniDom>,
-) -> Signal<ZynqMiniDom, (Bit, Unsigned<BL_COUNT>)> {
-    blinking(clk, rst)
+    .map(|value| (value.msb(), value))
 }
 
 #[cfg(test)]

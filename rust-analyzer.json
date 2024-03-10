@@ -2,11 +2,6 @@
   "rust-analyzer": {
     "rustc": {
       "source": "discover"
-    },
-    "cargo": {
-      "features": [
-        "trace"
-      ]
     }
   }
 }

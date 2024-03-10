@@ -37,7 +37,7 @@ impl ImplTupleTraits {
         let impl_signal_value = self.impl_signal_value();
         let impl_unbundle = self.impl_unbundle();
         let impl_bundle = self.impl_bundle();
-        let impl_simulate = self.impl_simulate();
+        let impl_eval = self.impl_eval();
         let impl_cast_from = self.impl_cast_from();
         let impl_bit_size = self.impl_bit_size();
         let impl_bit_pack = self.impl_bit_pack();
@@ -49,7 +49,7 @@ impl ImplTupleTraits {
 
             #impl_bundle
 
-            #impl_simulate
+            #impl_eval
 
             #impl_cast_from
 
@@ -107,15 +107,15 @@ impl ImplTupleTraits {
         }
     }
 
-    fn impl_simulate(&self) -> TokenStream {
+    fn impl_eval(&self) -> TokenStream {
         let t = &self.tparams;
         let n = &self.indexes;
 
         quote! {
-            impl<D: ClockDomain, #( #t: SignalValue, )*> Simulate for ( #( Signal<D, #t>, )* ) {
+            impl<D: ClockDomain, #( #t: SignalValue, )*> Eval<D> for ( #( Signal<D, #t>, )* ) {
                 type Value = ( #( #t, )* );
 
-                fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
+                fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
                     (
                         #(
                             self.#n.next(ctx),

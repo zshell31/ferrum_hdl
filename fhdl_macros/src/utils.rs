@@ -4,13 +4,16 @@ use std::{
     ops::Deref,
 };
 
-use darling::{ast::NestedMeta, FromAttributes, FromMeta};
+use darling::{
+    ast::{Data, Fields, NestedMeta},
+    FromAttributes, FromField, FromMeta, FromVariant,
+};
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
     parse::Parser, punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute,
-    Expr, ExprLit, ExprParen, ExprTuple, Generics, ImplGenerics, Lit, Meta,
+    Expr, ExprLit, ExprParen, ExprTuple, Generics, Ident, ImplGenerics, Lit, Meta,
     MetaNameValue, PredicateType, Type, TypeArray, TypeGenerics, TypeParam, TypePath,
     TypeTuple, WherePredicate,
 };
@@ -65,7 +68,51 @@ pub fn into_where_clause<'a>(
 pub struct Bounds(pub Vec<WherePredicate>);
 
 impl Bounds {
-    pub fn contains_ty_param(&self, tparam: &TypeParam) -> bool {
+    pub fn from_attrs(attrs: &[Attribute], attr_name: &str) -> darling::Result<Self> {
+        let attrs = attrs
+            .iter()
+            .filter_map(|attr| {
+                let ident = attr.path();
+                if ident.is_ident(attr_name) {
+                    Some(attr.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        Self::from_attributes(&attrs)
+    }
+
+    pub fn extend_predicates<'a>(
+        &'a self,
+        predicates: impl Iterator<Item = TEither<&'a WherePredicate>> + 'a,
+        generics: &'a Generics,
+        exclude_array_constr: bool,
+        f: impl Fn(&'a TypeParam) -> TEither<&'a WherePredicate> + 'a,
+    ) -> impl Iterator<Item = TEither<&'a WherePredicate>> + 'a {
+        predicates
+            .chain(
+                generics
+                    .type_params()
+                    .filter(|tparam| !self.contains_ty_param(tparam))
+                    .map(f),
+            )
+            .chain(
+                self.0
+                    .iter()
+                    .filter(move |bound| {
+                        if exclude_array_constr {
+                            !Self::is_array_constr(bound)
+                        } else {
+                            true
+                        }
+                    })
+                    .map(TEither::AsIs),
+            )
+    }
+
+    fn contains_ty_param(&self, tparam: &TypeParam) -> bool {
         self.0.iter().any(|bound| match bound {
             WherePredicate::Type(PredicateType {
                 bounded_ty: Type::Path(TypePath { path, .. }),
@@ -75,7 +122,7 @@ impl Bounds {
         })
     }
 
-    pub fn is_array_constr(pred: &WherePredicate) -> bool {
+    fn is_array_constr(pred: &WherePredicate) -> bool {
         if let WherePredicate::Type(PredicateType {
             bounded_ty: Type::Array(TypeArray { elem, .. }),
             bounds,
@@ -121,6 +168,44 @@ impl FromAttributes for Bounds {
         Ok(Bounds(bounds))
     }
 }
+
+#[derive(FromField)]
+pub struct Field {
+    pub ident: Option<Ident>,
+    pub ty: Type,
+}
+
+#[derive(FromVariant)]
+pub struct Variant {
+    pub ident: Ident,
+    pub fields: Fields<Field>,
+    pub discriminant: Option<Expr>,
+}
+
+impl Variant {
+    pub fn discr(&self) -> Option<usize> {
+        self.discriminant.as_ref().and_then(|discr| match discr {
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(lit), ..
+            }) => lit.base10_parse().ok(),
+            _ => None,
+        })
+    }
+
+    pub fn branch(&self, idx: &mut usize) -> usize {
+        let branch = match self.discr() {
+            Some(discr) => {
+                *idx = discr;
+                discr
+            }
+            None => *idx,
+        };
+        *idx += 1;
+        branch
+    }
+}
+
+pub type AdtData = Data<Variant, Field>;
 
 pub trait MetaExt: FromMeta + Sized {
     fn from_tuple(tuple: &ExprTuple) -> darling::Result<Self> {

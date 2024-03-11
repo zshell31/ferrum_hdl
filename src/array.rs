@@ -1,5 +1,8 @@
+use std::io;
+
 use fhdl_macros::{blackbox, synth};
 use smallvec::SmallVec;
+use vcd::IdCode;
 
 use crate::{
     bitpack::{BitPack, BitSize, IsPacked},
@@ -11,6 +14,7 @@ use crate::{
     eval::{Eval, EvalCtx},
     index::{idx_constr, Idx},
     signal::{Signal, SignalValue},
+    trace::{TraceVars, Traceable, Tracer},
 };
 
 pub type Array<const N: usize, T> = [T; N];
@@ -209,6 +213,28 @@ fn array_from_iter<T, const N: usize>(it: impl Iterator<Item = T>) -> Array<N, T
     match v.into_inner() {
         Ok(a) => a,
         Err(_) => unreachable!(),
+    }
+}
+
+impl<const N: usize, T: Traceable> Traceable for Array<N, T>
+where
+    Assert<{ N > 0 }>: IsTrue,
+{
+    fn add_vars(vars: &mut TraceVars) {
+        for idx in 0 .. N {
+            vars.push_idx(idx);
+            T::add_vars(vars);
+            vars.pop();
+        }
+    }
+
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        self.iter().try_for_each(|item| {
+            item.trace(id, tracer)?;
+            io::Result::Ok(())
+        })?;
+
+        Ok(())
     }
 }
 

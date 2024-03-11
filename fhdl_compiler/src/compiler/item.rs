@@ -13,6 +13,7 @@ use fhdl_netlist::{
     symbol::Symbol,
 };
 use rustc_target::abi::{FieldIdx, VariantIdx};
+use smallvec::SmallVec;
 
 use super::{
     item_ty::{ClosureTy, EnumTy, ItemTy, ItemTyKind},
@@ -21,7 +22,7 @@ use super::{
 use crate::error::Error;
 
 #[derive(Debug, Clone)]
-pub struct Group<'tcx>(Rc<RefCell<Vec<Item<'tcx>>>>);
+pub struct Group<'tcx>(Rc<RefCell<SmallVec<[Item<'tcx>; 1]>>>);
 
 impl<'tcx> Group<'tcx> {
     pub fn new(items: impl IntoIterator<Item = Item<'tcx>>) -> Self {
@@ -29,7 +30,7 @@ impl<'tcx> Group<'tcx> {
     }
 
     pub fn new_opt(items: impl IntoIterator<Item = Option<Item<'tcx>>>) -> Option<Self> {
-        let v = items.into_iter().collect::<Option<Vec<_>>>()?;
+        let v = items.into_iter().collect::<Option<SmallVec<[_; 1]>>>()?;
 
         Some(Self::new(v))
     }
@@ -37,7 +38,7 @@ impl<'tcx> Group<'tcx> {
     pub fn try_new(
         items: impl IntoIterator<Item = Result<Item<'tcx>, Error>>,
     ) -> Result<Self, Error> {
-        let v = items.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let v = items.into_iter().collect::<Result<SmallVec<[_; 1]>, _>>()?;
 
         Ok(Self::new(v))
     }

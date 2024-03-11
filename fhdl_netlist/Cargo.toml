@@ -18,7 +18,7 @@ fhdl_const_func = { path = "../fhdl_const_func/" }
 ferrum_hdl = { path = "../" }
 lasso = { version = "0.7.2", features = ["multi-threaded"] }
 once_cell = { workspace = true }
-rustc-hash = "1.1.0"
+rustc-hash = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }
 tracing = { workspace = true }

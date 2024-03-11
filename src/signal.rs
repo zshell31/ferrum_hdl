@@ -1,12 +1,12 @@
 mod ops;
 mod reg;
 mod signal_fn;
-mod sim;
 mod wrapped;
 
 use std::{
     cell::RefCell,
-    fmt::{self, Debug, Display},
+    fmt::{self, Display},
+    io,
     marker::PhantomData,
     rc::Rc,
 };
@@ -16,16 +16,19 @@ pub use fhdl_macros::SignalValue;
 use fhdl_macros::{blackbox, blackbox_ty, synth};
 pub use ops::IntoSignal;
 pub use reg::{dff, reg, reg0, reg_en, reg_en0, Enable, Reset};
-pub use sim::{SignalIterExt, Source};
+use vcd::IdCode;
 pub use wrapped::Wrapped;
 
 use self::signal_fn::SignalFn;
 use crate::{
+    bit::Bit,
     domain::{Clock, ClockDomain},
-    eval::EvalCtx,
+    eval::{Eval, EvalCtx},
+    prelude::Traceable,
+    trace::{TraceVars, Tracer},
 };
 
-pub trait SignalValue: Debug + Clone + 'static {}
+pub trait SignalValue: Clone + 'static {}
 
 impl<T: SignalValue> SignalValue for Option<T> {}
 
@@ -35,6 +38,7 @@ pub struct Signal<D: ClockDomain, T: SignalValue> {
     #[derive_where(skip)]
     _dom: PhantomData<D>,
     next: Rc<RefCell<SignalFn<T>>>,
+    value: Option<Rc<RefCell<T>>>,
 }
 
 impl<D: ClockDomain, T: SignalValue + Display> Display for Signal<D, T> {
@@ -51,6 +55,7 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
         Self {
             _dom: PhantomData,
             next: Rc::new(RefCell::new(SignalFn::new(f))),
+            value: None,
         }
     }
 
@@ -61,7 +66,18 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
 
     #[blackbox(IntoSignal)]
     pub fn lift(value: T) -> Signal<D, T> {
-        Self::new(move |_| value.clone())
+        let value = Rc::new(RefCell::new(value));
+        let value_clone = value.clone();
+        let mut this = Self::new(move |_| value_clone.borrow().clone());
+        this.value = Some(value);
+
+        this
+    }
+
+    pub fn replace_value(&self, f: impl FnOnce(T) -> T) {
+        if let Some(inner) = self.value.as_ref() {
+            inner.replace_with(|val| f(val.clone()));
+        }
     }
 
     #[blackbox(SignalMap)]
@@ -125,6 +141,12 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 }
 
+impl<D: ClockDomain> Signal<D, Bit> {
+    pub fn invert(&self) {
+        self.replace_value(|value| !value)
+    }
+}
+
 impl<T: SignalValue, D: ClockDomain> From<T> for Signal<D, T> {
     #[synth(inline)]
     fn from(value: T) -> Self {
@@ -139,9 +161,50 @@ impl<T: SignalValue, D: ClockDomain> From<&'_ Signal<D, T>> for Signal<D, T> {
     }
 }
 
+impl<T: SignalValue + Traceable, D: ClockDomain> Traceable for Signal<D, T> {
+    #[inline]
+    fn add_vars(vars: &mut TraceVars) {
+        T::add_vars(vars)
+    }
+
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        if let Some(val) = self.next.borrow().as_value_opt() {
+            val.trace(id, tracer)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<D: ClockDomain, T: SignalValue> Eval<D> for Signal<D, T> {
+    type Value = T;
+
+    fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
+        self.next(ctx)
+    }
+}
+
+pub trait SignalIterExt: IntoIterator + Sized
+where
+    Self::Item: SignalValue,
+{
+    fn into_signal<D: ClockDomain>(self) -> Signal<D, Self::Item>;
+}
+
+impl<I> SignalIterExt for I
+where
+    I: IntoIterator + Sized,
+    I::IntoIter: 'static,
+    I::Item: SignalValue,
+{
+    fn into_signal<D: ClockDomain>(self) -> Signal<D, Self::Item> {
+        let mut iter = self.into_iter();
+        Signal::new(move |_| iter.next().expect("No values"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-
     use super::SignalIterExt;
     use crate::{
         cast::CastFrom,

@@ -1,3 +1,5 @@
+use std::io;
+
 use fhdl_macros::impl_tuple_traits;
 
 use crate::{
@@ -8,6 +10,7 @@ use crate::{
     domain::ClockDomain,
     eval::{Eval, EvalCtx},
     signal::{Signal, SignalValue},
+    trace::{IdCode, TraceVars, Traceable, Tracer},
 };
 
 impl_tuple_traits!(1);

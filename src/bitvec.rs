@@ -1,12 +1,14 @@
 use std::{
     cmp::Ordering,
     fmt::{self, Binary, Display, LowerHex},
+    io,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
 use fhdl_macros::{blackbox, blackbox_ty};
 use num_bigint::BigUint;
 use num_traits::Zero;
+use vcd::IdCode;
 
 use crate::{
     bitpack::{BitPack, IsPacked},
@@ -15,6 +17,7 @@ use crate::{
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
+    trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
 
 // TODO: maybe union?
@@ -199,34 +202,65 @@ impl<const N: usize> LowerHex for BitVec<N> {
 }
 
 macro_rules! impl_op {
-    ($trait:ident => $method:ident) => {
+    (impl $trait:ident ($method:ident) with $spec_method:ident) => {
         impl<const N: usize> $trait for BitVec<N> {
-            type Output = Self;
+            type Output = BitVec<N>;
 
-            fn $method(self, rhs: Self) -> Self::Output {
+            fn $method(self, rhs: BitVec<N>) -> Self::Output {
                 match (self, rhs) {
-                    (Self::Short(lhs), Self::Short(rhs)) => {
-                        Self::from_short(lhs.$method(rhs))
+                    (BitVec::Short(lhs), BitVec::Short(rhs)) => {
+                        BitVec::from_short(lhs.$spec_method(rhs))
                     }
-                    (Self::Long(lhs), Self::Long(rhs)) => {
-                        Self::from_long(lhs.$method(rhs))
+                    (BitVec::Long(lhs), BitVec::Long(rhs)) => {
+                        BitVec::from_long(lhs.$method(rhs))
                     }
                     _ => unreachable!(),
                 }
             }
         }
-    };
-    ($trait:ident => $method:ident => $spec_method:ident) => {
-        impl<const N: usize> $trait for BitVec<N> {
-            type Output = Self;
 
-            fn $method(self, rhs: Self) -> Self::Output {
+        impl<'a, const N: usize> $trait<BitVec<N>> for &'a BitVec<N> {
+            type Output = BitVec<N>;
+
+            fn $method(self, rhs: BitVec<N>) -> Self::Output {
                 match (self, rhs) {
-                    (Self::Short(lhs), Self::Short(rhs)) => {
-                        Self::from_short(lhs.$spec_method(rhs))
+                    (BitVec::Short(lhs), BitVec::Short(rhs)) => {
+                        BitVec::from_short((*lhs).$spec_method(rhs))
                     }
-                    (Self::Long(lhs), Self::Long(rhs)) => {
-                        Self::from_long(lhs.$method(rhs))
+                    (BitVec::Long(lhs), BitVec::Long(rhs)) => {
+                        BitVec::from_long(lhs.$method(rhs))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        impl<'a, const N: usize> $trait<&'a BitVec<N>> for BitVec<N> {
+            type Output = BitVec<N>;
+
+            fn $method(self, rhs: &'a BitVec<N>) -> Self::Output {
+                match (self, rhs) {
+                    (BitVec::Short(lhs), BitVec::Short(rhs)) => {
+                        BitVec::from_short(lhs.$spec_method(*rhs))
+                    }
+                    (BitVec::Long(lhs), BitVec::Long(rhs)) => {
+                        BitVec::from_long(lhs.$method(rhs))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+
+        impl<'a, const N: usize> $trait<&'a BitVec<N>> for &'a BitVec<N> {
+            type Output = BitVec<N>;
+
+            fn $method(self, rhs: &'a BitVec<N>) -> Self::Output {
+                match (self, rhs) {
+                    (BitVec::Short(lhs), BitVec::Short(rhs)) => {
+                        BitVec::from_short((*lhs).$spec_method(*rhs))
+                    }
+                    (BitVec::Long(lhs), BitVec::Long(rhs)) => {
+                        BitVec::from_long(lhs.$method(rhs))
                     }
                     _ => unreachable!(),
                 }
@@ -236,9 +270,17 @@ macro_rules! impl_op {
 }
 
 macro_rules! impl_ops_for_prim {
-    ($trait:ident => $method:ident => $( $prim:ty ),+) => {
+    (impl $trait:ident ($method:ident) for $($prim:ty),*) => {
         $(
             impl<const N: usize> $trait<$prim> for BitVec<N> {
+                type Output = BitVec<N>;
+
+                fn $method(self, rhs: $prim) -> Self::Output {
+                    self.$method(BitVec::<N>::cast_from(rhs))
+                }
+            }
+
+            impl<'a, const N: usize> $trait<$prim> for &'a BitVec<N> {
                 type Output = BitVec<N>;
 
                 fn $method(self, rhs: $prim) -> Self::Output {
@@ -254,36 +296,42 @@ macro_rules! impl_ops_for_prim {
                 }
             }
 
-        )+
+            impl<'a, const N: usize> $trait<&'a BitVec<N>> for $prim {
+                type Output = BitVec<N>;
+
+                fn $method(self, rhs: &'a BitVec<N>) -> Self::Output {
+                    BitVec::<N>::cast_from(self).$method(rhs)
+                }
+            }
+        )*
     };
 }
 
 macro_rules! impl_ops {
-    ($( $trait:ident => $method:ident $( => $spec_method:ident )? ),+) => {
+    ($( impl $trait:ident ($method:ident) with $spec_method:ident ),+ $(,)?) => {
         $(
-            impl_op!($trait => $method $( => $spec_method)?);
-
-            impl_ops_for_prim!($trait => $method => u8, u16, u32, u64, u128, usize);
+            impl_op!(impl $trait ($method) with $spec_method);
+            impl_ops_for_prim!(impl $trait ($method) for u8, u16, u32, u64, u128, usize);
         )+
     };
 }
 
 impl_ops!(
-    BitAnd => bitand,
-    BitOr => bitor,
-    BitXor => bitxor,
-    Add => add => wrapping_add,
-    Sub => sub => wrapping_sub,
-    Mul => mul => wrapping_mul,
-    Div => div => wrapping_div,
-    Rem => rem => wrapping_rem
+    impl BitAnd (bitand) with bitand,
+    impl BitOr (bitor) with bitor,
+    impl BitXor (bitxor) with bitxor,
+    impl Add (add) with wrapping_add,
+    impl Sub (sub) with wrapping_sub,
+    impl Mul (mul) with wrapping_mul,
+    impl Div (div) with wrapping_div,
+    impl Rem (rem) with wrapping_rem
 );
 
 macro_rules! impl_shift_ops {
     ($( $prim:ty ),+) => {
         $(
             impl<const N: usize> Shl<$prim> for BitVec<N> {
-                type Output = Self;
+                type Output = BitVec<N>;
 
                 fn shl(self, rhs: $prim) -> Self::Output {
                     match self {
@@ -293,13 +341,35 @@ macro_rules! impl_shift_ops {
                 }
             }
 
+            impl<'a, const N: usize> Shl<$prim> for &'a BitVec<N> {
+                type Output = BitVec<N>;
+
+                fn shl(self, rhs: $prim) -> Self::Output {
+                    match self {
+                        BitVec::Short(short) => BitVec::from_short((*short).shl(rhs)),
+                        BitVec::Long(long) => BitVec::from_long(long.shl(rhs)),
+                    }
+                }
+            }
+
             impl<const N: usize> Shr<$prim> for BitVec<N> {
-                type Output = Self;
+                type Output = BitVec<N>;
 
                 fn shr(self, rhs: $prim) -> Self::Output {
                     match self {
-                        Self::Short(short) => Self::from_short(short.shr(rhs)),
-                        Self::Long(long) => Self::from_long(long.shr(rhs)),
+                        BitVec::Short(short) => BitVec::from_short(short.shr(rhs)),
+                        BitVec::Long(long) => BitVec::from_long(long.shr(rhs)),
+                    }
+                }
+            }
+
+            impl<'a, const N: usize> Shr<$prim> for &'a BitVec<N> {
+                type Output = BitVec<N>;
+
+                fn shr(self, rhs: $prim) -> Self::Output {
+                    match self {
+                        BitVec::Short(short) => BitVec::from_short((*short).shr(rhs)),
+                        BitVec::Long(long) => BitVec::from_long(long.shr(rhs)),
                     }
                 }
             }
@@ -336,5 +406,25 @@ impl<const N: usize> Not for BitVec<N> {
                     .as_slice(),
             )),
         }
+    }
+}
+
+impl<const N: usize> Traceable for BitVec<N> {
+    fn add_vars(vars: &mut TraceVars) {
+        vars.add_ty(TraceTy::Bus(N as u32));
+    }
+
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        let mut bv = (1_usize << (N - 1)).cast::<Self>();
+        let zero = 0_u8.cast::<Self>();
+
+        tracer.change_bus(
+            id,
+            (0 .. N).map(move |_| {
+                let value = bool_to_vcd((self & &bv) > zero);
+                bv = (&bv) >> 1_u8;
+                value
+            }),
+        )
     }
 }

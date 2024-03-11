@@ -3,6 +3,7 @@
 #![feature(generic_const_exprs)]
 #![feature(generic_arg_infer)]
 #![feature(cell_update)]
+#![feature(associated_const_equality)]
 #![feature(register_tool)]
 #![register_tool(fhdl_tool)]
 
@@ -18,6 +19,7 @@ pub mod domain;
 pub mod eval;
 pub mod index;
 pub mod signal;
+pub mod trace;
 mod tuples;
 pub mod unsigned;
 
@@ -38,12 +40,13 @@ pub mod prelude {
             TestDomain, MICROSECOND, MILLISECOND, NANOSECOND, PICOSECOND, SECOND, TD16,
             TD4, TD8,
         },
-        eval::Eval,
+        eval::{Eval, EvalIter, EvalOpts},
         index::{idx_constr, Idx},
         signal::{
             dff, reg, reg0, reg_en, reg_en0, Enable, IntoSignal, Reset, Signal,
             SignalValue,
         },
+        trace::{IdCode, Timescale, TraceTy, TraceValue, TraceVars, Traceable, Tracer},
         unsigned::{Unsigned, U},
     };
 }

@@ -1,12 +1,16 @@
 use std::{
     cell::Cell,
     fmt::{self, Display},
+    io,
     marker::PhantomData,
     rc::Rc,
 };
 
 use derive_where::derive_where;
 use fhdl_macros::blackbox_ty;
+use vcd::IdCode;
+
+use crate::trace::{TraceTy, TraceVars, Traceable, Tracer};
 
 pub const SECOND: usize = 1_000_000_000_000;
 pub const MILLISECOND: usize = 1_000_000_000;
@@ -140,6 +144,19 @@ impl<D: ClockDomain> Clock<D> {
             ClockState::Rising => ClockState::Falling,
             ClockState::Falling => ClockState::Rising,
         });
+    }
+}
+
+impl<D: ClockDomain> Traceable for Clock<D> {
+    fn add_vars(vars: &mut TraceVars) {
+        vars.add_ty(TraceTy::Wire);
+    }
+
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        match self.state.get() {
+            ClockState::Rising => tracer.change_wire(id, vcd::Value::V1),
+            ClockState::Falling => tracer.change_wire(id, vcd::Value::V0),
+        }
     }
 }
 

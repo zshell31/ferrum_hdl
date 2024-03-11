@@ -1,10 +1,14 @@
+use std::io;
+
 use fhdl_macros::blackbox;
+use vcd::IdCode;
 
 use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
     cast::{Cast, CastFrom},
     signal::SignalValue,
+    trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
 
 pub type Bit = bool;
@@ -40,3 +44,15 @@ impl BitPack for Bit {
 
 pub const H: Bit = true;
 pub const L: Bit = false;
+
+impl Traceable for Bit {
+    #[inline]
+    fn add_vars(vars: &mut TraceVars) {
+        vars.add_ty(TraceTy::Wire);
+    }
+
+    #[inline]
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        tracer.change_wire(id, bool_to_vcd(*self))
+    }
+}

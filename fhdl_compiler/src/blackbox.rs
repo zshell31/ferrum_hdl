@@ -36,7 +36,7 @@ pub struct Blackbox {
 
 macro_rules! eval_expr {
     (
-        $( $blackbox_kind:ident => $eval:expr ),+
+        $( $blackbox_kind:ident => $eval:expr ),+ $(,)?
     ) => {
         impl<'tcx> Blackbox {
             pub fn eval(
@@ -126,5 +126,5 @@ eval_expr!(
     SignalWatch => PassReceiver,
     IntoSignal => PassReceiver,
 
-    StdClone => PassReceiver
+    StdClone => PassReceiver,
 );

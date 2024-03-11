@@ -17,6 +17,7 @@ use rustc_middle::{
 };
 use rustc_span::{def_id::LOCAL_CRATE, Span};
 use rustc_target::abi::FieldIdx;
+use smallvec::SmallVec;
 use tracing::{debug, error, instrument};
 
 use super::{
@@ -234,7 +235,7 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         inputs: impl IntoIterator<Item = (Local, &'a LocalDecl<'tcx>)>,
         ctx: &mut Context<'tcx>,
-    ) -> Result<Vec<Item<'tcx>>, Error>
+    ) -> Result<SmallVec<[Item<'tcx>; 1]>, Error>
     where
         'tcx: 'a,
     {
@@ -611,7 +612,7 @@ impl<'tcx> Compiler<'tcx> {
         operands: impl IntoIterator<Item = &'a Operand<'tcx>>,
         ctx: &mut Context<'tcx>,
         span: Span,
-    ) -> Result<Vec<Item<'tcx>>, Error>
+    ) -> Result<SmallVec<[Item<'tcx>; 1]>, Error>
     where
         'tcx: 'a,
     {

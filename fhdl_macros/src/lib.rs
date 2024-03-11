@@ -4,6 +4,7 @@ mod blackbox;
 mod impl_tuple_traits;
 mod signal_value;
 mod synth;
+mod traceable;
 mod utils;
 
 use bitpack::BitPackDerive;
@@ -15,6 +16,7 @@ use quote::quote;
 use signal_value::SignalValueDerive;
 use syn::{parse_macro_input, DeriveInput};
 use synth::SynthAttrs;
+use traceable::TraceableDerive;
 
 use self::blackbox::{BlackboxAttr, BlackboxTyAttr};
 
@@ -81,6 +83,17 @@ pub fn derive_signal_value(input: TokenStream) -> TokenStream {
 pub fn derive_bitpack(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let parsed = match BitPackDerive::from_derive_input(&input) {
+        Ok(parsed) => parsed,
+        Err(e) => return e.write_errors().into(),
+    };
+
+    parsed.into_tokens().into()
+}
+
+#[proc_macro_derive(Traceable, attributes(traceable))]
+pub fn derive_traceable(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    let parsed = match TraceableDerive::from_derive_input(&input) {
         Ok(parsed) => parsed,
         Err(e) => return e.write_errors().into(),
     };

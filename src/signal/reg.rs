@@ -2,7 +2,7 @@ use std::borrow::Borrow;
 
 use fhdl_macros::{blackbox, synth};
 
-use super::{Signal, SignalValue, Source};
+use super::{Signal, SignalValue};
 use crate::domain::{Clock, ClockDomain, Polarity, SyncKind};
 
 #[allow(type_alias_bounds)]
@@ -14,10 +14,6 @@ impl<D: ClockDomain> Reset<D> {
         let rst = Self::lift(false);
         rst
     }
-
-    pub fn reset_src() -> (Source<bool>, Self) {
-        Self::source(false)
-    }
 }
 
 #[allow(type_alias_bounds)]
@@ -28,10 +24,6 @@ impl<D: ClockDomain> Enable<D> {
     pub fn enable() -> Self {
         let en = Self::lift(true);
         en
-    }
-
-    pub fn enable_src() -> (Source<bool>, Self) {
-        Self::source(true)
     }
 }
 
@@ -173,7 +165,7 @@ mod tests {
         }
 
         let clk = Clock::<_>::new();
-        let (rst_src, rst) = Reset::reset_src();
+        let rst = Reset::reset();
 
         let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
@@ -183,28 +175,28 @@ mod tests {
             0, 0, 1, 1, 2, 2, 3
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // F  R  F  R
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
          // F  R  F  R  F   
             0, 1, 1, 2, 2
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
@@ -223,7 +215,7 @@ mod tests {
         }
 
         let clk = Clock::<_>::new();
-        let (rst_src, rst) = Reset::reset_src();
+        let rst = Reset::reset();
 
         let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
@@ -233,28 +225,28 @@ mod tests {
             0, 0, 1, 1, 2, 2, 3
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // F  R  F  R
             3, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
          // F  R  F  R  F   
             0, 1, 1, 2, 2
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
@@ -273,7 +265,7 @@ mod tests {
         }
 
         let clk = Clock::<_>::new();
-        let (rst_src, rst) = Reset::reset_src();
+        let rst = Reset::reset();
 
         let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
@@ -283,35 +275,35 @@ mod tests {
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(9).collect::<Vec<_>>(), [
          // R  F  R  F  R  F  R  F  R
             1, 1, 2, 2, 3, 3, 0, 0, 1
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // F  R  F  R
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
          // F  R  F  R  F   
             0, 1, 1, 2, 2
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
@@ -330,7 +322,7 @@ mod tests {
         }
 
         let clk = Clock::<_>::new();
-        let (rst_src, rst) = Reset::reset_src();
+        let rst = Reset::reset();
 
         let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
@@ -340,35 +332,35 @@ mod tests {
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(9).collect::<Vec<_>>(), [
          // R  F  R  F  R  F  R  F  R
             1, 1, 2, 2, 3, 3, 0, 0, 1
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // F  R  F  R
             1, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
          // F  R  F  R  F   
             0, 1, 1, 2, 2
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
             0, 0, 0, 0
         ]);
 
-        rst_src.invert();
+        rst.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
@@ -380,7 +372,7 @@ mod tests {
     fn test_reg_en() {
         let clk = Clock::<TD4>::default();
         let rst = Reset::reset();
-        let (en_src, en) = Enable::enable_src();
+        let en = Enable::enable();
 
         let mut r =
             reg_en::<_, U<2>>(&clk, &rst, &en, &0_u8.cast(), |val| val + 1).eval(&clk);
@@ -391,28 +383,28 @@ mod tests {
             0, 0, 1, 1, 2, 2, 3
         ]);
 
-        en_src.invert();
+        en.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // F  R  F  R
             3, 3, 3, 3
         ]);
 
-        en_src.invert();
+        en.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
          // F  R  F  R  F
             3, 0, 0, 1, 1
         ]);
 
-        en_src.invert();
+        en.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
             1, 1, 1, 1
         ]);
 
-        en_src.invert();
+        en.invert();
         #[rustfmt::skip]
         assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
          // R  F  R  F
@@ -424,8 +416,8 @@ mod tests {
     fn test_reg_seq() {
         let clk = Clock::<TD4>::default();
         let rst_data = Reset::reset();
-        let (rst_src, rst) = Reset::reset_src();
-        let (en_src, en) = Enable::enable_src();
+        let rst = Reset::reset();
+        let en = Enable::enable();
 
         let data = reg(&clk, &rst_data, &1_u8.cast(), |counter: U<3>| counter + 1);
 
@@ -441,7 +433,7 @@ mod tests {
         let reg3 = block!(reg2);
 
         let r = [reg0, reg1, reg2, reg3].bundle();
-        let mut r = (data, en, r).bundle().eval(&clk);
+        let mut r = (data, en.clone(), r).bundle().eval(&clk);
 
         let cast = |value: (U<_>, bool, [U<_>; 4])| value.cast::<(u8, bool, [u8; 4])>();
 
@@ -456,7 +448,7 @@ mod tests {
             (4, true, [3, 2, 1, 0])  // F
         ]);
 
-        en_src.invert();
+        en.invert();
         assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
             (5, false, [3, 2, 1, 0]), // R
             (5, false, [3, 2, 1, 0]), // F
@@ -464,7 +456,7 @@ mod tests {
             (6, false, [3, 2, 1, 0]), // F
         ]);
 
-        en_src.invert();
+        en.invert();
         assert_eq!(r.by_ref().take(8).map(cast).collect::<Vec<_>>(), [
             (7, true, [6, 3, 2, 1]), // R
             (7, true, [6, 3, 2, 1]), // F
@@ -476,7 +468,7 @@ mod tests {
             (2, true, [1, 0, 7, 6]), // F
         ]);
 
-        rst_src.invert();
+        rst.invert();
         assert_eq!(r.by_ref().take(4).map(cast).collect::<Vec<_>>(), [
             (3, true, [0, 0, 0, 0]), // R
             (3, true, [0, 0, 0, 0]), // F
@@ -484,7 +476,7 @@ mod tests {
             (4, true, [0, 0, 0, 0]), // F
         ]);
 
-        rst_src.invert();
+        rst.invert();
         assert_eq!(r.by_ref().take(8).map(cast).collect::<Vec<_>>(), [
             (5, true, [4, 0, 0, 0]), // R
             (5, true, [4, 0, 0, 0]), // F

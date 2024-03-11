@@ -1,11 +1,13 @@
 use std::{
     cmp::Ordering::{self, *},
     fmt::{self, Binary, Display, LowerHex},
+    io,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
 use fhdl_macros::{blackbox, blackbox_ty, synth};
 use paste::paste;
+use vcd::IdCode;
 
 use crate::{
     bitpack::{BitPack, BitSize},
@@ -14,6 +16,7 @@ use crate::{
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
+    trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
 
 #[derive(Debug, Clone, Eq)]
@@ -390,5 +393,52 @@ impl<const N: usize> Not for Unsigned<N> {
     #[inline]
     fn not(self) -> Self::Output {
         Self(self.0.not())
+    }
+}
+
+pub const fn in_range(n: usize, lo: usize, hi: usize) -> bool {
+    assert!(lo < hi);
+    n >= lo && n < hi
+}
+
+macro_rules! impl_trace_for_prims {
+    ($( $prim:ty ),+) => {
+        $(
+            impl Traceable for $prim
+            {
+                fn add_vars(vars: &mut TraceVars) {
+                    vars.add_ty(TraceTy::Bus(Self::BITS));
+                }
+
+                fn trace(
+                    &self,
+                    id: &mut IdCode,
+                    tracer: &mut Tracer,
+                ) -> io::Result<()> {
+                    let mut v: Self = (1 << (Self::BITS - 1));
+                    tracer.change_bus(
+                        id,
+                        (0 .. Self::BITS).map(|_| {
+                            let value = bool_to_vcd((*self & v) > 0);
+                            v >>= 1;
+                            value
+                        }),
+                    )
+                }
+            }
+        )+
+    };
+}
+
+impl_trace_for_prims!(u8, u16, u32, u64, u128);
+
+impl<const N: usize> Traceable for Unsigned<N> {
+    fn add_vars(vars: &mut TraceVars) {
+        BitVec::<N>::add_vars(vars);
+    }
+
+    #[inline]
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        self.0.trace(id, tracer)
     }
 }

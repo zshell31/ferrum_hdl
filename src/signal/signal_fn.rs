@@ -4,7 +4,7 @@ use crate::{eval::EvalCtx, signal::SignalValue};
 
 #[derive_where(Debug; T)]
 pub struct SignalFn<T: SignalValue> {
-    time: usize,
+    time: u64,
     cached: Option<T>,
     #[derive_where(skip)]
     f: Box<dyn FnMut(&mut EvalCtx) -> T>,
@@ -13,7 +13,7 @@ pub struct SignalFn<T: SignalValue> {
 impl<T: SignalValue> SignalFn<T> {
     pub(crate) fn new(f: impl FnMut(&mut EvalCtx) -> T + 'static) -> Self {
         Self {
-            time: usize::MAX,
+            time: u64::MAX,
             cached: None,
             f: Box::new(f),
         }
@@ -59,11 +59,11 @@ mod tests {
             value
         });
 
-        ctx.next_time();
+        ctx.set_next_time();
         assert_eq!(signal_fn.next_val(&mut ctx), 1);
         assert_eq!(signal_fn.next_val(&mut ctx), 1);
 
-        ctx.next_time();
+        ctx.set_next_time();
         assert_eq!(signal_fn.next_val(&mut ctx), 2);
         assert_eq!(signal_fn.next_val(&mut ctx), 2);
     }

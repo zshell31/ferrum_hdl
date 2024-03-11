@@ -1,6 +1,6 @@
 use std::{
     fmt::Arguments,
-    io::{Result, Write},
+    io::{self, Result, Write},
 };
 
 pub struct Buffer<W> {
@@ -76,5 +76,10 @@ impl<W: Write> Buffer<W> {
         }
 
         Ok(())
+    }
+
+    #[inline]
+    pub fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }

@@ -280,10 +280,13 @@ dependencies = [
  "derive-where",
  "fhdl_const_func",
  "fhdl_macros",
+ "indexmap",
  "num-bigint",
  "num-traits",
  "paste",
+ "rustc-hash",
  "smallvec",
+ "vcd",
 ]
 
 [[package]]
@@ -332,6 +335,7 @@ dependencies = [
  "petgraph",
  "serde",
  "serde_json",
+ "smallvec",
  "thiserror",
  "tracing",
  "tracing-subscriber",
@@ -897,6 +901,12 @@ name = "valuable"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b7e5d4d90034032940e4ace0d9a9a057e7a45cd94e6c007832e39edb82f6d"
+
+[[package]]
+name = "vcd"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4505774fc84de82eb04caa74d859342b0daa376f4c6df45149593245dd62c004"
 
 [[package]]
 name = "version_check"

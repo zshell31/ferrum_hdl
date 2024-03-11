@@ -41,6 +41,7 @@ impl ImplTupleTraits {
         let impl_cast_from = self.impl_cast_from();
         let impl_bit_size = self.impl_bit_size();
         let impl_bit_pack = self.impl_bit_pack();
+        let impl_traceable = self.impl_traceable();
 
         quote! {
             #impl_signal_value
@@ -56,6 +57,8 @@ impl ImplTupleTraits {
             #impl_bit_size
 
             #impl_bit_pack
+
+            #impl_traceable
         }
     }
 
@@ -214,6 +217,45 @@ impl ImplTupleTraits {
                         #(#names,)*
                     )
                 }
+            }
+        }
+    }
+
+    fn impl_traceable(&self) -> TokenStream {
+        let t = &self.tparams;
+        let n = &self.indexes;
+
+        let vars = n.iter().zip(t).map(|(idx, t)| {
+            quote! {
+                vars.push_idx(#idx);
+                #t::add_vars(vars);
+                vars.pop();
+            }
+        });
+
+        let traces = n.iter().map(|idx| {
+            quote! {
+                self.#idx.trace(id, tracer)?;
+            }
+        });
+
+        quote! {
+            impl< #( #t, )* > Traceable for ( #( #t, )* )
+            where
+                #(
+                    #t: Traceable,
+                )*
+            {
+                fn add_vars(vars: &mut TraceVars) {
+                    #( #vars )*
+                }
+
+                fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+                    #( #traces )*
+
+                    Ok(())
+                }
+
             }
         }
     }

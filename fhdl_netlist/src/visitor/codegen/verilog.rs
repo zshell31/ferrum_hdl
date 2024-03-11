@@ -143,6 +143,8 @@ impl<'n, W: Write> Verilog<'n, W> {
             self.visit_module(&module)?;
         }
 
+        self.buffer.flush()?;
+
         Ok(())
     }
 

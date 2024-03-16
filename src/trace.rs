@@ -17,6 +17,18 @@ pub trait Traceable {
     fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()>;
 }
 
+impl<'a, T: Traceable> Traceable for &'a T {
+    #[inline]
+    fn add_vars(vars: &mut TraceVars) {
+        T::add_vars(vars);
+    }
+
+    #[inline]
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        (*self).trace(id, tracer)
+    }
+}
+
 pub(crate) fn bool_to_vcd(b: bool) -> vcd::Value {
     if b {
         vcd::Value::V1

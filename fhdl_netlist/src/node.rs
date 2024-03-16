@@ -128,7 +128,7 @@ impl Node {
         let mut node = Self::new(self.kind.as_ref().clone());
         node.next = calc_node_id(self.next);
         node.prev = calc_node_id(self.prev);
-        node.span = self.span.clone();
+        node.span.clone_from(&self.span);
 
         node
     }

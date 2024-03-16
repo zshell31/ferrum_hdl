@@ -5,16 +5,18 @@ use rustc_span::Span;
 use super::{args, EvalExpr};
 use crate::{
     compiler::{
-        item::{Item, ModuleExt},
+        item::{Group, Item, ItemKind, ModuleExt},
         item_ty::ItemTy,
         Compiler, Context, SymIdent,
     },
     error::{Error, SpanError, SpanErrorKind},
 };
 
-pub struct SignalReg;
+pub struct SignalDff {
+    pub comb: bool,
+}
 
-impl<'tcx> EvalExpr<'tcx> for SignalReg {
+impl<'tcx> EvalExpr<'tcx> for SignalDff {
     fn eval(
         &self,
         compiler: &mut Compiler<'tcx>,
@@ -29,6 +31,13 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
         let rst = ctx.module.to_bitvec(rst).port();
         let en = ctx.module.to_bitvec(en).port();
         let init = ctx.module.to_bitvec(init).port();
+
+        let (dff_ty, comb_ty) = if self.comb {
+            let struct_ty = output_ty.struct_ty();
+            (struct_ty.by_idx(0), struct_ty.by_idx(1))
+        } else {
+            (output_ty, output_ty)
+        };
 
         let rst_kind = ctx
             .module
@@ -49,18 +58,23 @@ impl<'tcx> EvalExpr<'tcx> for SignalReg {
             rst_pol,
             en: Some(en),
             init,
-            data: TyOrData::Ty(output_ty.to_bitvec()),
+            data: TyOrData::Ty(dff_ty.to_bitvec()),
             sym: SymIdent::Reg.into(),
         });
-        let dff_out = ctx.module.from_bitvec(dff, output_ty);
+        let dff_out = ctx.module.from_bitvec(dff, dff_ty);
 
         let comb = compiler.instantiate_closure(comb, &[dff_out.clone()], ctx, span)?;
-        assert_eq!(comb.ty, output_ty);
+        assert_eq!(comb.ty, comb_ty);
+        ctx.module.assign_names_to_item("comb", &comb, false);
 
         let comb_out = ctx.module.to_bitvec(&comb).port();
         DFF::set_data(&mut ctx.module, dff.node, comb_out);
 
-        Ok(dff_out)
+        Ok(if self.comb {
+            Item::new(output_ty, ItemKind::Group(Group::new([dff_out, comb])))
+        } else {
+            dff_out
+        })
     }
 }
 

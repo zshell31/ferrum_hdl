@@ -1,6 +1,7 @@
 #![allow(clippy::let_and_return)]
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(adt_const_params)]
 #![feature(generic_arg_infer)]
 #![feature(cell_update)]
 #![feature(associated_const_equality)]
@@ -43,8 +44,8 @@ pub mod prelude {
         eval::{Eval, EvalIter, EvalOpts},
         index::{idx_constr, Idx},
         signal::{
-            dff, reg, reg0, reg_en, reg_en0, Enable, IntoSignal, Reset, Signal,
-            SignalValue,
+            dff, dff_comb, reg, reg0, reg0_comb, reg_comb, reg_en, reg_en0, reg_en0_comb,
+            reg_en_comb, Enable, IntoSignal, Reset, Signal, SignalValue,
         },
         trace::{IdCode, Timescale, TraceTy, TraceValue, TraceVars, Traceable, Tracer},
         unsigned::{Unsigned, U},

@@ -524,6 +524,11 @@ impl Module {
             let new_port = output.with(calc_node_id(output.node));
 
             self.reconnect_all_outgoing(old_port, new_port);
+
+            let sym = self[old_port].sym;
+            if sym.is_some() {
+                self[new_port].sym = sym;
+            }
         }
 
         let mut start = source_mod.list.head;

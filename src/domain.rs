@@ -2,7 +2,7 @@ use std::{
     cell::Cell,
     fmt::{self, Display},
     io,
-    marker::PhantomData,
+    marker::{ConstParamTy, PhantomData},
     rc::Rc,
 };
 
@@ -28,7 +28,7 @@ pub const fn clk_divider<D: ClockDomain>(ps: usize) -> usize {
     ps / D::PERIOD
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]
 pub enum SyncKind {
     Sync,
     Async,
@@ -44,7 +44,7 @@ impl SyncKind {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]
 pub enum Polarity {
     ActiveHigh = 1,
     ActiveLow = 20,

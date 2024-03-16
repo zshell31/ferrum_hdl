@@ -42,7 +42,7 @@ macro_rules! idx_ty {
         impl Display for $name {
             #[inline]
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                match self.into_opt() {
+                match self.0 {
                     Some(val) => Display::fmt(&val, f),
                     None => f.write_str("_"),
                 }

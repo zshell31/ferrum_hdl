@@ -15,7 +15,10 @@ use derive_where::derive_where;
 pub use fhdl_macros::SignalValue;
 use fhdl_macros::{blackbox, blackbox_ty, synth};
 pub use ops::IntoSignal;
-pub use reg::{dff, reg, reg0, reg_en, reg_en0, Enable, Reset};
+pub use reg::{
+    dff, dff_comb, reg, reg0, reg0_comb, reg_comb, reg_en, reg_en0, reg_en0_comb,
+    reg_en_comb, Enable, Reset,
+};
 use vcd::IdCode;
 pub use wrapped::Wrapped;
 
@@ -31,6 +34,14 @@ use crate::{
 pub trait SignalValue: Clone + 'static {}
 
 impl<T: SignalValue> SignalValue for Option<T> {}
+
+impl<D: ClockDomain, T: SignalValue> Eval<D> for T {
+    type Value = T;
+
+    fn next(&mut self, _: &mut EvalCtx) -> Self::Value {
+        self.clone()
+    }
+}
 
 #[derive_where(Debug, Clone; T)]
 #[blackbox_ty(Signal)]
@@ -106,29 +117,23 @@ impl<D: ClockDomain, T: SignalValue> Signal<D, T> {
     }
 
     #[synth(inline)]
-    pub fn reg<U: SignalValue>(
+    pub fn reg<U: SignalValue + Default>(
         &self,
         clk: &Clock<D>,
         rst: &Reset<D>,
         f: impl Fn(T) -> U + Clone + 'static,
-    ) -> Signal<D, U>
-    where
-        U: Default,
-    {
+    ) -> Signal<D, U> {
         self.and_then(|value| reg0(clk, rst, move |_| f(value.value())))
     }
 
     #[synth(inline)]
-    pub fn reg_en<U: SignalValue>(
+    pub fn reg_en<U: SignalValue + Default>(
         &self,
         clk: &Clock<D>,
         rst: &Reset<D>,
         en: &Enable<D>,
         f: impl Fn(T) -> U + Clone + 'static,
-    ) -> Signal<D, U>
-    where
-        U: Default,
-    {
+    ) -> Signal<D, U> {
         self.and_then(|value| reg_en0(clk, rst, en, move |_| f(value.value())))
     }
 

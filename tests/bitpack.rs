@@ -11,9 +11,6 @@ use ferrum_hdl::{
 };
 
 mod test_zs_struct {
-
-    use ferrum_hdl::cast::Cast;
-
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -40,8 +37,6 @@ mod test_zs_struct {
 }
 
 mod test_struct {
-    use ferrum_hdl::cast::Cast;
-
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -80,8 +75,6 @@ mod test_struct {
 }
 
 mod test_struct_with_type_param {
-    use ferrum_hdl::cast::Cast;
-
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -117,8 +110,6 @@ mod test_struct_with_type_param {
 }
 
 mod test_struct_with_const_param {
-    use ferrum_hdl::cast::Cast;
-
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -154,8 +145,6 @@ mod test_struct_with_const_param {
 }
 
 mod test_struct_with_type_const_param {
-    use ferrum_hdl::cast::Cast;
-
     use super::*;
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
@@ -465,6 +454,41 @@ mod test_enum_with_3_variants {
         let s: Test<3, Unsigned<3>> = BitPack::unpack(0b011000000_u64.cast());
 
         assert_eq!(s, Test::<3, Unsigned<3>>::B(true.cast()));
+    }
+}
+
+mod test_enum_with_discr {
+    use super::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, SignalValue, BitPack)]
+    enum Test {
+        A = 10,
+        B,
+        C,
+        D = 20,
+    }
+
+    #[test]
+    fn pack() {
+        assert_eq!(Test::BITS, 5);
+        assert_eq!(Test::A.pack(), 0b01010_u64.cast());
+        assert_eq!(Test::B.pack(), 0b01011_u64.cast());
+        assert_eq!(Test::C.pack(), 0b01100_u64.cast());
+        assert_eq!(Test::D.pack(), 0b10100_u64.cast());
+    }
+
+    #[test]
+    fn unpack() {
+        assert_eq!(Test::unpack(0b01010_u64.cast()), Test::A);
+        assert_eq!(Test::unpack(0b01011_u64.cast()), Test::B);
+        assert_eq!(Test::unpack(0b01100_u64.cast()), Test::C);
+        assert_eq!(Test::unpack(0b10100_u64.cast()), Test::D);
+    }
+
+    #[test]
+    #[should_panic]
+    fn invalid_val() {
+        let _ = Test::unpack(0b11010_u64.cast());
     }
 }
 

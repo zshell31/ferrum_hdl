@@ -243,7 +243,6 @@ mod tests {
     use super::*;
     use crate::{
         bit::{Bit, H, L},
-        bitvec::BitVec,
         domain::{Clock, TD4},
         signal::SignalIterExt,
     };

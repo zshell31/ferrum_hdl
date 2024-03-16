@@ -3,7 +3,10 @@ use std::borrow::Borrow;
 use fhdl_macros::{blackbox, synth};
 
 use super::{Signal, SignalValue};
-use crate::domain::{Clock, ClockDomain, Polarity, SyncKind};
+use crate::{
+    domain::{Clock, ClockDomain, Polarity, SyncKind},
+    prelude::Unbundle,
+};
 
 #[allow(type_alias_bounds)]
 pub type Reset<D: ClockDomain> = Signal<D, bool>;
@@ -28,7 +31,6 @@ impl<D: ClockDomain> Enable<D> {
 }
 
 #[synth(inline)]
-#[inline]
 pub fn reg<D: ClockDomain, T: SignalValue>(
     clk: &Clock<D>,
     rst: &Reset<D>,
@@ -36,23 +38,39 @@ pub fn reg<D: ClockDomain, T: SignalValue>(
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
     let en = Enable::enable();
-    let reg = reg_en(clk, rst, &en, init, comb_fn);
-    reg
+    reg_en(clk, rst, &en, init, comb_fn)
 }
 
 #[synth(inline)]
-#[inline]
+pub fn reg_comb<D: ClockDomain, T: SignalValue>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, (T, T)> {
+    let en = Enable::enable();
+    reg_en_comb(clk, rst, &en, init, comb_fn)
+}
+
+#[synth(inline)]
 pub fn reg0<D: ClockDomain, T: SignalValue + Default>(
     clk: &Clock<D>,
     rst: &Reset<D>,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let reg = reg(clk, rst, &T::default(), comb_fn);
-    reg
+    reg(clk, rst, &T::default(), comb_fn)
 }
 
 #[synth(inline)]
-#[inline]
+pub fn reg0_comb<D: ClockDomain, T: SignalValue + Default>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, (T, T)> {
+    reg_comb(clk, rst, &T::default(), comb_fn)
+}
+
+#[synth(inline)]
 pub fn reg_en<D: ClockDomain, T: SignalValue>(
     clk: &Clock<D>,
     rst: &Reset<D>,
@@ -60,7 +78,7 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
     init: &T,
     comb_fn: impl Fn(T) -> T + Clone + 'static,
 ) -> Signal<D, T> {
-    let reg = dff::<D, T>(
+    dff_::<D, T>(
         clk,
         rst,
         en,
@@ -68,12 +86,68 @@ pub fn reg_en<D: ClockDomain, T: SignalValue>(
         comb_fn,
         D::RESET_KIND,
         D::RESET_POLARITY,
-    );
-    reg
+    )
 }
 
-#[blackbox(SignalReg)]
-pub fn dff<D: ClockDomain, T: SignalValue>(
+#[synth(inline)]
+pub fn reg_en_comb<D: ClockDomain, T: SignalValue>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, (T, T)> {
+    dff_comb_::<D, T>(
+        clk,
+        rst,
+        en,
+        init,
+        comb_fn,
+        D::RESET_KIND,
+        D::RESET_POLARITY,
+    )
+}
+
+#[synth(inline)]
+#[inline]
+pub fn reg_en0<D: ClockDomain, T: SignalValue + Default>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    reg_en(clk, rst, en, &T::default(), comb_fn)
+}
+
+#[synth(inline)]
+#[inline]
+pub fn reg_en0_comb<D: ClockDomain, T: SignalValue + Default>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, (T, T)> {
+    reg_en_comb(clk, rst, en, &T::default(), comb_fn)
+}
+
+#[synth(inline)]
+pub fn dff<
+    D: ClockDomain,
+    T: SignalValue,
+    const RST_KIND: SyncKind,
+    const RST_POL: Polarity,
+>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, T> {
+    dff_::<D, T>(clk, rst, en, init, comb_fn, RST_KIND, RST_POL)
+}
+
+#[blackbox(SignalDff)]
+fn dff_<D: ClockDomain, T: SignalValue>(
     clk: &Clock<D>,
     rst: &Reset<D>,
     en: &Enable<D>,
@@ -82,6 +156,37 @@ pub fn dff<D: ClockDomain, T: SignalValue>(
     rst_kind: SyncKind,
     rst_pol: Polarity,
 ) -> Signal<D, T> {
+    let (reg, _) = dff_comb_(clk, rst, en, init, comb_fn, rst_kind, rst_pol).unbundle();
+    reg
+}
+
+#[synth(inline)]
+pub fn dff_comb<
+    D: ClockDomain,
+    T: SignalValue,
+    const RST_KIND: SyncKind,
+    const RST_POL: Polarity,
+>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+) -> Signal<D, (T, T)> {
+    let reg = dff_comb_(clk, rst, en, init, comb_fn, RST_KIND, RST_POL);
+    reg
+}
+
+#[blackbox(SignalDffComb)]
+fn dff_comb_<D: ClockDomain, T: SignalValue>(
+    clk: &Clock<D>,
+    rst: &Reset<D>,
+    en: &Enable<D>,
+    init: &T,
+    comb_fn: impl Fn(T) -> T + Clone + 'static,
+    rst_kind: SyncKind,
+    rst_pol: Polarity,
+) -> Signal<D, (T, T)> {
     let clk = clk.clone();
     let mut rst = match rst_pol {
         Polarity::ActiveHigh => rst.clone(),
@@ -100,14 +205,14 @@ pub fn dff<D: ClockDomain, T: SignalValue>(
             if rst {
                 val = init.clone();
                 next_val = (comb_fn)(val.clone());
-                val.clone()
+                (val.clone(), next_val.clone())
             } else if clk.is_rising() && en {
                 val = next_val.clone();
                 next_val = (comb_fn)(val.clone());
-                val.clone()
+                (val.clone(), next_val.clone())
             } else {
                 next_val = (comb_fn)(val.clone());
-                val.clone()
+                (val.clone(), next_val.clone())
             }
         }),
         SyncKind::Sync => Signal::new(move |ctx| {
@@ -117,45 +222,39 @@ pub fn dff<D: ClockDomain, T: SignalValue>(
                 if rst {
                     val = init.clone();
                     next_val = (comb_fn)(val.clone());
-                    return val.clone();
+                    return (val.clone(), next_val.clone());
                 } else if en {
                     val = next_val.clone();
                     next_val = (comb_fn)(val.clone());
-                    return val.clone();
+                    return (val.clone(), next_val.clone());
                 }
             };
 
             next_val = (comb_fn)(val.clone());
-            val.clone()
+            (val.clone(), next_val.clone())
         }),
     }
 }
 
-#[synth(inline)]
-#[inline]
-pub fn reg_en0<D: ClockDomain, T: SignalValue + Default>(
-    clk: &Clock<D>,
-    rst: &Reset<D>,
-    en: &Enable<D>,
-    comb_fn: impl Fn(T) -> T + Clone + 'static,
-) -> Signal<D, T> {
-    let reg = reg_en(clk, rst, en, &T::default(), comb_fn);
-    reg
-}
-
 #[cfg(test)]
 mod tests {
-    use reg::{reg_en, reg_en0, Enable};
-
+    use super::*;
     use crate::{
-        cast::Cast,
-        domain::{Clock, ClockDomain, Polarity, SyncKind, TD4},
-        prelude::{Bundle, Eval, Reset, U},
-        signal::reg,
+        cast::{Cast, CastFrom},
+        domain::TD4,
+        prelude::{Bundle, Eval, U},
     };
 
+    trait TakeByRef: Iterator {
+        fn take_by_ref<U: CastFrom<Self::Item>>(&mut self, n: usize) -> Vec<U> {
+            self.take(n).map(Cast::cast::<U>).collect::<Vec<_>>()
+        }
+    }
+
+    impl<I: Iterator> TakeByRef for I {}
+
     #[test]
-    fn test_reg_async_posedge_rst() {
+    fn test_reg_comb_async_posedge_rst() {
         struct Test;
 
         impl ClockDomain for Test {
@@ -167,41 +266,42 @@ mod tests {
         let clk = Clock::<_>::new();
         let rst = Reset::reset();
 
-        let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
+        let mut r =
+            reg_comb::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(7).collect::<Vec<_>>(), [
-         // R  F  R  F  R  F  R
-            0, 0, 1, 1, 2, 2, 3
-        ]);
-
-        rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // F  R  F  R
-            0, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(7),
+            //R       F       R       F       R       F       R
+            [(0, 1), (0, 1), (1, 2), (1, 2), (2, 3), (2, 3), (3, 0)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
-         // F  R  F  R  F   
-            0, 1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //F       R       F       R
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(5),
+            //F       R       F       R       F
+            [(0, 1), (1, 2), (1, 2), (2, 3), (2, 3)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
+
+        rst.invert();
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(1, 2), (1, 2), (2, 3), (2, 3)]
+        );
     }
 
     #[test]
@@ -217,41 +317,42 @@ mod tests {
         let clk = Clock::<_>::new();
         let rst = Reset::reset();
 
-        let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
+        let mut r =
+            reg_comb::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(7).collect::<Vec<_>>(), [
-         // R  F  R  F  R  F  R
-            0, 0, 1, 1, 2, 2, 3
-        ]);
-
-        rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // F  R  F  R
-            3, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(7),
+            //R       F       R       F       R       F       R
+            [(0, 1), (0, 1), (1, 2), (1, 2), (2, 3), (2, 3), (3, 0)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
-         // F  R  F  R  F   
-            0, 1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //F       R       F       R
+            [(3, 0), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(5),
+            //F       R       F       R       F
+            [(0, 1), (1, 2), (1, 2), (2, 3), (2, 3)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
+
+        rst.invert();
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(1, 2), (1, 2), (2, 3), (2, 3)]
+        );
     }
 
     #[test]
@@ -267,48 +368,55 @@ mod tests {
         let clk = Clock::<_>::new();
         let rst = Reset::reset();
 
-        let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
+        let mut r =
+            reg_comb::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
+
+        rst.invert();
+        assert_eq!(r.take_by_ref::<(u8, u8)>(9), [
+            (1, 2), // R
+            (1, 2), // F
+            (2, 3), // R
+            (2, 3), // F
+            (3, 0), // R
+            (3, 0), // F
+            (0, 1), // R
+            (0, 1), // F
+            (1, 2)  // R
         ]);
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(9).collect::<Vec<_>>(), [
-         // R  F  R  F  R  F  R  F  R
-            1, 1, 2, 2, 3, 3, 0, 0, 1
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //F       R       F       R
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // F  R  F  R
-            0, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(5),
+            //F       R       F       R       F
+            [(0, 1), (1, 2), (1, 2), (2, 3), (2, 3)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
-         // F  R  F  R  F   
-            0, 1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
-        ]);
-
-        rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(1, 2), (1, 2), (2, 3), (2, 3)]
+        );
     }
 
     #[test]
@@ -324,48 +432,55 @@ mod tests {
         let clk = Clock::<_>::new();
         let rst = Reset::reset();
 
-        let mut r = reg::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
+        let mut r =
+            reg_comb::<Test, U<2>>(&clk, &rst, &0_u8.cast(), |val| val + 1).eval(&clk);
 
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
+
+        rst.invert();
+        assert_eq!(r.take_by_ref::<(u8, u8)>(9), [
+            (1, 2), // R
+            (1, 2), // F
+            (2, 3), // R
+            (2, 3), // F
+            (3, 0), // R
+            (3, 0), // F
+            (0, 1), // R
+            (0, 1), // F
+            (1, 2)  // R
         ]);
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(9).collect::<Vec<_>>(), [
-         // R  F  R  F  R  F  R  F  R
-            1, 1, 2, 2, 3, 3, 0, 0, 1
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //F       R       F       R
+            [(1, 2), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // F  R  F  R
-            1, 0, 0, 0
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(5),
+            //F       R       F       R       F
+            [(0, 1), (1, 2), (1, 2), (2, 3), (2, 3)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
-         // F  R  F  R  F   
-            0, 1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(0, 1), (0, 1), (0, 1), (0, 1)]
+        );
 
         rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            0, 0, 0, 0
-        ]);
-
-        rst.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            1, 1, 2, 2
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(1, 2), (1, 2), (2, 3), (2, 3)]
+        );
     }
 
     #[test]
@@ -374,42 +489,42 @@ mod tests {
         let rst = Reset::reset();
         let en = Enable::enable();
 
-        let mut r =
-            reg_en::<_, U<2>>(&clk, &rst, &en, &0_u8.cast(), |val| val + 1).eval(&clk);
+        let mut r = reg_en_comb::<_, U<2>>(&clk, &rst, &en, &0_u8.cast(), |val| val + 1)
+            .eval(&clk);
 
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(7).collect::<Vec<_>>(), [
-         // R  F  R  F  R  F  R
-            0, 0, 1, 1, 2, 2, 3
-        ]);
-
-        en.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // F  R  F  R
-            3, 3, 3, 3
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(7),
+            // R  F  R  F  R  F  R
+            [(0, 1), (0, 1), (1, 2), (1, 2), (2, 3), (2, 3), (3, 0)]
+        );
 
         en.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(5).collect::<Vec<_>>(), [
-         // F  R  F  R  F
-            3, 0, 0, 1, 1
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //F       R       F       R
+            [(3, 0), (3, 0), (3, 0), (3, 0)]
+        );
 
         en.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            1, 1, 1, 1
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(5),
+            //F       R       F       R       F
+            [(3, 0), (0, 1), (0, 1), (1, 2), (1, 2)]
+        );
 
         en.invert();
-        #[rustfmt::skip]
-        assert_eq!(r.by_ref().take(4).collect::<Vec<_>>(), [
-         // R  F  R  F
-            2, 2, 3, 3
-        ]);
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(1, 2), (1, 2), (1, 2), (1, 2)]
+        );
+
+        en.invert();
+        assert_eq!(
+            r.take_by_ref::<(u8, u8)>(4),
+            //R       F       R       F
+            [(2, 3), (2, 3), (3, 0), (3, 0)]
+        );
     }
 
     #[test]

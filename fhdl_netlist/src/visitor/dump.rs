@@ -11,7 +11,7 @@ impl Dump {
 
     pub fn run(&mut self, netlist: &NetList) {
         for module in netlist.modules().rev() {
-            let module = module.map(|module| module.borrow());
+            let module = module.borrow();
             if self.skip && module.skip {
                 continue;
             }

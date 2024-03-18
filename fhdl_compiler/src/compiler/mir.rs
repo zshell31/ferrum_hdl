@@ -264,8 +264,11 @@ impl<'tcx> Compiler<'tcx> {
             let port = if node.is_input() || module.is_output(*port) {
                 let sym = node.only_one_out().sym;
 
-                let new_port =
-                    module.add_and_get_port::<_, Pass>(PassArgs { input: *port, sym });
+                let new_port = module.add_and_get_port::<_, Pass>(PassArgs {
+                    input: *port,
+                    sym,
+                    ty: None,
+                });
                 *port = new_port;
 
                 new_port

@@ -21,7 +21,7 @@ impl SetNames {
 
     pub fn run(mut self, netlist: &NetList) {
         for module in netlist.modules() {
-            let mut module = module.map(|module| module.borrow_mut());
+            let mut module = module.borrow_mut();
             if module.skip {
                 continue;
             }

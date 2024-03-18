@@ -28,6 +28,7 @@ use fhdl_netlist::{
     netlist::{Module, ModuleId, NetList, Port},
     node::{Splitter, SplitterArgs, ZeroExtend, ZeroExtendArgs},
     node_ty::NodeTy,
+    symbol::Symbol,
 };
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
@@ -273,6 +274,9 @@ impl<'tcx> Compiler<'tcx> {
         let top = self.find_top_module()?;
         let top = self.visit_fn(top.into(), GenericArgs::empty(), true)?;
 
+        if self.args.dump_netlist {
+            self.netlist.dump(false);
+        }
         self.netlist.run_visitors();
 
         self.netlist.synth_verilog_into_file(path)?;
@@ -340,6 +344,7 @@ impl<'tcx> Compiler<'tcx> {
         from: Port,
         from_ty: NodeTy,
         to_ty: NodeTy,
+        sym: Option<Symbol>,
     ) -> Port {
         let from_width = from_ty.width();
         let to_width = to_ty.width();
@@ -347,7 +352,7 @@ impl<'tcx> Compiler<'tcx> {
         if from_width >= to_width {
             module.add_and_get_port::<_, Splitter>(SplitterArgs {
                 input: from,
-                outputs: iter::once((to_ty, None)),
+                outputs: iter::once((to_ty, sym)),
                 start: None,
                 rev: false,
             })
@@ -355,7 +360,7 @@ impl<'tcx> Compiler<'tcx> {
             module.add_and_get_port::<_, ZeroExtend>(ZeroExtendArgs {
                 ty: to_ty,
                 input: from,
-                sym: None,
+                sym,
             })
         }
     }

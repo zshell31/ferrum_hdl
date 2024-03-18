@@ -7,7 +7,7 @@ use crate::{
     compiler::{
         item::{Item, ItemKind},
         item_ty::{ItemTy, ItemTyKind},
-        Compiler, Context,
+        Compiler, Context, SymIdent,
     },
     error::{Error, SpanError, SpanErrorKind},
 };
@@ -54,6 +54,7 @@ impl Conversion {
                 from.port(),
                 from.ty.node_ty(),
                 to_ty.node_ty(),
+                SymIdent::Cast.into(),
             )),
         )
     }

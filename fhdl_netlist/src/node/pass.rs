@@ -1,6 +1,7 @@
 use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
     netlist::{Cursor, Module, NodeId, Port, WithId},
+    node_ty::NodeTy,
     symbol::Symbol,
 };
 
@@ -13,11 +14,19 @@ pub struct Pass {
 pub struct PassArgs {
     pub input: Port,
     pub sym: Option<Symbol>,
+    pub ty: Option<NodeTy>,
 }
 
 impl MakeNode<PassArgs> for Pass {
     fn make(module: &mut Module, args: PassArgs) -> NodeId {
-        let ty = module[args.input].ty;
+        let input_ty = module[args.input].ty;
+        let ty = match args.ty {
+            Some(ty) => {
+                assert_eq!(ty.width(), input_ty.width());
+                ty
+            }
+            None => input_ty,
+        };
 
         let node_id = module.add_node(Pass {
             output: [NodeOutput::wire(ty, args.sym)],

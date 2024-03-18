@@ -244,7 +244,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let input = module[input].sym.unwrap();
                 let output = pass.output[0].sym.unwrap();
 
-                b.write_template(format_args!("assign {output} = {input};",))?;
+                b.write_tab()?;
+                b.write_fmt(format_args!("assign {output} = {input};\n\n"))?;
             }
             NodeKind::ModInst(mod_inst) => {
                 let mod_inst = node.with(mod_inst);
@@ -321,7 +322,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let output = cons.output[0].sym.unwrap();
                 let value = cons.value;
 
-                b.write_template(format_args!("assign {output} = {value};"))?;
+                b.write_tab()?;
+                b.write_fmt(format_args!("assign {output} = {value};\n\n"))?;
             }
             NodeKind::MultiConst(multi_cons) => {
                 for (value, output) in multi_cons.val_outputs() {
@@ -331,7 +333,8 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                     let output = output.sym.unwrap();
 
-                    b.write_template(format_args!("assign {output} = {value};"))?;
+                    b.write_tab()?;
+                    b.write_fmt(format_args!("assign {output} = {value};\n\n"))?;
                 }
             }
             NodeKind::Splitter(splitter) => {
@@ -400,7 +403,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let input = module[zero_extend.input(module)].sym.unwrap();
                 let output = zero_extend.output[0].sym.unwrap();
 
-                b.write_template(format_args!("assign {output} = {{ 0, {input} }};"))?;
+                b.write_tab()?;
+                b.write_fmt(format_args!("assign {output} = {{ 0, {input} }};\n\n"))?;
             }
             NodeKind::Mux(mux) => {
                 let mux = node.with(mux);
@@ -453,7 +457,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let input = module[bit_not.input(module)].sym.unwrap();
                 let output = bit_not.output[0].sym.unwrap();
 
-                b.write_template(format_args!("assign {output} = ~{input};",))?;
+                b.write_tab()?;
+                b.write_fmt(format_args!("assign {output} = ~{input};\n\n"))?;
             }
             NodeKind::BinOp(bin_op) => {
                 let bin_op = node.with(bin_op);

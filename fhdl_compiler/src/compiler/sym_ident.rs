@@ -12,6 +12,7 @@ pub enum SymIdent {
     Msb,
     Out,
     Bit,
+    Cast,
 }
 
 impl SymIdent {
@@ -27,6 +28,7 @@ impl SymIdent {
             Self::Msb => "msb",
             Self::Out => "out",
             Self::Bit => "bit",
+            Self::Cast => "cast",
         }
     }
 }

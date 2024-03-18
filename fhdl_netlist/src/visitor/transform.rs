@@ -26,7 +26,9 @@ impl Transform {
     }
 
     fn visit_module(&mut self, netlist: &NetList, mod_id: ModuleId) {
-        let mut module = netlist.module(mod_id).map(|module| module.borrow_mut());
+        let module = netlist.module(mod_id);
+        let mut module = module.borrow_mut();
+
         let mut nodes = module.nodes();
 
         while let Some(node_id) = nodes.next(&module) {
@@ -72,7 +74,12 @@ impl Transform {
                     }
                     None => {
                         if !module.is_output(Port::new(node_id, 0)) {
-                            module.reconnect(node_id);
+                            let pass = node.with(pass);
+                            let input_ty = module[pass.input(module)].ty;
+                            let output_ty = pass.output[0].ty;
+                            if input_ty == output_ty {
+                                module.reconnect(node_id);
+                            }
                         }
                     }
                 }

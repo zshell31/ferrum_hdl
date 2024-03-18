@@ -297,6 +297,9 @@ impl WithId<NodeId, &'_ Node> {
 
         let mut show_inputs = true;
         match &*self.kind {
+            NodeKind::BinOp(bin_op) => {
+                println!("{}op = {:?}", tab, bin_op.bin_op);
+            }
             NodeKind::ModInst(mod_inst) => {
                 println!(
                     "{}mod_id = {} ({})",

@@ -10,6 +10,7 @@ use paste::paste;
 use vcd::IdCode;
 
 use crate::{
+    bit::Bit,
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
     cast::{Cast, CastFrom},
@@ -123,6 +124,14 @@ macro_rules! impl_for_unsigned_prim_ty {
 }
 
 impl_for_unsigned_prim_ty!(u8, u16, u32, u64, u128, usize);
+
+impl<const N: usize> CastFrom<Bit> for Unsigned<N> {
+    #[synth(inline)]
+    fn cast_from(from: Bit) -> Self {
+        let v: Unsigned<1> = from.repack();
+        v.cast()
+    }
+}
 
 impl<const N: usize> PartialEq<u128> for Unsigned<N> {
     #[synth(inline)]
@@ -271,6 +280,7 @@ impl<const N: usize> LowerHex for Unsigned<N> {
 }
 
 impl<const N: usize, const M: usize> CastFrom<Unsigned<M>> for Unsigned<N> {
+    #[blackbox(CastFrom)]
     fn cast_from(from: Unsigned<M>) -> Unsigned<N> {
         Self(from.0.cast())
     }
@@ -383,6 +393,19 @@ where
     #[inline]
     fn shl(self, rhs: Unsigned<N>) -> Self::Output {
         Self(self.0.shl(rhs.0))
+    }
+}
+
+impl<const N: usize> Shr<Unsigned<N>> for Unsigned<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    type Output = Unsigned<N>;
+
+    #[blackbox(OpShr)]
+    #[inline]
+    fn shr(self, rhs: Unsigned<N>) -> Self::Output {
+        Self(self.0.shr(rhs.0))
     }
 }
 

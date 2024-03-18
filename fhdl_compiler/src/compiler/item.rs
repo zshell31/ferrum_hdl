@@ -365,20 +365,24 @@ impl<'tcx, 'a> ExtractPort for &'a Item<'tcx> {
 pub type CombineOutputsIter<'m> = impl Iterator<Item = Port> + 'm;
 
 pub struct CombineOutputs<'m> {
+    module: &'m Module,
     outputs: Peekable<CombineOutputsIter<'m>>,
 }
 
 impl<'m> CombineOutputs<'m> {
     pub fn new(module: &'m Module, node_id: NodeId) -> Self {
         Self {
+            module,
             outputs: module.node_out_ports(node_id).peekable(),
         }
     }
 
     pub fn next_output<'tcx>(&mut self, item_ty: ItemTy<'tcx>) -> Item<'tcx> {
         match item_ty.kind() {
-            ItemTyKind::Node(_) => {
-                Item::new(item_ty, ItemKind::Port(self.outputs.next().unwrap()))
+            ItemTyKind::Node(node_ty) => {
+                let output = self.outputs.next().unwrap();
+                assert_eq!(node_ty.width(), self.module[output].width());
+                Item::new(item_ty, ItemKind::Port(output))
             }
             ItemTyKind::Array(ty) => Item::new(
                 item_ty,
@@ -713,13 +717,10 @@ impl<'tcx> ModuleExt<'tcx> for Module {
 
 #[cfg(test)]
 mod tests {
-    use fhdl_netlist::{
-        netlist::{IndexType, NodeId, Port},
-        node_ty::NodeTy,
-    };
+    use fhdl_netlist::netlist::IndexType;
 
     use super::*;
-    use crate::compiler::item_ty::{ItemTyKind, WithTypeInfo};
+    use crate::compiler::item_ty::WithTypeInfo;
 
     #[test]
     fn item_node_iter() {

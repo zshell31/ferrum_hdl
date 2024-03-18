@@ -1,4 +1,5 @@
 use std::{
+    cell::{Ref, RefCell, RefMut},
     fmt::{self, Debug, Display},
     hash::Hash,
     num::NonZeroU32,
@@ -204,6 +205,16 @@ impl<I, T> WithId<I, T> {
             id: self.id,
             inner: self.inner.deref_mut(),
         }
+    }
+}
+
+impl<I: Copy, T> WithId<I, &RefCell<T>> {
+    pub fn borrow(&self) -> WithId<I, Ref<'_, T>> {
+        self.map(|inner| inner.borrow())
+    }
+
+    pub fn borrow_mut(&self) -> WithId<I, RefMut<'_, T>> {
+        self.map(|inner| inner.borrow_mut())
     }
 }
 

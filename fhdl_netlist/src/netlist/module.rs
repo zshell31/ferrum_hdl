@@ -276,6 +276,10 @@ impl Module {
 
     #[inline]
     pub fn add_output(&mut self, port: Port) {
+        assert!(
+            !self.outputs.contains(&port),
+            "{port} already added as output"
+        );
         self.outputs.insert(port);
     }
 
@@ -396,6 +400,7 @@ impl Module {
                 let pass = self.add_and_get_port::<_, Pass>(PassArgs {
                     input: new_port,
                     sym: None,
+                    ty: None,
                 });
 
                 self.replace_output(new_port, pass);

@@ -385,11 +385,27 @@ where
 {
     type Output = Self;
 
+    #[blackbox(OpShl)]
     fn shl(self, rhs: BitVec<N>) -> Self::Output {
         let lhs = self.short();
         let rhs = rhs.short();
 
         Self::from_short(lhs.shl(rhs))
+    }
+}
+
+impl<const N: usize> Shr<BitVec<N>> for BitVec<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    type Output = Self;
+
+    #[blackbox(OpShr)]
+    fn shr(self, rhs: BitVec<N>) -> Self::Output {
+        let lhs = self.short();
+        let rhs = rhs.short();
+
+        Self::from_short(lhs.shr(rhs))
     }
 }
 

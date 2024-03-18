@@ -52,7 +52,8 @@ where
         while let Some(input) = args.inputs.next(module) {
             let ty = module[input].ty;
             let mod_in = args.module[mod_inputs[inputs as usize]];
-            assert_eq!(ty, mod_in.ty);
+            // TODO: how to handle signed types
+            assert_eq!(ty.width(), mod_in.ty.width());
 
             module.add_edge(input, Port::new(node_id, inputs));
             inputs += 1;

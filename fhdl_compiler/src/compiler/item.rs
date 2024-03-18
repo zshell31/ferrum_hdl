@@ -53,7 +53,7 @@ impl<'tcx> Group<'tcx> {
     }
 
     #[inline]
-    fn by_idx(&self, idx: usize) -> Item<'tcx> {
+    pub fn by_idx(&self, idx: usize) -> Item<'tcx> {
         self.0.borrow()[idx].clone()
     }
 
@@ -64,6 +64,12 @@ impl<'tcx> Group<'tcx> {
 
         let v = unsafe { self.0.as_ptr().as_mut().unwrap() };
         &mut v[idx]
+    }
+
+    pub fn slice(&self, start: usize, len: usize) -> Self {
+        let items = &self.0.borrow()[start .. start + len];
+        let items = items.iter().cloned();
+        Self::new(items)
     }
 
     #[inline]

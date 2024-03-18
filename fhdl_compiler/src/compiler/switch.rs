@@ -155,18 +155,30 @@ impl<'b, 'tcx: 'b> BranchBlocks<'b, 'tcx> {
             },
         }
     }
-}
 
-impl<'b, 'tcx: 'b> Iterator for BranchBlocks<'b, 'tcx> {
-    type Item = BasicBlock;
-
-    fn next(&mut self) -> Option<Self::Item> {
+    fn next(&mut self, switch_blocks: &mut SwitchBlocks) -> Option<BasicBlock> {
         while let Some(block) = self.to_visit.pop_front() {
             if block == self.stop {
                 continue;
             }
 
-            self.to_visit.extend(self.basic_blocks.successors(block));
+            let mut is_switch_block = false;
+            let block_data = &self.basic_blocks[block];
+            if let TerminatorKind::SwitchInt { targets, .. } =
+                &block_data.terminator().kind
+            {
+                let switch_meta =
+                    switch_blocks.switch_meta(block, self.basic_blocks, targets);
+
+                if let Some(switch_meta) = switch_meta {
+                    self.to_visit.push_back(switch_meta.convergent_block);
+                    is_switch_block = true;
+                }
+            }
+
+            if !is_switch_block {
+                self.to_visit.extend(self.basic_blocks.successors(block));
+            }
 
             return Some(block);
         }
@@ -232,7 +244,7 @@ impl SwitchBlocks {
         &mut self,
         switch_block: BasicBlock,
         basic_blocks: &BasicBlocks,
-        targets: &[BasicBlock],
+        targets: &SwitchTargets,
     ) -> Option<&SwitchMeta> {
         #[allow(clippy::map_entry)]
         if !self.switch_meta.contains_key(&switch_block) {
@@ -244,16 +256,15 @@ impl SwitchBlocks {
                 }
             };
 
-            self.switch_meta.insert(
-                switch_block,
-                SwitchMeta::make(basic_blocks, targets, convergent_block),
-            );
+            let meta = SwitchMeta::make(self, basic_blocks, targets, convergent_block);
+            self.switch_meta.insert(switch_block, meta);
         }
 
         self.switch_meta.get(&switch_block)
     }
 }
 
+#[derive(Debug)]
 pub(super) struct SwitchMeta {
     ignore: bool,
     targets_count: usize,
@@ -263,28 +274,41 @@ pub(super) struct SwitchMeta {
 
 impl SwitchMeta {
     pub fn make(
+        switch_blocks: &mut SwitchBlocks,
         basic_blocks: &BasicBlocks<'_>,
-        targets: &[BasicBlock],
+        targets: &SwitchTargets,
         convergent_block: BasicBlock,
     ) -> Self {
+        let targets = targets.all_targets();
+
         fn search_along_branch(
+            switch_blocks: &mut SwitchBlocks,
             basic_blocks: &BasicBlocks<'_>,
             start: BasicBlock,
             convergent_block: BasicBlock,
         ) -> FxHashSet<Local> {
             let mut locals: FxHashSet<Local> = Default::default();
 
-            for block in BranchBlocks::new(basic_blocks, start, convergent_block) {
+            let mut branch = BranchBlocks::new(basic_blocks, start, convergent_block);
+            while let Some(block) = branch.next(switch_blocks) {
                 let block_data = &basic_blocks[block];
                 for stmt in &block_data.statements {
                     if let Some((place, _)) = stmt.kind.as_assign() {
                         locals.insert(place.local);
                     }
                 }
-                if let TerminatorKind::Call { destination, .. } =
-                    block_data.terminator().kind
-                {
-                    locals.insert(destination.local);
+                match &block_data.terminator().kind {
+                    TerminatorKind::Call { destination, .. } => {
+                        locals.insert(destination.local);
+                    }
+                    TerminatorKind::SwitchInt { targets, .. } => {
+                        if let Some(switch_meta) =
+                            switch_blocks.switch_meta(block, basic_blocks, targets)
+                        {
+                            locals.extend(switch_meta.common_locals.iter().copied());
+                        }
+                    }
+                    _ => {}
                 }
             }
 
@@ -304,8 +328,9 @@ impl SwitchMeta {
             })
             .copied();
 
+        let target = targets.next().unwrap();
         let mut common_locals =
-            search_along_branch(basic_blocks, targets.next().unwrap(), convergent_block);
+            search_along_branch(switch_blocks, basic_blocks, target, convergent_block);
         let mut has_assign = !common_locals.is_empty();
 
         for target in targets {
@@ -313,7 +338,12 @@ impl SwitchMeta {
                 continue;
             }
 
-            let locals = search_along_branch(basic_blocks, target, convergent_block);
+            let locals = search_along_branch(
+                switch_blocks,
+                basic_blocks,
+                target,
+                convergent_block,
+            );
 
             common_locals = &common_locals & &locals;
             has_assign |= !locals.is_empty();
@@ -359,7 +389,7 @@ fn create_rev_graph(
 }
 
 impl<'tcx> Compiler<'tcx> {
-    #[instrument(level = "debug", skip(self, discr, targets, ctx, span), fields(fn_did = self.fn_name(ctx.fn_did)))]
+    #[instrument(level = "debug", skip(self, discr, targets, ctx, span))]
     pub fn visit_switch(
         &mut self,
         switch_block: BasicBlock,
@@ -373,10 +403,9 @@ impl<'tcx> Compiler<'tcx> {
         let fn_did = ctx.fn_did;
 
         let discr = self.visit_operand(discr, ctx, span)?;
-        let target_blocks = targets.all_targets();
 
         let switch_meta =
-            match self.switch_meta(fn_did, switch_block, basic_blocks, target_blocks) {
+            match self.switch_meta(fn_did, switch_block, basic_blocks, targets) {
                 Some(switch_meta) => switch_meta,
                 None => {
                     return Err(
@@ -384,6 +413,8 @@ impl<'tcx> Compiler<'tcx> {
                     );
                 }
             };
+
+        debug!("{:#?}", switch_meta);
 
         let targets_count = switch_meta.targets_count;
         let convergent_block = switch_meta.convergent_block;
@@ -511,7 +542,7 @@ impl<'tcx> Compiler<'tcx> {
         fn_did: DefId,
         switch_block: BasicBlock,
         basic_blocks: &BasicBlocks<'tcx>,
-        targets: &[BasicBlock],
+        targets: &SwitchTargets,
     ) -> Option<&SwitchMeta> {
         let switch_blocks = self
             .switch_meta

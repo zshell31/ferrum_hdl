@@ -10,13 +10,15 @@ use std::{cell::RefCell, ops::Index};
 pub use cursor::{Cursor, CursorMut, IterMut};
 pub(crate) use graph::{Edges, Graph, IncomingDir, OutgoingDir};
 pub use ident::*;
+use index_storage::IndexStorage;
 pub(crate) use list::{List, ListItem, ListStorage};
+#[cfg(test)]
+pub(crate) use module::NodeWithInputs;
+pub use module::{Incoming, Module, NodeCursor, Outgoing};
 
-use self::index_storage::IndexStorage;
-pub use self::module::{Incoming, Module, NodeCursor, Outgoing};
 use crate::cfg::NetListCfg;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct NetList {
     pub top: Option<ModuleId>,
     modules: IndexStorage<ModuleId, RefCell<Module>>,

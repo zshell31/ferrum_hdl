@@ -34,7 +34,7 @@ pub mod prelude {
         bitvec::BitVec,
         bundle::{Bundle, Unbundle},
         cast::{Cast, CastFrom},
-        const_functions::clog2,
+        const_functions::{clog2, slice_len},
         const_helpers::{Assert, ConstConstr, IsTrue},
         domain::{
             clk_divider, hz_to_period, Clock, ClockDomain, Polarity, SyncKind,

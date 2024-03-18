@@ -5,7 +5,7 @@ use fhdl_macros::synth;
 
 use crate::{
     cast::{Cast, CastFrom},
-    const_helpers::{Assert, ConstConstr, IsTrue},
+    const_helpers::ConstConstr,
     signal::SignalValue,
     unsigned::Unsigned,
 };
@@ -70,20 +70,22 @@ where
 
 impl<const N: usize> SignalValue for Idx<N> where ConstConstr<{ idx_constr(N) }>: {}
 
-pub const fn idx_cast_constr(n: usize) -> bool {
+#[inline(always)]
+pub const fn is_power_of_two(n: usize) -> bool {
     n.is_power_of_two() && {
         let bits = idx_constr(n);
         n == max_val(bits as u128) as usize + 1
     }
 }
 
-impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N>
-where
-    Assert<{ idx_cast_constr(N) }>: IsTrue,
-{
+impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N> {
     #[synth(inline)]
     fn cast_from(val: Unsigned<{ idx_constr(N) }>) -> Self {
-        Idx(val)
+        if Self::IS_POWER_OF_TWO || val <= N.cast::<Unsigned<{ idx_constr(N) }>>() {
+            Idx(val)
+        } else {
+            Idx(0_u8.cast())
+        }
     }
 }
 
@@ -110,7 +112,6 @@ where
 impl<const N: usize> CastFrom<usize> for Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
-    Assert<{ idx_cast_constr(N) }>: IsTrue,
 {
     #[synth(inline)]
     fn cast_from(val: usize) -> Self {
@@ -122,21 +123,17 @@ impl<const N: usize> Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
 {
+    const IS_POWER_OF_TWO: bool = is_power_of_two(N);
+
     #[synth(inline)]
     pub fn new() -> Self {
         Self(0_u8.cast())
     }
 
-    pub(crate) fn from_usize(val: usize) -> Self {
-        Self(val.cast())
-    }
-
     #[synth(inline)]
-    pub fn from<const M: usize>() -> Self
-    where
-        Assert<{ M < N }>: IsTrue,
-    {
-        Self(M.cast())
+    pub(crate) unsafe fn from_usize(val: usize) -> Self {
+        assert!(val < N);
+        Self(val.cast())
     }
 
     #[synth(inline)]

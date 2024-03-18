@@ -9,7 +9,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Splitter {
     pub outputs: SmallVec<[NodeOutput; 1]>,
     pub start: Option<u128>,

@@ -19,13 +19,13 @@ impl Transform {
         Self {}
     }
 
-    pub fn run(mut self, netlist: &mut NetList) {
+    pub fn run(self, netlist: &NetList) {
         if let Some(top) = netlist.top {
             self.visit_module(netlist, top);
         }
     }
 
-    fn visit_module(&mut self, netlist: &NetList, mod_id: ModuleId) {
+    fn visit_module(&self, netlist: &NetList, mod_id: ModuleId) {
         let module = netlist.module(mod_id);
         let mut module = module.borrow_mut();
 
@@ -51,12 +51,7 @@ impl Transform {
         }
     }
 
-    fn transform(
-        &mut self,
-        netlist: &NetList,
-        module: &mut Module,
-        node_id: NodeId,
-    ) -> bool {
+    fn transform(&self, netlist: &NetList, module: &mut Module, node_id: NodeId) -> bool {
         let node = module.node(node_id);
 
         let mut inline = false;
@@ -73,7 +68,7 @@ impl Transform {
                         });
                     }
                     None => {
-                        if !module.is_output(Port::new(node_id, 0)) {
+                        if !module.is_mod_output(Port::new(node_id, 0)) {
                             let pass = node.with(pass);
                             let input_ty = module[pass.input(module)].ty;
                             let output_ty = pass.output[0].ty;
@@ -88,7 +83,7 @@ impl Transform {
                 let orig_module = netlist[mod_inst.mod_id].borrow();
 
                 if orig_module.has_const_outputs() {
-                    let const_args = orig_module.outputs().iter().map(|port| {
+                    let const_args = orig_module.mod_outputs().iter().map(|port| {
                         let const_val = orig_module.to_const(*port).unwrap();
                         let port = orig_module[*port];
 
@@ -107,8 +102,8 @@ impl Transform {
                         }
                         InlineMod::Auto => {
                             inline = orig_module.inline
-                                || module.in_count() == 0
-                                || module.out_count() == 0
+                                || module.mod_in_count() == 0
+                                || module.mod_out_count() == 0
                                 || module.node_count() <= NODES_LIMIT_TO_INLINE
                                 || module.node_has_const_inputs(node_id)
                         }
@@ -202,8 +197,8 @@ impl Transform {
                         let input = &module[input_id];
 
                         if let NodeKind::Merger(merger) = &*input.kind {
-                            if splitter.rev != merger.rev // TODO: maybe it's unnecessary
-                                    && module.is_reversible(input_id, node_id)
+                            if splitter.rev != merger.rev
+                                && module.is_reversible(input_id, node_id)
                             {
                                 module
                                     .reconnect_from_inputs_to_outputs(input_id, node_id);
@@ -300,8 +295,14 @@ impl Transform {
 
                     None
                 }) {
-                    let old_port = Port::new(node_id, 0);
-                    module.reconnect_all_outgoing(old_port, new_port);
+                    module.reconnect_all_outgoing(node_id, new_port);
+                } else if mux.cases.len() == 1 {
+                    let MuxInputs { mut cases, .. } = mux.inputs(module);
+                    let case = Iterator::next(&mut cases).unwrap();
+                    drop(cases);
+
+                    let new_port = case.1;
+                    module.reconnect_all_outgoing(node_id, new_port);
                 }
             }
 
@@ -353,13 +354,114 @@ impl Transform {
                         sym,
                     });
                 } else if true_rst || false_en {
-                    let old_port = Port::new(node_id, 0);
-                    module.reconnect_all_outgoing(old_port, init);
+                    module.reconnect_all_outgoing(node_id, init);
                 }
             }
             _ => {}
         };
 
         inline
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+
+    use super::*;
+    use crate::{
+        netlist::NodeWithInputs,
+        node::{Merger, MergerArgs, Splitter, SplitterArgs},
+        node_ty::NodeTy,
+        symbol::Symbol,
+        visitor::reachability::Reachability,
+    };
+
+    fn transform(netlist: &NetList, mod_id: ModuleId) {
+        Transform::new().visit_module(netlist, mod_id);
+
+        let mut module = netlist[mod_id].borrow_mut();
+        Reachability::new().visit_module(&mut module);
+    }
+
+    #[test]
+    fn merger_splitter_pattern() {
+        let mut module = Module::new("test", false);
+
+        const IN1: u128 = 1;
+        let input1_ty = NodeTy::Unsigned(IN1);
+        let input1_sym = Some(Symbol::intern("input1"));
+        let input1 = module.add_input(input1_ty, input1_sym);
+
+        const IN2: u128 = 3;
+        let input2_ty = NodeTy::Unsigned(IN2);
+        let input2_sym = Some(Symbol::intern("input2"));
+        let input2 = module.add_input(input2_ty, input2_sym);
+
+        const IN3: u128 = 5;
+        let input3_ty = NodeTy::Unsigned(IN3);
+        let input3_sym = Some(Symbol::intern("input3"));
+        let input3 = module.add_input(input3_ty, input3_sym);
+
+        let merger = module.add_and_get_port::<_, Merger>(MergerArgs {
+            width: IN1 + IN2 + IN3,
+            inputs: [input1, input2, input3].into_iter(),
+            rev: false,
+            sym: Some(Symbol::intern("merger")),
+        });
+
+        let splitter = module.add::<_, Splitter>(SplitterArgs {
+            input: merger,
+            outputs: [input1_ty, input2_ty, input3_ty]
+                .into_iter()
+                .enumerate()
+                .map(|(idx, ty)| {
+                    let idx = idx + 1;
+                    (
+                        ty,
+                        Some(Symbol::intern_args(format_args!("splitter_{idx}"))),
+                    )
+                }),
+            start: None,
+            rev: true,
+        });
+
+        module.add_mod_outputs(splitter);
+
+        let mut netlist = NetList::default();
+        let mod_id = netlist.add_module(module);
+
+        transform(&netlist, mod_id);
+
+        let pass1 = NodeWithInputs::pass(
+            input1_ty,
+            Some(Symbol::intern("splitter_1")),
+            false,
+            input1,
+        );
+        let pass2 = NodeWithInputs::pass(
+            input2_ty,
+            Some(Symbol::intern("splitter_2")),
+            false,
+            input2,
+        );
+        let pass3 = NodeWithInputs::pass(
+            input3_ty,
+            Some(Symbol::intern("splitter_3")),
+            false,
+            input3,
+        );
+
+        let module = netlist[mod_id].borrow();
+        assert_eq!(module.nodes_vec(true), [
+            NodeWithInputs::input(input1_ty, input1_sym, false),
+            NodeWithInputs::input(input2_ty, input2_sym, false),
+            NodeWithInputs::input(input3_ty, input3_sym, false),
+            pass1.clone(),
+            pass2.clone(),
+            pass3.clone()
+        ]);
+
+        assert_eq!(module.mod_outputs_vec(true), [pass1, pass2, pass3]);
     }
 }

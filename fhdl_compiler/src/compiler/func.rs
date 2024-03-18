@@ -251,7 +251,7 @@ impl<'tcx> Compiler<'tcx> {
         let mod_inst = ModInstArgs {
             module: instant_mod.as_deref(),
             inputs,
-            outputs: iter::repeat(None).take(instant_mod.out_count()),
+            outputs: iter::repeat(None).take(instant_mod.mod_out_count()),
         };
 
         module.add::<_, ModInst>(mod_inst)

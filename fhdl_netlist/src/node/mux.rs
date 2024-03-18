@@ -11,7 +11,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mux {
     pub cases: SmallVec<[ConstVal; 2]>,
     pub inputs: u32,
@@ -64,7 +64,7 @@ where
             inputs += 1;
         }
 
-        assert!(cases.len() >= 2);
+        assert!(!cases.is_empty());
 
         if let NodeKind::Mux(mux) = &mut *module[node_id].kind {
             mux.cases = cases;

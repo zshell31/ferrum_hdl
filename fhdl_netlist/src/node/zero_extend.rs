@@ -5,7 +5,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ZeroExtend {
     pub output: [NodeOutput; 1],
 }

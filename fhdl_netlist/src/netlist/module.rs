@@ -15,8 +15,8 @@ use crate::{
     const_val::ConstVal,
     netlist::Cursor,
     node::{
-        Const, ConstArgs, IsNode, MakeNode, ModInst, Node, NodeKind, NodeOutput, Pass,
-        PassArgs,
+        Const, ConstArgs, Input, InputArgs, IsNode, MakeNode, ModInst, Node, NodeKind,
+        NodeOutput, Pass, PassArgs,
     },
     node_ty::NodeTy,
     symbol::Symbol,
@@ -124,10 +124,37 @@ impl Cursor for NodeCursor {
     }
 }
 
-impl Module {
-    pub fn new(name: Symbol, is_top: bool) -> Self {
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeWithInputs {
+    pub kind: NodeKind,
+    pub inputs: Vec<Port>,
+}
+
+#[cfg(test)]
+impl NodeWithInputs {
+    pub fn new(
+        kind: impl Into<NodeKind>,
+        inputs: impl IntoIterator<Item = Port>,
+    ) -> Self {
         Self {
-            name,
+            kind: kind.into(),
+            inputs: inputs.into_iter().collect(),
+        }
+    }
+
+    pub fn from_node(node_id: NodeId, module: &Module) -> Self {
+        let node = &module[node_id];
+        let kind = (*node.kind).clone();
+
+        NodeWithInputs::new(kind, module.incoming(node_id).into_iter(module))
+    }
+}
+
+impl Module {
+    pub fn new(name: impl AsRef<str>, is_top: bool) -> Self {
+        Self {
+            name: Symbol::intern(name),
             is_top,
             skip: true,
             inline: false,
@@ -137,6 +164,11 @@ impl Module {
             inputs: Default::default(),
             outputs: Default::default(),
         }
+    }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self::new("test", false)
     }
 
     pub fn span(&self) -> Option<&str> {
@@ -150,10 +182,17 @@ impl Module {
     pub fn add<Args, N: MakeNode<Args>>(&mut self, args: Args) -> NodeId {
         let node_id = N::make(self, args);
 
-        self.add_input(Port::new(node_id, 0));
+        self.add_mod_input(Port::new(node_id, 0));
         self.list.add(&mut self.graph, node_id);
 
         node_id
+    }
+
+    pub fn add_input(&mut self, ty: NodeTy, sym: Option<impl AsRef<str>>) -> Port {
+        self.add_and_get_port::<_, Input>(InputArgs {
+            ty,
+            sym: sym.map(Symbol::intern),
+        })
     }
 
     #[inline]
@@ -200,7 +239,7 @@ impl Module {
         assert_eq!(old_node.out_count(), new_node.out_count());
 
         for (old_port, new_port) in old_node.out_ports().zip(new_node.out_ports()) {
-            self.reconnect_all_outgoing(old_port, new_port);
+            self.reconnect_all_outgoing_(old_port, new_port);
         }
 
         self.list.insert(&mut self.graph, node_id, new_node_id);
@@ -244,7 +283,7 @@ impl Module {
             .map(|port| WithId::new(port, &self[port]))
             .zip(
                 orig_mod
-                    .inputs()
+                    .mod_inputs()
                     .iter()
                     .copied()
                     .map(move |port| WithId::new(port, &orig_mod[port])),
@@ -261,21 +300,21 @@ impl Module {
 
         mod_inst.outputs().zip(
             orig_mod
-                .outputs()
+                .mod_outputs()
                 .iter()
                 .copied()
                 .map(move |port| WithId::new(port, &orig_mod[port])),
         )
     }
 
-    fn add_input(&mut self, port: Port) {
+    fn add_mod_input(&mut self, port: Port) {
         if self.graph[port.node].is_input() {
             self.inputs.insert(port);
         }
     }
 
     #[inline]
-    pub fn add_output(&mut self, port: Port) {
+    pub fn add_mod_output(&mut self, port: Port) {
         assert!(
             !self.outputs.contains(&port),
             "{port} already added as output"
@@ -283,7 +322,12 @@ impl Module {
         self.outputs.insert(port);
     }
 
-    fn replace_output(&mut self, old_port: Port, new_port: Port) -> bool {
+    pub fn add_mod_outputs(&mut self, node_id: NodeId) {
+        let node = self.node(node_id);
+        self.outputs.extend(node.out_ports());
+    }
+
+    fn replace_mod_output(&mut self, old_port: Port, new_port: Port) -> bool {
         if self.outputs.contains(&old_port) {
             self.outputs.insert(new_port);
             self.outputs.swap_remove(&old_port)
@@ -293,32 +337,44 @@ impl Module {
     }
 
     #[inline]
-    pub fn is_input(&self, port: Port) -> bool {
+    pub fn is_mod_input(&self, port: Port) -> bool {
         self.inputs.contains(&port)
     }
 
     #[inline]
-    pub fn inputs(&self) -> &Slice<Port> {
+    pub fn mod_inputs(&self) -> &Slice<Port> {
         self.inputs.as_slice()
     }
 
     #[inline]
-    pub fn in_count(&self) -> usize {
+    pub fn mod_in_count(&self) -> usize {
         self.inputs.len()
     }
 
     #[inline]
-    pub fn is_output(&self, port: Port) -> bool {
+    pub fn is_mod_output(&self, port: Port) -> bool {
         self.outputs.contains(&port)
     }
 
     #[inline]
-    pub fn outputs(&self) -> &Slice<Port> {
+    pub fn mod_outputs(&self) -> &Slice<Port> {
         self.outputs.as_slice()
     }
 
+    #[cfg(test)]
+    pub fn mod_outputs_vec(&self, skip: bool) -> Vec<NodeWithInputs> {
+        self.mod_outputs()
+            .iter()
+            .filter(|port| !(skip && self[port.node].skip))
+            .map(|port| {
+                let node_id = port.node;
+                NodeWithInputs::from_node(node_id, self)
+            })
+            .collect()
+    }
+
     #[inline]
-    pub fn out_count(&self) -> usize {
+    pub fn mod_out_count(&self) -> usize {
         self.outputs.len()
     }
 
@@ -345,6 +401,15 @@ impl Module {
     #[inline]
     pub fn nodes(&self) -> NodeCursor {
         NodeCursor(self.list.cursor())
+    }
+
+    #[cfg(test)]
+    pub fn nodes_vec(&self, skip: bool) -> Vec<NodeWithInputs> {
+        self.nodes()
+            .into_iter(self)
+            .filter(|node_id| !(skip && self[*node_id].skip))
+            .map(|node_id| NodeWithInputs::from_node(node_id, self))
+            .collect()
     }
 
     #[inline]
@@ -390,10 +455,18 @@ impl Module {
         node.out_ports()
     }
 
-    pub fn reconnect_all_outgoing(&mut self, old_port: Port, new_port: Port) {
+    pub fn reconnect_all_outgoing(&mut self, node_id: NodeId, new_port: Port) {
+        let node = &self[node_id];
+        if node.out_count() == 1 {
+            let old_port = Port::new(node_id, 0);
+            self.reconnect_all_outgoing_(old_port, new_port);
+        }
+    }
+
+    fn reconnect_all_outgoing_(&mut self, old_port: Port, new_port: Port) {
         self.graph.reconnect_all_outgoing(old_port, new_port);
 
-        if self.replace_output(old_port, new_port) {
+        if self.replace_mod_output(old_port, new_port) {
             let node = &self.graph[new_port.node];
 
             let new_port = if node.is_input() {
@@ -403,7 +476,7 @@ impl Module {
                     ty: None,
                 });
 
-                self.replace_output(new_port, pass);
+                self.replace_mod_output(new_port, pass);
                 pass
             } else {
                 new_port
@@ -422,14 +495,16 @@ impl Module {
         let to = &self.graph[to_id];
         assert_eq!(from.in_count(), to.out_count());
 
-        let mut incoming = self.incoming(from_id);
-        while let Some(new_port) = incoming.next(self) {
+        let mut incoming = self.graph.incoming(from_id);
+        while let Some(edge_id) = incoming.next(&self.graph) {
+            let edge = &self.graph[edge_id];
+            let new_port = edge.port_out;
             let old_port = Port {
                 node: to_id,
-                port: new_port.port,
+                port: edge.port_in.port,
             };
 
-            self.reconnect_all_outgoing(old_port, new_port);
+            self.reconnect_all_outgoing_(old_port, new_port);
         }
     }
 
@@ -524,11 +599,11 @@ impl Module {
             }
         }
 
-        for (idx, output) in source_mod.outputs().iter().enumerate() {
+        for (idx, output) in source_mod.mod_outputs().iter().enumerate() {
             let old_port = Port::new(mod_inst_id, idx as u32);
             let new_port = output.with(calc_node_id(output.node));
 
-            self.reconnect_all_outgoing(old_port, new_port);
+            self.reconnect_all_outgoing_(old_port, new_port);
 
             let sym = self[old_port].sym;
             if sym.is_some() {

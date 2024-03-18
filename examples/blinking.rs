@@ -1,7 +1,7 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
 
-use ferrum_hdl::{bitpack::BitPackExt, prelude::*};
+use ferrum_hdl::prelude::*;
 
 pub const fn second_periods<D: ClockDomain>() -> usize {
     clk_divider::<D>(SECOND)
@@ -17,6 +17,7 @@ pub fn blinking<D: ClockDomain>(
 ) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
 where
     ConstConstr<{ blinking_count::<D>() }>:,
+    ConstConstr<{ idx_constr(blinking_count::<D>()) }>:,
 {
     reg::<D, _>(
         &clk,

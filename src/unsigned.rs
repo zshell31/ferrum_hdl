@@ -14,6 +14,7 @@ use crate::{
     bitpack::{BitPack, BitSize},
     bitvec::BitVec,
     cast::{Cast, CastFrom},
+    const_functions::slice_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
@@ -211,22 +212,28 @@ impl<const N: usize> PartialOrd<Unsigned<N>> for u128 {
 
 impl<const N: usize> Unsigned<N> {
     #[synth(inline)]
-    #[inline]
-    pub fn idx<T>(&self, idx: T) -> bool
+    pub fn msb(&self) -> bool
     where
-        Idx<N>: CastFrom<T>,
         ConstConstr<{ idx_constr(N) }>:,
     {
-        self.idx_(idx.cast())
+        self.bit(unsafe { Idx::from_usize(N - 1) })
     }
 
     #[blackbox(Index)]
     #[inline]
-    fn idx_(&self, idx: Idx<N>) -> bool
+    pub fn bit(&self, idx: Idx<N>) -> Bit
     where
         ConstConstr<{ idx_constr(N) }>:,
     {
         self.0.idx(idx)
+    }
+
+    #[blackbox(Slice)]
+    pub fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> Unsigned<M>
+    where
+        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
+    {
+        Unsigned::<M>(self.0.slice::<M>(idx))
     }
 
     #[synth(inline)]

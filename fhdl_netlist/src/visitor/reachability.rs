@@ -35,9 +35,9 @@ impl Reachability {
         }
     }
 
-    fn visit_module(&mut self, module: &mut Module) {
+    pub(super) fn visit_module(&mut self, module: &mut Module) {
         self.ports.clear();
-        self.ports.extend(module.outputs().iter().rev());
+        self.ports.extend(module.mod_outputs().iter().rev());
 
         while let Some(port) = self.ports.pop() {
             let node_out = &module[port];

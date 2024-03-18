@@ -7,7 +7,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Merger {
     pub inputs: u32,
     pub output: [NodeOutput; 1],

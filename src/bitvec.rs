@@ -5,6 +5,7 @@ use std::{
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
+use fhdl_const_func::mask;
 use fhdl_macros::{blackbox, blackbox_ty};
 use num_bigint::BigUint;
 use num_traits::Zero;
@@ -13,7 +14,7 @@ use vcd::IdCode;
 use crate::{
     bitpack::{BitPack, IsPacked},
     cast::{Cast, CastFrom},
-    const_functions::{bit, slice},
+    const_functions::slice_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
     signal::SignalValue,
@@ -85,13 +86,6 @@ impl<const N: usize> BitVec<N> {
         }
     }
 
-    pub fn bit<const M: usize>(&self) -> bool
-    where
-        Assert<{ bit(M, N) }>: IsTrue,
-    {
-        self.bit_(M)
-    }
-
     pub fn idx(&self, idx: Idx<N>) -> bool
     where
         ConstConstr<{ idx_constr(N) }>:,
@@ -103,19 +97,19 @@ impl<const N: usize> BitVec<N> {
         self.bit_(N - 1)
     }
 
-    #[blackbox(BitVecSlice)]
-    pub fn slice<const S: usize, const M: usize>(self) -> BitVec<M>
+    pub fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> BitVec<M>
     where
-        Assert<{ slice(S, M, N) }>: IsTrue,
+        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
     {
+        let idx: usize = idx.cast();
         match self {
             Self::Short(short) => {
-                let mask = (1 << M) - 1;
-                BitVec::<M>::from_short((short >> S) & mask)
+                let mask = mask(M as u128);
+                BitVec::<M>::from_short((short >> idx) & mask)
             }
             Self::Long(long) => {
                 let mask = (BigUint::from(1_u8) << M) - 1_u8;
-                BitVec::<M>::from_long((long >> S) & mask)
+                BitVec::<M>::from_long((long >> idx) & mask)
             }
         }
     }

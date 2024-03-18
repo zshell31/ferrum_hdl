@@ -4,11 +4,8 @@ use strum::{Display, EnumString};
 pub enum BlackboxKind {
     ArrayChain,
 
-    BitPackMsb,
     BitPackPack,
     BitPackUnpack,
-
-    BitVecSlice,
 
     Bundle,
     Unbundle,
@@ -36,6 +33,7 @@ pub enum BlackboxKind {
     CastFrom,
 
     Index,
+    Slice,
 
     SignalAndThen,
     SignalApply2,
@@ -43,7 +41,6 @@ pub enum BlackboxKind {
     SignalDffComb,
     SignalMap,
     SignalValue,
-    SignalWatch,
     IntoSignal,
 
     StdClone,

@@ -43,9 +43,10 @@ macro_rules! idx_ty {
         impl Display for $name {
             #[inline]
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                match self.0 {
-                    Some(val) => Display::fmt(&val, f),
-                    None => f.write_str("_"),
+                if !self.is_empty() {
+                    Display::fmt(&self.as_u32(), f)
+                } else {
+                    f.write_str("_")
                 }
             }
         }

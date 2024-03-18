@@ -3,7 +3,6 @@ pub mod bin_op;
 pub mod bitpack;
 pub mod bitvec;
 pub mod cast;
-pub mod index;
 pub mod signal;
 pub mod un_op;
 
@@ -85,11 +84,8 @@ impl<'tcx> EvalExpr<'tcx> for PassReceiver {
 eval_expr!(
     ArrayChain => array::Chain,
 
-    BitPackPack => bitpack::BitPackPack,
-    BitPackUnpack => bitpack::BitPackUnpack,
-    BitPackMsb => bitpack::BitPackMsb,
-
-    BitVecSlice => bitvec::BitVecSlice,
+    BitPackPack => bitpack::Pack,
+    BitPackUnpack => bitpack::Unpack,
 
     Bundle => PassReceiver,
     Unbundle => PassReceiver,
@@ -116,15 +112,15 @@ eval_expr!(
 
     CastFrom => cast::Conversion,
 
-    Index => index::Index,
+    Index => bitvec::Slice { only_one: true },
+    Slice => bitvec::Slice { only_one: false },
 
-    SignalAndThen => signal::SignalAndThen,
-    SignalApply2 => signal::SignalApply2,
-    SignalMap => signal::SignalMap,
+    SignalAndThen => signal::AndThen,
+    SignalApply2 => signal::Apply2,
+    SignalMap => signal::Map,
     SignalDff => signal::SignalDff { comb: false },
     SignalDffComb => signal::SignalDff { comb: true },
     SignalValue => PassReceiver,
-    SignalWatch => PassReceiver,
     IntoSignal => PassReceiver,
 
     StdClone => PassReceiver,

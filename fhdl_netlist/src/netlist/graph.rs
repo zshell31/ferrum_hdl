@@ -6,17 +6,17 @@ use super::{
 };
 use crate::node::Node;
 
-trait Direction {
+pub trait Direction {
     const IDX: usize;
 }
 
-pub(crate) struct IncomingDir;
+pub struct IncomingDir;
 
 impl Direction for IncomingDir {
     const IDX: usize = 0;
 }
 
-pub(crate) struct OutgoingDir;
+pub struct OutgoingDir;
 
 impl Direction for OutgoingDir {
     const IDX: usize = 1;

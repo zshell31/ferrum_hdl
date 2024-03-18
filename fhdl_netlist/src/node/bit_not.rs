@@ -5,7 +5,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitNot {
     pub input: Port,
     pub output: [NodeOutput; 1],

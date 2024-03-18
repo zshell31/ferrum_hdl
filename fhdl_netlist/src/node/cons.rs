@@ -8,7 +8,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Const {
     pub value: u128,
     pub output: [NodeOutput; 1],
@@ -62,7 +62,7 @@ impl IsNode for Const {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiConst {
     pub values: SmallVec<[u128; 1]>,
     pub outputs: SmallVec<[NodeOutput; 1]>,

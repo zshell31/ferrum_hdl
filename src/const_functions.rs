@@ -1,9 +1,7 @@
 pub use fhdl_const_func::*;
 
-pub const fn bit(m: usize, n: usize) -> bool {
-    m < n
-}
-
-pub const fn slice(s: usize, m: usize, n: usize) -> bool {
-    m > 0 && s + m <= n
+pub const fn slice_len(n: usize, m: usize) -> usize {
+    assert!(m > 0);
+    assert!(m <= n);
+    n + 1 - m
 }

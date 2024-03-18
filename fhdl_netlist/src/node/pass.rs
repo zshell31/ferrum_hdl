@@ -1,11 +1,13 @@
 use super::{IsNode, MakeNode, NodeOutput};
+#[cfg(test)]
+use crate::netlist::NodeWithInputs;
 use crate::{
     netlist::{Cursor, Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Pass {
     pub output: [NodeOutput; 1],
 }
@@ -35,6 +37,23 @@ impl MakeNode<PassArgs> for Pass {
         module.add_edge(args.input, Port::new(node_id, 0));
 
         node_id
+    }
+}
+
+#[cfg(test)]
+impl NodeWithInputs {
+    pub fn pass(
+        ty: NodeTy,
+        sym: Option<impl AsRef<str>>,
+        skip: bool,
+        input: Port,
+    ) -> Self {
+        Self::new(
+            Pass {
+                output: [NodeOutput::wire(ty, sym.map(Symbol::intern)).set_skip(skip)],
+            },
+            vec![input],
+        )
     }
 }
 

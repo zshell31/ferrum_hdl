@@ -6,7 +6,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModInst {
     pub mod_id: ModuleId,
     pub name: Option<Symbol>,
@@ -27,8 +27,8 @@ where
     O: CursorMut<Item = Option<Symbol>>,
 {
     fn make(module: &mut Module, mut args: ModInstArgs<I, O>) -> NodeId {
-        let mod_inputs = args.module.inputs();
-        let mod_outputs = args.module.outputs();
+        let mod_inputs = args.module.mod_inputs();
+        let mod_outputs = args.module.mod_outputs();
 
         let mut outputs = SmallVec::with_capacity(args.outputs.size());
         while let Some(sym) = args.outputs.next(module) {

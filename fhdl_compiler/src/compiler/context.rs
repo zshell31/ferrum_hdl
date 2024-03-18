@@ -3,12 +3,13 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Body, Const as MirConst, Local},
-    ty::{EarlyBinder, GenericArgsRef, TyCtxt},
+    ty::{EarlyBinder, GenericArgsRef, Ty, TyCtxt},
 };
+use rustc_span::Span;
 use rustc_type_ir::fold::TypeFoldable;
 
-use super::switch::Switch;
-use crate::compiler::item::Item;
+use super::{switch::Switch, Compiler};
+use crate::{compiler::item::Item, error::Error};
 
 #[derive(Debug, Default, Clone)]
 pub struct Locals<'tcx>(FxHashMap<Local, Item<'tcx>>);
@@ -94,5 +95,19 @@ impl<'tcx> Context<'tcx> {
 
     pub fn last_switch(&mut self) -> Option<&mut Switch<'tcx>> {
         self.switches.last_mut()
+    }
+
+    pub fn fn_ty(&self, compiler: &Compiler<'tcx>) -> Ty<'tcx> {
+        compiler.type_of(self.fn_did, self.generic_args)
+    }
+
+    pub fn fn_generic_const(
+        &self,
+        compiler: &mut Compiler<'tcx>,
+        idx: usize,
+        span: Span,
+    ) -> Result<Option<u128>, Error> {
+        let fn_ty = self.fn_ty(compiler);
+        compiler.generic_const(fn_ty, idx, self.generic_args, span)
     }
 }

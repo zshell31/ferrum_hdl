@@ -71,7 +71,7 @@ impl<'tcx> From<(DefId, Promoted)> for DefIdOrPromoted<'tcx> {
 }
 
 impl<'tcx> Compiler<'tcx> {
-    #[instrument(level = "debug", skip(self, def_id_or_promoted, fn_generics, top_module), fields(def_id = self.fn_name(def_id_or_promoted.did())))]
+    #[instrument(parent = None, level = "debug", skip(self, def_id_or_promoted, fn_generics, top_module), fields(def_id = self.fn_name(def_id_or_promoted.did())))]
     pub fn visit_fn(
         &mut self,
         def_id_or_promoted: DefIdOrPromoted<'tcx>,
@@ -261,7 +261,7 @@ impl<'tcx> Compiler<'tcx> {
             let node = module.node(port.node);
 
             // Add pass if node is input or already added as output
-            let port = if node.is_input() || module.is_output(*port) {
+            let port = if node.is_input() || module.is_mod_output(*port) {
                 let sym = node.only_one_out().sym;
 
                 let new_port = module.add_and_get_port::<_, Pass>(PassArgs {
@@ -276,7 +276,7 @@ impl<'tcx> Compiler<'tcx> {
                 *port
             };
 
-            module.add_output(port);
+            module.add_mod_output(port);
         });
 
         module.assign_names_to_item("out", output, false)

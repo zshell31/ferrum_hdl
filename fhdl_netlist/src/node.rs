@@ -35,13 +35,13 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetKind {
     Wire,
     Reg,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NodeOutput {
     pub ty: NodeTy,
     pub kind: NetKind,
@@ -56,6 +56,12 @@ impl NodeOutput {
 
     pub fn reg(ty: NodeTy, sym: Option<Symbol>) -> Self {
         Self::new(ty, NetKind::Reg, sym)
+    }
+
+    #[cfg(test)]
+    pub fn set_skip(mut self, skip: bool) -> Self {
+        self.skip = skip;
+        self
     }
 
     fn new(ty: NodeTy, kind: NetKind, sym: Option<Symbol>) -> Self {
@@ -287,7 +293,7 @@ impl WithId<NodeId, &'_ Node> {
         }
 
         println!(
-            "{}{} (is_skip: {}, prev: {}, next: {})",
+            "{}{} (skip: {}, prev: {}, next: {})",
             prefix,
             self.kind.dump(),
             self.skip,
@@ -368,12 +374,13 @@ impl WithId<NodeId, &'_ Node> {
             tab,
             self.outputs()
                 .map(|out| format!(
-                    "{}{}{} ({}){}",
+                    "{}{}{} ({} skip: {}){}",
                     tab,
                     tab,
                     out.sym.map(|sym| sym.as_str()).unwrap_or("_"),
                     out.ty,
-                    if module.is_output(out.id) {
+                    out.skip,
+                    if module.is_mod_output(out.id) {
                         " MOD_OUT"
                     } else {
                         ""
@@ -389,7 +396,7 @@ macro_rules! define_nodes {
     (
         $( $kind:ident => $node:ident ),+ $(,)?
     ) => {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, PartialEq, Eq)]
         pub enum NodeKind {
             $(
                 $kind($node),

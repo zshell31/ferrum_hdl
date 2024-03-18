@@ -7,7 +7,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
     BitAnd,
     BitOr,
@@ -65,7 +65,7 @@ impl Display for BinOp {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BinOpNode {
     pub bin_op: BinOp,
     pub output: [NodeOutput; 1],

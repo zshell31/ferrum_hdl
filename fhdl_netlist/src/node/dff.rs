@@ -7,7 +7,7 @@ use crate::{
     symbol::Symbol,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DFF {
     pub rst_kind: SyncKind,
     pub rst_pol: Polarity,

@@ -9,6 +9,7 @@ use crate::{
     bitvec::BitVec,
     bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
+    const_functions::slice_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
     eval::{Eval, EvalCtx},
@@ -71,16 +72,16 @@ where
 }
 
 pub trait ArrayExt<const N: usize, T>: Sized {
-    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
-    where
-        Assert<{ M > 0 }>: IsTrue,
-        Assert<{ S + M - 1 < N }>: IsTrue,
-        for<'a> [T; M]: TryFrom<&'a [T]>;
-
     #[blackbox(Index)]
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
+        T: Clone;
+
+    #[blackbox(Slice)]
+    fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> [T; M]
+    where
+        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
         T: Clone;
 
     #[synth(inline)]
@@ -143,18 +144,6 @@ pub trait ArrayExt<const N: usize, T>: Sized {
 }
 
 impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
-    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
-    where
-        Assert<{ M > 0 }>: IsTrue,
-        Assert<{ S + M - 1 < N }>: IsTrue,
-        for<'a> [T; M]: TryFrom<&'a [T]>,
-    {
-        match <[T; M]>::try_from(&self[S .. (S + M)]) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        }
-    }
-
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
@@ -164,6 +153,16 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         self[idx].clone()
     }
 
+    fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> [T; M]
+    where
+        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
+        T: Clone,
+    {
+        let idx = idx.val().cast::<usize>();
+
+        array_from_iter::<T, M>(self[idx .. (idx + M)].iter().cloned())
+    }
+
     fn chain_idx<U>(init: U, f: impl Fn(Idx<N>, U) -> (U, T)) -> (U, [T; N])
     where
         U: Clone,
@@ -171,7 +170,7 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
     {
         let mut prev = init;
         let a = array_from_iter((0 .. N).map(|idx| {
-            let (new_prev, item) = f(Idx::from_usize(idx), prev.clone());
+            let (new_prev, item) = f(unsafe { Idx::from_usize(idx) }, prev.clone());
             prev = new_prev;
             item
         }));
@@ -249,7 +248,7 @@ mod tests {
 
     #[test]
     fn slice() {
-        assert_eq!([3, 2, 1, 0].slice::<1, 2>(), [2, 1]);
+        assert_eq!([3, 2, 1, 0].slice::<2>(1.cast()), [2, 1]);
     }
 
     #[test]

@@ -69,8 +69,8 @@ impl<'n, W: Write> Verilog<'n, W> {
 
         for node_out in node.outputs() {
             let port = node_out.id;
-            let is_input = module.is_input(port);
-            let is_output = module.is_output(port);
+            let is_input = module.is_mod_input(port);
+            let is_output = module.is_mod_output(port);
             self.write_local(*node_out, is_input, is_output, can_skip)?;
         }
 
@@ -162,7 +162,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
         // Dont skip inputs if module is top
         let mut inputs = module
-            .inputs()
+            .mod_inputs()
             .iter()
             .filter(|&&input| is_top || !module[input].skip)
             .copied()
@@ -185,7 +185,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
         // Dont skip outputs if module is top
         let mut outputs = module
-            .outputs()
+            .mod_outputs()
             .iter()
             .filter(|&&output| is_top || !module[output].skip)
             .copied()

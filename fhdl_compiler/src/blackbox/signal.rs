@@ -78,9 +78,9 @@ impl<'tcx> EvalExpr<'tcx> for SignalDff {
     }
 }
 
-pub struct SignalMap;
+pub struct Map;
 
-impl<'tcx> EvalExpr<'tcx> for SignalMap {
+impl<'tcx> EvalExpr<'tcx> for Map {
     fn eval(
         &self,
         compiler: &mut Compiler<'tcx>,
@@ -95,9 +95,9 @@ impl<'tcx> EvalExpr<'tcx> for SignalMap {
     }
 }
 
-pub struct SignalAndThen;
+pub struct AndThen;
 
-impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
+impl<'tcx> EvalExpr<'tcx> for AndThen {
     fn eval(
         &self,
         compiler: &mut Compiler<'tcx>,
@@ -112,9 +112,9 @@ impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
     }
 }
 
-pub struct SignalApply2;
+pub struct Apply2;
 
-impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
+impl<'tcx> EvalExpr<'tcx> for Apply2 {
     fn eval(
         &self,
         compiler: &mut Compiler<'tcx>,

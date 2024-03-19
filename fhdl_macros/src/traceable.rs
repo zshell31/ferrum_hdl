@@ -53,6 +53,8 @@ impl TraceableDerive {
                 let where_clauses = utils::into_where_clause(predicates);
 
                 quote! {
+                    #[allow(dead_code)]
+                    #[allow(unreachable_code)]
                     impl #impl_generics ::ferrum_hdl::trace::Traceable for #ident #ty_generics
                     #where_clauses
                     {
@@ -90,6 +92,7 @@ impl TraceableDerive {
                 });
 
                 quote! {
+                    #[allow(dead_code)]
                     impl #impl_generics ::ferrum_hdl::trace::Traceable for #ident #ty_generics
                     #where_clauses
                     {

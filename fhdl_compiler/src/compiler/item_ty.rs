@@ -478,6 +478,14 @@ impl<'tcx> ItemTy<'tcx> {
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
         self.0.enum_ty()
     }
+
+    #[inline]
+    pub fn is_unsigned(&self) -> bool {
+        match self.kind() {
+            ItemTyKind::Node(node_ty) => node_ty.is_unsigned(),
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generic<'tcx> {

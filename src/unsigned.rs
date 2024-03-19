@@ -2,6 +2,7 @@ use std::{
     cmp::Ordering::{self, *},
     fmt::{self, Binary, Display, LowerHex},
     io,
+    marker::StructuralPartialEq,
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
@@ -28,6 +29,15 @@ use crate::{
 pub enum U<const N: usize> {
     Short(u128),
     Long(BigUint),
+}
+
+impl<const N: usize> U<N>
+where
+    Assert<{ N <= 128 }>: IsTrue,
+{
+    pub const fn from(val: u128) -> Self {
+        Self::Short(val)
+    }
 }
 
 impl<const N: usize> U<N> {
@@ -190,6 +200,8 @@ impl<const N: usize> PartialEq for U<N> {
         !self.eq(other)
     }
 }
+
+impl<const N: usize> StructuralPartialEq for U<N> {}
 
 impl<const N: usize> Eq for U<N> {}
 

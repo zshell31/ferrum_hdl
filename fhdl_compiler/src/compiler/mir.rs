@@ -760,6 +760,10 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
 
+        if item.is_unsigned() {
+            return Ok(item);
+        }
+
         for place_elem in place.projection {
             item = match place_elem {
                 PlaceElem::ConstantIndex {

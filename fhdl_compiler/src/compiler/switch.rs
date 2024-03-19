@@ -402,7 +402,14 @@ impl<'tcx> Compiler<'tcx> {
         let basic_blocks = &ctx.mir.basic_blocks;
         let fn_did = ctx.fn_did;
 
+        let has_projections = self.has_projections(discr);
         let discr = self.visit_operand(discr, ctx, span)?;
+
+        if discr.is_unsigned() && !has_projections {
+            // handle `match unsigned<N>` block
+            // case 0 responds to Unsigned::Short
+            return Ok(Some(targets.target_for_value(0)));
+        }
 
         let switch_meta =
             match self.switch_meta(fn_did, switch_block, basic_blocks, targets) {

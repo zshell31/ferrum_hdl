@@ -344,6 +344,11 @@ impl<'tcx> Item<'tcx> {
 
         self
     }
+
+    #[inline]
+    pub fn is_unsigned(&self) -> bool {
+        self.ty.is_unsigned()
+    }
 }
 
 pub trait ExtractPort {

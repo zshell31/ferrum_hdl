@@ -4,7 +4,7 @@
 #![feature(adt_const_params)]
 #![feature(generic_arg_infer)]
 #![feature(cell_update)]
-#![feature(associated_const_equality)]
+#![feature(structural_match)]
 #![feature(register_tool)]
 #![register_tool(fhdl_tool)]
 

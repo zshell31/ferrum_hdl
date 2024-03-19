@@ -1,4 +1,4 @@
-use ferrum_hdl::{cast::CastFrom, unsigned::Unsigned};
+use ferrum_hdl::{cast::CastFrom, unsigned::U};
 use rustc_span::Span;
 use tracing::error;
 
@@ -30,8 +30,8 @@ impl Conversion {
             (ItemTyKind::Node(from_ty_), ItemTyKind::Node(to_ty_))
                 if from_ty_.is_unsigned() && to_ty_.is_unsigned() =>
             {
-                assert_convert::<Unsigned<1>, Unsigned<1>>();
-                assert_convert::<Unsigned<1>, Unsigned<2>>();
+                assert_convert::<U<1>, U<1>>();
+                assert_convert::<U<1>, U<2>>();
                 Ok(Self::to_unsigned(from.clone(), to_ty, ctx))
             }
             _ => {

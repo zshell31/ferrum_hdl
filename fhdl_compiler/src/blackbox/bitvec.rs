@@ -90,7 +90,14 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
 fn slice(module: &mut Module, value: Port, idx: u128, node_ty: NodeTy) -> Port {
     module.add_and_get_port::<_, Splitter>(SplitterArgs {
         input: value,
-        outputs: iter::once((node_ty, SymIdent::Bit.into())),
+        outputs: iter::once((
+            node_ty,
+            if node_ty.width() == 1 {
+                SymIdent::Bit.into()
+            } else {
+                SymIdent::Slice.into()
+            },
+        )),
         start: Some(idx),
         rev: false,
     })

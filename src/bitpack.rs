@@ -6,7 +6,7 @@ use std::{
 pub use fhdl_macros::BitPack;
 use fhdl_macros::{blackbox, synth};
 
-use crate::{bitvec::BitVec, cast::CastFrom};
+use crate::{cast::CastFrom, unsigned::U};
 
 pub trait BitSize: Sized {
     const BITS: usize;
@@ -23,6 +23,22 @@ pub trait IsPacked:
     + CastFrom<usize>
 {
     fn zero() -> Self;
+}
+
+pub type BitVec<const N: usize> = U<N>;
+
+impl<const N: usize> IsPacked for BitVec<N> {
+    #[inline]
+    fn zero() -> Self {
+        Self::cast_from(0_u8)
+    }
+}
+
+impl<const N: usize> BitVec<N> {
+    #[blackbox(BitPackUnpack)]
+    pub fn unpack<T: BitPack<Packed = Self>>(self) -> T {
+        T::unpack(self)
+    }
 }
 
 pub trait BitPack: BitSize {
@@ -59,20 +75,20 @@ impl<T> BitPack for PhantomData<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         array::Array,
         bit::{Bit, H, L},
         cast::Cast,
-        unsigned::Unsigned,
+        prelude::BitPack,
+        unsigned::U,
     };
 
     #[test]
     fn repack() {
-        let u: Unsigned<6> = 0b011011_u8.cast();
+        let u: U<6> = 0b011011_u8.cast();
         assert_eq!(
-            u.clone().repack::<Array<3, Unsigned<2>>>(),
-            [0b01_u8, 0b10, 0b11].cast::<Array<3, Unsigned<2>>>()
+            u.clone().repack::<Array<3, U<2>>>(),
+            [0b01_u8, 0b10, 0b11].cast::<Array<3, U<2>>>()
         );
 
         assert_eq!(

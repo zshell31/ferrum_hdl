@@ -215,7 +215,7 @@ mod tests {
         cast::CastFrom,
         domain::{Clock, TD4},
         prelude::Eval,
-        unsigned::Unsigned,
+        unsigned::U,
     };
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         let clk = Clock::<TD4>::new();
         let s = [0_u8, 4, 3, 1, 2]
             .into_iter()
-            .map(Unsigned::<8>::cast_from)
+            .map(U::<8>::cast_from)
             .into_signal::<TD4>();
 
         assert_eq!(s.eval(&clk).take(5).collect::<Vec<_>>(), [0, 4, 3, 1, 2]);

@@ -5,8 +5,7 @@ use smallvec::SmallVec;
 use vcd::IdCode;
 
 use crate::{
-    bitpack::{BitPack, BitSize, IsPacked},
-    bitvec::BitVec,
+    bitpack::{BitPack, BitSize, BitVec, IsPacked},
     bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
     const_functions::slice_len,

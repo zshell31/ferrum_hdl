@@ -4,8 +4,7 @@ use fhdl_macros::blackbox;
 use vcd::IdCode;
 
 use crate::{
-    bitpack::{BitPack, BitSize},
-    bitvec::BitVec,
+    bitpack::{BitPack, BitSize, BitVec},
     cast::{Cast, CastFrom},
     signal::SignalValue,
     trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},

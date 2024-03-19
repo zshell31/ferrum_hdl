@@ -11,7 +11,6 @@
 pub mod array;
 pub mod bit;
 pub mod bitpack;
-pub mod bitvec;
 pub mod bundle;
 pub mod cast;
 pub mod const_functions;
@@ -30,8 +29,7 @@ pub mod prelude {
     pub use crate::{
         array::{Array, ArrayExt},
         bit::Bit,
-        bitpack::BitPack,
-        bitvec::BitVec,
+        bitpack::{BitPack, BitVec},
         bundle::{Bundle, Unbundle},
         cast::{Cast, CastFrom},
         const_functions::{clog2, slice_len},
@@ -48,6 +46,6 @@ pub mod prelude {
             reg_en_comb, Enable, IntoSignal, Reset, Signal, SignalValue,
         },
         trace::{IdCode, Timescale, TraceTy, TraceValue, TraceVars, Traceable, Tracer},
-        unsigned::{Unsigned, U},
+        unsigned::U,
     };
 }

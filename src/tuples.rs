@@ -3,8 +3,7 @@ use std::io;
 use fhdl_macros::impl_tuple_traits;
 
 use crate::{
-    bitpack::{BitPack, BitSize, IsPacked},
-    bitvec::BitVec,
+    bitpack::{BitPack, BitSize, BitVec, IsPacked},
     bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
     domain::ClockDomain,
@@ -34,13 +33,13 @@ mod tests {
         bit::Bit,
         domain::{Clock, TD4},
         signal::SignalIterExt,
-        unsigned::Unsigned,
+        unsigned::U,
     };
 
     #[test]
     fn unbundle() {
         let clk = Clock::<TD4>::new();
-        let s: Signal<TD4, (Unsigned<4>, Bit)> = [
+        let s: Signal<TD4, (U<4>, Bit)> = [
             (0_u8, false),
             (1, true),
             (2, true),
@@ -73,7 +72,7 @@ mod tests {
     #[test]
     fn bundle() {
         let clk = Clock::<TD4>::new();
-        let s: (Signal<TD4, Unsigned<4>>, Signal<TD4, Bit>) = (
+        let s: (Signal<TD4, U<4>>, Signal<TD4, Bit>) = (
             [0_u8, 1, 2, 3, 4, 5]
                 .into_iter()
                 .map(Cast::cast)
@@ -104,16 +103,15 @@ mod tests {
 
     #[test]
     fn pack() {
-        let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
+        let s: (U<4>, Bit, Array<2, U<2>>) =
             (12_u8.cast(), false.cast(), [1_u8.cast(), 3_u8.cast()]);
 
-        assert_eq!(s.pack(), 0b110000111_u64.cast());
+        assert_eq!(s.pack(), 0b110000111_u64.cast::<BitVec<_>>());
     }
 
     #[test]
     fn unpack() {
-        let s: (Unsigned<4>, Bit, Array<2, Unsigned<2>>) =
-            BitPack::unpack(0b110000111_u64.cast());
+        let s: (U<4>, Bit, Array<2, U<2>>) = BitPack::unpack(0b110000111_u64.cast());
 
         assert_eq!(s, (12_u8.cast(), false.cast(), [1_u8.cast(), 3_u8.cast()]));
     }

@@ -8,7 +8,6 @@ use std::{
 pub enum NodeTy {
     Bit,
     Unsigned(u128),
-    BitVec(u128),
     Clock,
     ClockDomain,
 }
@@ -18,7 +17,6 @@ impl Display for NodeTy {
         let s: Cow<'_, str> = match self {
             Self::Bit => "bit".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
-            Self::BitVec(n) => format!("bitvec[{n}]").into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
         };
@@ -28,6 +26,13 @@ impl Display for NodeTy {
 }
 
 impl NodeTy {
+    /// Just alias for Unsigned
+    #[allow(non_snake_case)]
+    #[inline]
+    pub fn BitVec(width: u128) -> Self {
+        Self::Unsigned(width)
+    }
+
     pub fn is_bit(&self) -> bool {
         matches!(self, NodeTy::Bit)
     }
@@ -40,7 +45,6 @@ impl NodeTy {
         match self {
             Self::Bit => 1,
             Self::Unsigned(n) => *n,
-            Self::BitVec(n) => *n,
             Self::Clock => 1,
             Self::ClockDomain => 1,
         }
@@ -49,7 +53,7 @@ impl NodeTy {
     pub fn is_zero_sized(&self) -> bool {
         match self {
             Self::Bit => false,
-            Self::Unsigned(n) | Self::BitVec(n) => *n == 0,
+            Self::Unsigned(n) => *n == 0,
             Self::Clock | Self::ClockDomain => true,
         }
     }

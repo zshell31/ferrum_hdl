@@ -7,7 +7,7 @@ use crate::{
     cast::{Cast, CastFrom},
     const_helpers::ConstConstr,
     signal::SignalValue,
-    unsigned::Unsigned,
+    unsigned::U,
 };
 
 pub const fn idx_constr(n: usize) -> usize {
@@ -18,7 +18,7 @@ pub const fn idx_constr(n: usize) -> usize {
 }
 
 #[derive(Clone)]
-pub struct Idx<const N: usize>(Unsigned<{ idx_constr(N) }>)
+pub struct Idx<const N: usize>(U<{ idx_constr(N) }>)
 where
     ConstConstr<{ idx_constr(N) }>:;
 
@@ -78,10 +78,10 @@ pub const fn is_power_of_two(n: usize) -> bool {
     }
 }
 
-impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N> {
+impl<const N: usize> CastFrom<U<{ idx_constr(N) }>> for Idx<N> {
     #[synth(inline)]
-    fn cast_from(val: Unsigned<{ idx_constr(N) }>) -> Self {
-        if Self::IS_POWER_OF_TWO || val <= N.cast::<Unsigned<{ idx_constr(N) }>>() {
+    fn cast_from(val: U<{ idx_constr(N) }>) -> Self {
+        if Self::IS_POWER_OF_TWO || val <= N.cast::<U<{ idx_constr(N) }>>() {
             Idx(val)
         } else {
             Idx(0_u8.cast())
@@ -89,7 +89,7 @@ impl<const N: usize> CastFrom<Unsigned<{ idx_constr(N) }>> for Idx<N> {
     }
 }
 
-impl<const N: usize> CastFrom<Idx<N>> for Unsigned<{ idx_constr(N) }>
+impl<const N: usize> CastFrom<Idx<N>> for U<{ idx_constr(N) }>
 where
     ConstConstr<{ idx_constr(N) }>:,
 {
@@ -105,7 +105,7 @@ where
 {
     #[synth(inline)]
     fn cast_from(val: Idx<N>) -> Self {
-        val.cast::<Unsigned<_>>().cast()
+        val.cast::<U<_>>().cast()
     }
 }
 
@@ -115,7 +115,7 @@ where
 {
     #[synth(inline)]
     fn cast_from(val: usize) -> Self {
-        val.cast::<Unsigned<_>>().cast()
+        val.cast::<U<_>>().cast()
     }
 }
 
@@ -137,7 +137,7 @@ where
     }
 
     #[synth(inline)]
-    pub fn val(&self) -> Unsigned<{ idx_constr(N) }> {
+    pub fn val(&self) -> U<{ idx_constr(N) }> {
         self.0.clone()
     }
 
@@ -153,7 +153,7 @@ where
     #[synth(inline)]
     pub fn pred(self) -> Self {
         if self.is_min() {
-            Self((N - 1).cast::<Unsigned<_>>())
+            Self((N - 1).cast::<U<_>>())
         } else {
             Self(self.0 - 1)
         }
@@ -161,18 +161,18 @@ where
 
     #[synth(inline)]
     pub fn is_max(&self) -> bool {
-        self.0 == (N - 1).cast::<Unsigned<_>>()
+        self.0 == (N - 1).cast::<U<_>>()
     }
 
     #[synth(inline)]
     pub fn is_min(&self) -> bool {
-        self.0 == 0_u8.cast::<Unsigned<_>>()
+        self.0 == 0_u8.cast::<U<_>>()
     }
 
     #[synth(inline)]
     pub fn rev(&self) -> Self {
-        let val = self.clone().cast::<Unsigned<_>>();
-        let rev_val = N.cast::<Unsigned<_>>() - val - 1;
+        let val = self.clone().cast::<U<_>>();
+        let rev_val = N.cast::<U<_>>() - val - 1;
         Self(rev_val)
     }
 }

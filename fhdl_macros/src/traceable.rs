@@ -47,7 +47,7 @@ impl TraceableDerive {
                     Self: ::std::clone::Clone
                         + ::ferrum_hdl::bitpack::BitSize
                         + ::ferrum_hdl::bitpack::BitPack<
-                            Packed = ::ferrum_hdl::bitvec::BitVec<{ < Self as ::ferrum_hdl::bitpack::BitSize >::BITS }>
+                            Packed = ::ferrum_hdl::bitpack::BitVec<{ < Self as ::ferrum_hdl::bitpack::BitSize >::BITS }>
                         >
                 })));
                 let where_clauses = utils::into_where_clause(predicates);
@@ -57,11 +57,11 @@ impl TraceableDerive {
                     #where_clauses
                     {
                         fn add_vars(vars: &mut ::ferrum_hdl::trace::TraceVars) {
-                            <::ferrum_hdl::bitvec::BitVec<{ < Self as ::ferrum_hdl::bitpack::BitSize >::BITS }> as ::ferrum_hdl::trace::Traceable>::add_vars(vars);
+                            <::ferrum_hdl::bitpack::BitVec<{ < Self as ::ferrum_hdl::bitpack::BitSize >::BITS }> as ::ferrum_hdl::trace::Traceable>::add_vars(vars);
                         }
 
                         fn trace(&self, id: &mut ::ferrum_hdl::trace::IdCode, tracer: &mut ::ferrum_hdl::trace::Tracer) -> ::std::io::Result<()> {
-                            let bv: ::ferrum_hdl::bitvec::BitVec< { < Self as ::ferrum_hdl::bitpack::BitSize >::BITS } > = self.clone().pack();
+                            let bv: ::ferrum_hdl::bitpack::BitVec< { < Self as ::ferrum_hdl::bitpack::BitSize >::BITS } > = self.clone().pack();
                             bv.trace(id, tracer)
                         }
                     }

@@ -389,7 +389,7 @@ impl BitPackDerive {
             TEither::TS(quote! {
                 #ident: ::ferrum_hdl::bitpack::BitSize
                     + ::ferrum_hdl::bitpack::BitPack<
-                        Packed = ::ferrum_hdl::bitvec::BitVec<{ < #ident as ::ferrum_hdl::bitpack::BitSize >::BITS }>
+                        Packed = ::ferrum_hdl::bitpack::BitVec<{ < #ident as ::ferrum_hdl::bitpack::BitSize >::BITS }>
                     >
             })
         });
@@ -410,7 +410,7 @@ impl BitPackDerive {
             impl #impl_generics ::ferrum_hdl::bitpack::BitPack for #ident #ty_generics
             #where_clause
             {
-                type Packed = ::ferrum_hdl::bitvec::BitVec<{ <#ident #ty_generics as ::ferrum_hdl::bitpack::BitSize>::BITS }>;
+                type Packed = ::ferrum_hdl::bitpack::BitVec<{ <#ident #ty_generics as ::ferrum_hdl::bitpack::BitSize>::BITS }>;
 
                 fn pack(self) -> Self::Packed {
                     use ::ferrum_hdl::bitpack::{BitSize, IsPacked};
@@ -424,8 +424,7 @@ impl BitPackDerive {
                 }
 
                 fn unpack(mut packed: Self::Packed) -> Self {
-                    use ::ferrum_hdl::bitpack::{BitPack, BitSize, IsPacked};
-                    use ::ferrum_hdl::bitvec::BitVec;
+                    use ::ferrum_hdl::bitpack::{BitPack, BitSize, IsPacked, BitVec};
                     use ::ferrum_hdl::cast::{Cast, CastFrom};
 
                     #unpack

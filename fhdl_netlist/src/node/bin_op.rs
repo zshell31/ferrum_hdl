@@ -33,10 +33,7 @@ impl BinOp {
     pub fn should_convert_operands(&self) -> bool {
         use BinOp::*;
 
-        matches!(
-            self,
-            BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem | Shl | Shr
-        )
+        matches!(self, BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem)
     }
 }
 
@@ -95,15 +92,14 @@ impl BinOpArgs {
             | BinOp::Div
             | BinOp::Mul
             | BinOp::Or
-            | BinOp::Rem
-            | BinOp::Shl
-            | BinOp::Shr => {
+            | BinOp::Rem => {
                 assert_eq!(self.ty.width(), lhs.width());
                 assert_eq!(self.ty.width(), rhs.width());
             }
             BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
                 assert_eq!(lhs.width(), rhs.width());
             }
+            BinOp::Shl | BinOp::Shr => {}
         }
     }
 }

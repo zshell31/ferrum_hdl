@@ -6,16 +6,15 @@ use std::{
 
 use darling::{
     ast::{Data, Fields, NestedMeta},
-    FromAttributes, FromField, FromMeta, FromVariant,
+    FromField, FromMeta, FromVariant,
 };
 use either::Either;
 use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use syn::{
-    parse::Parser, punctuated::Punctuated, spanned::Spanned, token::Comma, Attribute,
-    Expr, ExprLit, ExprParen, ExprTuple, Generics, Ident, ImplGenerics, Lit, Meta,
-    MetaNameValue, PredicateType, Type, TypeArray, TypeGenerics, TypeParam, TypePath,
-    TypeTuple, WherePredicate,
+    parse::Parser, punctuated::Punctuated, spanned::Spanned, token::Comma, Expr, ExprLit,
+    ExprParen, ExprTuple, Generics, Ident, ImplGenerics, Lit, Meta, PredicateType, Type,
+    TypeArray, TypeGenerics, TypeParam, TypePath, TypeTuple, WherePredicate,
 };
 
 #[derive(Debug)]
@@ -64,24 +63,37 @@ pub fn into_where_clause<'a>(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Bounds(pub Vec<WherePredicate>);
 
-impl Bounds {
-    pub fn from_attrs(attrs: &[Attribute], attr_name: &str) -> darling::Result<Self> {
-        let attrs = attrs
-            .iter()
-            .filter_map(|attr| {
-                let ident = attr.path();
-                if ident.is_ident(attr_name) {
-                    Some(attr.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
+impl FromMeta for Bounds {
+    fn from_value(value: &Lit) -> darling::Result<Self> {
+        (if let Lit::Str(value) = value {
+            value
+                .parse_with(Punctuated::<WherePredicate, Comma>::parse_separated_nonempty)
+                .map(|bounds| Self(bounds.into_iter().collect()))
+                .map_err(Into::into)
+        } else {
+            Err(darling::Error::unexpected_lit_type(value))
+        })
+        .map_err(|e| e.with_span(value))
+    }
+}
 
-        Self::from_attributes(&attrs)
+impl Bounds {
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub fn push(&mut self, bounds: Self) {
+        self.0.extend(bounds.0)
     }
 
     pub fn extend_predicates<'a>(
@@ -138,44 +150,13 @@ impl Bounds {
     }
 }
 
-impl FromAttributes for Bounds {
-    fn from_attributes(attrs: &[Attribute]) -> darling::Result<Self> {
-        let mut bounds = vec![];
-        for attr in attrs {
-            let nested =
-                attr.parse_args_with(Punctuated::<Meta, Comma>::parse_terminated)?;
-
-            for meta in nested {
-                match meta {
-                    Meta::NameValue(MetaNameValue {
-                        path,
-                        value:
-                            Expr::Lit(ExprLit {
-                                lit: Lit::Str(value),
-                                ..
-                            }),
-                        ..
-                    }) if path.is_ident("bound") => {
-                        let predicates = value.parse_with(
-                            Punctuated::<WherePredicate, Comma>::parse_separated_nonempty,
-                        )?;
-                        bounds.extend(predicates);
-                    }
-                    _ => {}
-                }
-            }
-        }
-        Ok(Bounds(bounds))
-    }
-}
-
-#[derive(FromField)]
+#[derive(Debug, FromField)]
 pub struct Field {
     pub ident: Option<Ident>,
     pub ty: Type,
 }
 
-#[derive(FromVariant)]
+#[derive(Debug, FromVariant)]
 pub struct Variant {
     pub ident: Ident,
     pub fields: Fields<Field>,

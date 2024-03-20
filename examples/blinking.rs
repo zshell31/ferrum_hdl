@@ -14,7 +14,7 @@ pub const fn blinking_count<D: ClockDomain>() -> usize {
 pub fn blinking<D: ClockDomain>(
     clk: Clock<D>,
     rst: Reset<D>,
-) -> Signal<D, (Bit, Unsigned<{ blinking_count::<D>() }>)>
+) -> Signal<D, (Bit, U<{ blinking_count::<D>() }>)>
 where
     ConstConstr<{ blinking_count::<D>() }>:,
     ConstConstr<{ idx_constr(blinking_count::<D>()) }>:,
@@ -23,7 +23,7 @@ where
         &clk,
         &rst,
         &0_u8.cast(),
-        |r: Unsigned<{ blinking_count::<D>() }>| r + 1,
+        |r: U<{ blinking_count::<D>() }>| r + 1,
     )
     .map(|value| (value.msb(), value))
 }

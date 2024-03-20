@@ -87,7 +87,10 @@ pub fn derive_bitpack(input: TokenStream) -> TokenStream {
         Err(e) => return e.write_errors().into(),
     };
 
-    parsed.into_tokens().into()
+    match parsed.into_tokens() {
+        Ok(tokens) => tokens.into(),
+        Err(e) => e.write_errors().into(),
+    }
 }
 
 #[proc_macro_derive(Traceable, attributes(traceable))]

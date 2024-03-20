@@ -97,7 +97,7 @@ impl<const N: usize> U<N> {
     }
 
     #[synth(inline)]
-    pub fn msb(self) -> Bit
+    pub fn msb(&self) -> Bit
     where
         ConstConstr<{ idx_constr(N) }>:,
     {

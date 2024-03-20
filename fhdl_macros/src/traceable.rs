@@ -1,28 +1,20 @@
 use std::iter;
 
-use darling::{FromDeriveInput, FromGenerics};
+use darling::FromDeriveInput;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::{Generics, Ident};
 
 use crate::utils::{self, AdtData, Bounds, TEither};
 
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(traceable))]
 pub struct TraceableDerive {
     ident: Ident,
     generics: Generics,
     data: AdtData,
-    bounds: Bounds,
-}
-
-impl FromDeriveInput for TraceableDerive {
-    fn from_derive_input(input: &syn::DeriveInput) -> darling::Result<Self> {
-        Ok(Self {
-            ident: input.ident.clone(),
-            generics: Generics::from_generics(&input.generics)?,
-            data: AdtData::try_from(&input.data)?,
-            bounds: Bounds::from_attrs(&input.attrs, "traceable")?,
-        })
-    }
+    #[darling(default, multiple)]
+    bound: Bounds,
 }
 
 impl TraceableDerive {
@@ -32,7 +24,7 @@ impl TraceableDerive {
             utils::split_generics_for_impl(&self.generics);
 
         let predicates =
-            self.bounds
+            self.bound
                 .extend_predicates(predicates, &self.generics, false, |tparam| {
                     let ident = &tparam.ident;
 

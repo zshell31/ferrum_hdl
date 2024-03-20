@@ -1,19 +1,23 @@
 use std::{borrow::Cow, iter};
 
-use darling::{ast::Style, FromDeriveInput, FromGenerics};
+use darling::{ast::Style, FromDeriveInput};
 use either::Either;
 use fhdl_const_func::{clog2, clog2_len};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
 use syn::{GenericParam, Generics, Ident, Index};
 
-use crate::utils::{self, AdtData, Bounds, Field, TEither, Variant};
+use crate::utils::{self, AdtData, Bounds, Field, TEither};
 
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(bitpack))]
 pub struct BitPackDerive {
     ident: Ident,
     generics: Generics,
     data: AdtData,
-    bounds: Bounds,
+    #[darling(default, multiple)]
+    bound: Bounds,
+    bits: Option<usize>,
 }
 
 impl Field {
@@ -34,51 +38,66 @@ impl Field {
     }
 }
 
-impl FromDeriveInput for BitPackDerive {
-    fn from_derive_input(input: &syn::DeriveInput) -> darling::Result<Self> {
-        Ok(Self {
-            ident: input.ident.clone(),
-            generics: Generics::from_generics(&input.generics)?,
-            data: AdtData::try_from(&input.data)?,
-            bounds: Bounds::from_attrs(&input.attrs, "bitpack")?,
-        })
-    }
-}
-
-fn discr_width(variants: &[Variant]) -> usize {
-    let max_discr = variants
-        .iter()
-        .fold(0, |max_discr, variant| match variant.discr() {
-            Some(discr) => {
-                if max_discr <= discr {
-                    discr
-                } else {
-                    max_discr
-                }
-            }
-            None => max_discr,
-        });
-
-    if max_discr == 0 {
-        clog2_len(variants.len())
-    } else {
-        clog2(max_discr)
-    }
-}
-
 impl BitPackDerive {
-    pub fn into_tokens(self) -> TokenStream {
-        let impl_bit_size = self.impl_bit_size();
-        let impl_bit_pack = self.impl_bit_pack();
+    pub fn into_tokens(self) -> Result<TokenStream, darling::Error> {
+        let discr_width = self.discr_width()?;
+        let impl_bit_size = self.impl_bit_size(discr_width);
+        let impl_bit_pack = self.impl_bit_pack(discr_width);
 
-        quote! {
+        Ok(quote! {
             #impl_bit_size
 
             #impl_bit_pack
+        })
+    }
+
+    fn discr_width(&self) -> Result<usize, darling::Error> {
+        match &self.data {
+            AdtData::Enum(variants) => {
+                let max_discr =
+                    variants
+                        .iter()
+                        .fold(0, |max_discr, variant| match variant.discr() {
+                            Some(discr) => {
+                                if max_discr <= discr {
+                                    discr
+                                } else {
+                                    max_discr
+                                }
+                            }
+                            None => max_discr,
+                        });
+
+                let bits = if max_discr == 0 {
+                    clog2_len(variants.len())
+                } else {
+                    clog2(max_discr)
+                };
+
+                match self.bits {
+                    Some(spec_bits) => {
+                        if spec_bits < bits {
+                            Err(darling::Error::custom(format!("Specified bit size '{spec_bits}' is less than calculated bit size '{bits}'")))
+                        } else {
+                            Ok(spec_bits)
+                        }
+                    }
+                    None => Ok(bits),
+                }
+            }
+            AdtData::Struct(_) => {
+                if self.bits.is_some() {
+                    Err(darling::Error::custom(
+                        "Bit size should be specified only for enums",
+                    ))
+                } else {
+                    Ok(0)
+                }
+            }
         }
     }
 
-    pub fn impl_bit_size(&self) -> TokenStream {
+    pub fn impl_bit_size(&self, discr_width: usize) -> TokenStream {
         let ident = &self.ident;
         let bit_size = match &self.data {
             AdtData::Enum(variants) => {
@@ -106,7 +125,6 @@ impl BitPackDerive {
                         })
                         .collect::<Vec<_>>();
 
-                    let discr_width = discr_width(variants);
                     let data_width = match bits.len() {
                         0 => quote! { 0 },
                         1 => bits[0].clone(),
@@ -160,7 +178,7 @@ impl BitPackDerive {
             utils::split_generics_for_impl(&self.generics);
 
         let predicates =
-            self.bounds
+            self.bound
                 .extend_predicates(predicates, &self.generics, true, |tparam| {
                     let ident = &tparam.ident;
 
@@ -182,7 +200,7 @@ impl BitPackDerive {
         }
     }
 
-    pub fn impl_bit_pack(&self) -> TokenStream {
+    pub fn impl_bit_pack(&self, discr_width: usize) -> TokenStream {
         let ident = &self.ident;
 
         fn make_names<'f>(
@@ -196,8 +214,6 @@ impl BitPackDerive {
 
         let pack = match &self.data {
             AdtData::Enum(variants) => {
-                let discr_width = discr_width(variants);
-
                 let mut idx = 0;
                 let branches = variants.iter().map(|variant| {
                     let variant_ident = &variant.ident;
@@ -303,8 +319,6 @@ impl BitPackDerive {
 
         let unpack = match &self.data {
             AdtData::Enum(variants) => {
-                let discr_width = discr_width(variants);
-
                 let variant_expr = quote! {
                     let mut offset = <Self as BitSize>::BITS - #discr_width;
                     let variant: usize = usize::cast_from((packed.clone() >> offset).cast::<BitVec<#discr_width>>());
@@ -383,7 +397,7 @@ impl BitPackDerive {
         let (impl_generics, ty_generics, predicates) =
             utils::split_generics_for_impl(&self.generics);
 
-        let predicates = self.bounds.extend_predicates(predicates, &self.generics, false, |tparam| {
+        let predicates = self.bound.extend_predicates(predicates, &self.generics, false, |tparam| {
             let ident = &tparam.ident;
 
             TEither::TS(quote! {

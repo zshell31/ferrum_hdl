@@ -1,5 +1,6 @@
 #![allow(incomplete_features)]
 #![feature(generic_const_exprs)]
+#![feature(generic_arg_infer)]
 
 use ferrum_hdl::{
     array::Array,
@@ -7,7 +8,7 @@ use ferrum_hdl::{
     bitpack::{BitPack, BitSize},
     cast::Cast,
     signal::SignalValue,
-    unsigned::Unsigned,
+    unsigned::U,
 };
 
 mod test_zs_struct {
@@ -25,7 +26,7 @@ mod test_zs_struct {
     fn pack() {
         let s = Test {};
 
-        assert_eq!(s.pack(), 0_u64.cast());
+        assert_eq!(s.pack(), 0_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -41,9 +42,9 @@ mod test_struct {
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     struct Test {
-        a: Unsigned<4>,
+        a: U<4>,
         b: Bit,
-        c: Array<2, Unsigned<2>>,
+        c: Array<2, U<2>>,
     }
 
     #[test]
@@ -56,10 +57,10 @@ mod test_struct {
         let s = Test {
             a: 12_u8.cast(),
             b: false.cast(),
-            c: [1_u8.cast::<Unsigned<2>>(), 3_u8.cast()].cast(),
+            c: [1_u8.cast::<U<2>>(), 3_u8.cast()].cast(),
         };
 
-        assert_eq!(s.pack(), 0b110000111_u64.cast());
+        assert_eq!(s.pack(), 0b110000111_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -69,7 +70,7 @@ mod test_struct {
         assert_eq!(s, Test {
             a: 12_u8.cast(),
             b: false.cast(),
-            c: [1_u8.cast::<Unsigned<2>>(), 3_u8.cast()].cast(),
+            c: [1_u8.cast::<U<2>>(), 3_u8.cast()].cast(),
         });
     }
 }
@@ -85,22 +86,22 @@ mod test_struct_with_type_param {
 
     #[test]
     fn bitsize() {
-        assert_eq!(Test::<Unsigned<3>>::BITS, 4);
+        assert_eq!(Test::<U<3>>::BITS, 4);
     }
 
     #[test]
     fn pack() {
-        let s = Test::<Unsigned<4>> {
+        let s = Test::<U<4>> {
             a: 12u8.cast(),
             b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.cast());
+        assert_eq!(s.pack(), 0b11000_u64.cast::<U<_>>());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Unsigned<4>> = BitPack::unpack(0b11000_u64.cast());
+        let s: Test<U<4>> = BitPack::unpack(0b11000_u64.cast());
 
         assert_eq!(s, Test {
             a: 12_u8.cast(),
@@ -114,7 +115,7 @@ mod test_struct_with_const_param {
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     struct Test<const N: usize> {
-        a: Unsigned<N>,
+        a: U<N>,
         b: Bit,
     }
 
@@ -130,7 +131,7 @@ mod test_struct_with_const_param {
             b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.cast());
+        assert_eq!(s.pack(), 0b11000_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -149,13 +150,13 @@ mod test_struct_with_type_const_param {
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     struct Test<const N: usize, T> {
-        a: Unsigned<N>,
+        a: U<N>,
         b: T,
     }
 
     #[test]
     fn bitsize() {
-        assert_eq!(Test::<4, Unsigned<2>>::BITS, 6);
+        assert_eq!(Test::<4, U<2>>::BITS, 6);
     }
 
     #[test]
@@ -165,7 +166,7 @@ mod test_struct_with_type_const_param {
             b: false.cast(),
         };
 
-        assert_eq!(s.pack(), 0b11000_u64.cast());
+        assert_eq!(s.pack(), 0b11000_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -208,7 +209,7 @@ mod test_enum_with_1_unit_variant {
     fn pack() {
         let s = Test::A;
 
-        assert_eq!(s.pack(), 0b0_u64.cast());
+        assert_eq!(s.pack(), 0b0_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -236,7 +237,7 @@ mod test_enum_with_1_variant {
     fn pack() {
         let s = Test::A();
 
-        assert_eq!(s.pack(), 0b0_u64.cast());
+        assert_eq!(s.pack(), 0b0_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -257,19 +258,19 @@ mod test_enum_with_1_var_and_type_param {
 
     #[test]
     fn bitsize() {
-        assert_eq!(Test::<Unsigned<3>>::BITS, 4);
+        assert_eq!(Test::<U<3>>::BITS, 4);
     }
 
     #[test]
     fn pack() {
-        let s = Test::<Unsigned<3>>::A(5_u8.cast());
+        let s = Test::<U<3>>::A(5_u8.cast());
 
-        assert_eq!(s.pack(), 0b0101_u64.cast());
+        assert_eq!(s.pack(), 0b0101_u64.cast::<U<_>>());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<Unsigned<3>> = BitPack::unpack(0b0101_u64.cast());
+        let s: Test<U<3>> = BitPack::unpack(0b0101_u64.cast());
 
         assert_eq!(s, Test::A(5_u8.cast()));
     }
@@ -280,7 +281,7 @@ mod test_enum_with_1_var_and_const_param {
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     enum Test<const N: usize> {
-        A(Unsigned<N>),
+        A(U<N>),
     }
 
     #[test]
@@ -292,7 +293,7 @@ mod test_enum_with_1_var_and_const_param {
     fn pack() {
         let s = Test::<3>::A(5_u8.cast());
 
-        assert_eq!(s.pack(), 0b0101_u64.cast());
+        assert_eq!(s.pack(), 0b0101_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -321,7 +322,7 @@ mod test_enum_with_2_unit_variants {
     fn pack() {
         let s = Test::B;
 
-        assert_eq!(s.pack(), 0b1_u64.cast());
+        assert_eq!(s.pack(), 0b1_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -337,7 +338,7 @@ mod test_enum_with_2_variants {
 
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     enum Test<const N: usize, T> {
-        A(Unsigned<N>),
+        A(U<N>),
         B(Bit, T),
     }
 
@@ -354,7 +355,7 @@ mod test_enum_with_2_variants {
             true.cast(),
         ]);
 
-        assert_eq!(s.pack(), 0b11011_u64.cast());
+        assert_eq!(s.pack(), 0b11011_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -391,11 +392,11 @@ mod test_enum_with_3_unit_variants {
     fn pack() {
         let s = Test::B;
 
-        assert_eq!(s.pack(), 0b01_u64.cast());
+        assert_eq!(s.pack(), 0b01_u64.cast::<U<_>>());
 
         let s = Test::C;
 
-        assert_eq!(s.pack(), 0b10_u64.cast());
+        assert_eq!(s.pack(), 0b10_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -416,7 +417,7 @@ mod test_enum_with_3_variants {
     #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
     #[bitpack(bound = "[(); <Array<N, Bit> as BitSize>::BITS]:")]
     enum Test<const N: usize, T> {
-        A(Unsigned<1>),
+        A(U<1>),
         B(Bit),
         C { a: Bit, b: T, c: Array<N, Bit> },
     }
@@ -428,32 +429,32 @@ mod test_enum_with_3_variants {
 
     #[test]
     fn pack() {
-        let s = Test::<3, Unsigned<3>>::C {
+        let s = Test::<3, U<3>>::C {
             a: false.cast(),
             b: 5_u8.cast(),
             c: [true.cast(), false.cast(), true.cast()],
         };
 
-        assert_eq!(s.pack(), 0b100101101_u64.cast());
+        assert_eq!(s.pack(), 0b100101101_u64.cast::<U<_>>());
 
-        let s = Test::<3, Unsigned<3>>::B(true.cast());
+        let s = Test::<3, U<3>>::B(true.cast());
 
-        assert_eq!(s.pack(), 0b011000000_u64.cast());
+        assert_eq!(s.pack(), 0b011000000_u64.cast::<U<_>>());
     }
 
     #[test]
     fn unpack() {
-        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b100101101_u64.cast());
+        let s: Test<3, U<3>> = BitPack::unpack(0b100101101_u64.cast());
 
-        assert_eq!(s, Test::<3, Unsigned<3>>::C {
+        assert_eq!(s, Test::<3, U<3>>::C {
             a: false.cast(),
             b: 5_u8.cast(),
             c: [true.cast(), false.cast(), true.cast()]
         });
 
-        let s: Test<3, Unsigned<3>> = BitPack::unpack(0b011000000_u64.cast());
+        let s: Test<3, U<3>> = BitPack::unpack(0b011000000_u64.cast());
 
-        assert_eq!(s, Test::<3, Unsigned<3>>::B(true.cast()));
+        assert_eq!(s, Test::<3, U<3>>::B(true.cast()));
     }
 }
 
@@ -471,10 +472,10 @@ mod test_enum_with_discr {
     #[test]
     fn pack() {
         assert_eq!(Test::BITS, 5);
-        assert_eq!(Test::A.pack(), 0b01010_u64.cast());
-        assert_eq!(Test::B.pack(), 0b01011_u64.cast());
-        assert_eq!(Test::C.pack(), 0b01100_u64.cast());
-        assert_eq!(Test::D.pack(), 0b10100_u64.cast());
+        assert_eq!(Test::A.pack(), 0b01010_u64.cast::<U<_>>());
+        assert_eq!(Test::B.pack(), 0b01011_u64.cast::<U<_>>());
+        assert_eq!(Test::C.pack(), 0b01100_u64.cast::<U<_>>());
+        assert_eq!(Test::D.pack(), 0b10100_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -545,7 +546,7 @@ mod test_nested_adts {
             },
         });
 
-        assert_eq!(s.pack(), 0b0100_u64.cast());
+        assert_eq!(s.pack(), 0b0100_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -590,7 +591,7 @@ mod test_struct_with_phantom {
             a: true.cast(),
         };
 
-        assert_eq!(s.pack(), 0b1_u64.cast());
+        assert_eq!(s.pack(), 0b1_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -628,7 +629,7 @@ mod test_enum_with_phantom {
     fn pack() {
         let s = Test::<Foo>::B(PhantomData);
 
-        assert_eq!(s.pack(), 0b10_u64.cast());
+        assert_eq!(s.pack(), 0b10_u64.cast::<U<_>>());
     }
 
     #[test]
@@ -636,5 +637,22 @@ mod test_enum_with_phantom {
         let s: Test<Foo> = BitPack::unpack(0b10_u64.cast());
 
         assert_eq!(s, Test::<Foo>::B(PhantomData));
+    }
+}
+
+mod test_enum_with_spec_bitsize {
+    use super::*;
+
+    #[derive(Debug, Clone, PartialEq, Eq, SignalValue, BitPack)]
+    #[bitpack(bits = 7)]
+    enum Test {
+        A = 0b011011,
+    }
+
+    #[test]
+    fn pack() {
+        assert_eq!(Test::BITS, 7);
+
+        assert_eq!(Test::A.pack(), 0b011011_u64.cast::<U<_>>());
     }
 }

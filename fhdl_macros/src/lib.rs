@@ -1,5 +1,6 @@
 #![feature(rustc_private)]
 mod bitpack;
+mod bits;
 mod blackbox;
 mod impl_tuple_traits;
 mod signal_value;
@@ -8,6 +9,7 @@ mod traceable;
 mod utils;
 
 use bitpack::BitPackDerive;
+use bits::Bits;
 use darling::FromDeriveInput;
 use impl_tuple_traits::ImplTupleTraits;
 use proc_macro::TokenStream;
@@ -66,6 +68,13 @@ pub fn impl_tuple_traits(input: TokenStream) -> TokenStream {
     let impl_tuple = parse_macro_input!(input as ImplTupleTraits);
 
     impl_tuple.into_tokens().into()
+}
+
+#[proc_macro]
+pub fn bits(input: TokenStream) -> TokenStream {
+    let bits = parse_macro_input!(input as Bits);
+
+    bits.into_tokens().into()
 }
 
 #[proc_macro_derive(SignalValue, attributes(signal_value))]

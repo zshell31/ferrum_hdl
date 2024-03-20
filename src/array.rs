@@ -8,7 +8,7 @@ use crate::{
     bitpack::{BitPack, BitSize, BitVec, IsPacked},
     bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
-    const_functions::slice_len,
+    const_functions::idx_range_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
     eval::{Eval, EvalCtx},
@@ -78,9 +78,9 @@ pub trait ArrayExt<const N: usize, T>: Sized {
         T: Clone;
 
     #[blackbox(Slice)]
-    fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> [T; M]
+    fn slice<const M: usize>(&self, idx: Idx<{ idx_range_len(N, M) }>) -> [T; M]
     where
-        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
+        ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
         T: Clone;
 
     #[synth(inline)]
@@ -108,6 +108,15 @@ pub trait ArrayExt<const N: usize, T>: Sized {
         ConstConstr<{ idx_constr(N) }>:,
     {
         <[U; N]>::chain_idx((), |idx, _| ((), f(idx.clone(), self.idx(idx)))).1
+    }
+
+    #[synth(inline)]
+    fn repeat(val: T) -> [T; N]
+    where
+        T: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        Self::make(move || val.clone())
     }
 
     #[synth(inline)]
@@ -152,9 +161,9 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         self[idx].clone()
     }
 
-    fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> [T; M]
+    fn slice<const M: usize>(&self, idx: Idx<{ idx_range_len(N, M) }>) -> [T; M]
     where
-        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
+        ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
         T: Clone,
     {
         let idx = idx.val().cast::<usize>();

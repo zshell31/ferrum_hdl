@@ -25,15 +25,15 @@ mod tuples;
 pub mod unsigned;
 
 pub mod prelude {
-    pub use fhdl_macros::synth;
+    pub use fhdl_macros::{bits, synth};
 
     pub use crate::{
         array::{Array, ArrayExt},
-        bit::Bit,
+        bit::{Bit, H, L},
         bitpack::{BitPack, BitPackExt, BitVec},
         bundle::{Bundle, Unbundle},
         cast::{Cast, CastFrom},
-        const_functions::{clog2, slice_len},
+        const_functions::{assert_in_range, clog2, idx_range_len},
         const_helpers::{Assert, ConstConstr, IsTrue},
         domain::{
             clk_divider, hz_to_period, Clock, ClockDomain, Polarity, SyncKind,

@@ -408,13 +408,13 @@ impl<'n, W: Write> Verilog<'n, W> {
                 if !extend.is_sign {
                     b.write_fmt(format_args!("assign {output} = {{ 0, {input} }};\n\n"))?;
                 } else {
-                    let mut w = module[extend.input(module)].width();
-                    if w > 0 {
-                        w -= 1;
-                        b.write_fmt(format_args!(
-                            "assign {output} = {{ {input}[{w}], {input} }};\n\n"
-                        ))?;
-                    }
+                    let msb = module[extend.input(module)].width();
+                    let w = extend.output[0].width() - msb;
+                    let msb = msb.checked_sub(1).unwrap();
+
+                    b.write_fmt(format_args!(
+                        "assign {output} = {{ {{ {w}{{ {input}[{msb}] }} }}, {input} }};\n\n"
+                    ))?;
                 }
             }
             NodeKind::Mux(mux) => {

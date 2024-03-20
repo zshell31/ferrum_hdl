@@ -59,24 +59,6 @@ impl<const N: usize> S<N> {
             }
         }
     }
-
-    #[synth(inline)]
-    pub fn zero_extend<const M: usize>(&self) -> S<M>
-    where
-        Assert<{ M > N }>: IsTrue,
-    {
-        let zextend = self.clone().cast::<U<M>>().repack();
-        zextend
-    }
-
-    #[synth(inline)]
-    pub fn sign_extend<const M: usize>(&self) -> S<M>
-    where
-        Assert<{ M > N }>: IsTrue,
-    {
-        let sextend = self.clone().cast();
-        sextend
-    }
 }
 
 fn bit_to_sign(bit: Bit) -> Sign {

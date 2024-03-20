@@ -9,8 +9,10 @@ use fhdl_macros::{blackbox, synth};
 use crate::{
     bit::Bit,
     cast::{Cast, CastFrom},
-    const_functions::slice_len,
-    prelude::{idx_constr, ConstConstr, Idx},
+    const_functions::{assert_extend, assert_in_range, idx_range_len},
+    const_helpers::ConstConstr,
+    index::{idx_constr, Idx},
+    signed::S,
     unsigned::U,
 };
 
@@ -81,24 +83,105 @@ impl<T> BitPack for PhantomData<T> {
 
 pub trait BitPackExt<const N: usize>: BitPack<Packed = BitVec<N>> + Clone {
     #[synth(inline)]
+    #[inline]
+    fn pack(&self) -> Self::Packed
+    where
+        Self: Clone,
+    {
+        self.clone().pack()
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn repack<T: BitPack<Packed = Self::Packed>>(&self) -> T
+    where
+        Self: Clone,
+    {
+        self.clone().repack()
+    }
+
+    #[blackbox(Index)]
+    #[inline]
+    fn bit(&self, idx: Idx<N>) -> Bit
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        self.pack().bit_(idx.cast())
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn bit_const<const START: usize>(&self) -> Bit
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+        ConstConstr<{ assert_in_range(N, START, 1) }>:,
+    {
+        let bit = self.bit(START.cast());
+        bit
+    }
+
+    #[blackbox(Slice)]
+    #[inline]
+    fn slice<const LEN: usize>(&self, idx: Idx<{ idx_range_len(N, LEN) }>) -> U<LEN>
+    where
+        ConstConstr<{ idx_constr(idx_range_len(N, LEN)) }>:,
+    {
+        self.pack().slice_::<LEN>(idx.cast())
+    }
+
+    #[synth(inline)]
+    #[inline]
+    fn slice_const<const M: usize, const START: usize>(&self) -> U<M>
+    where
+        ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
+        ConstConstr<{ assert_in_range(N, START, M) }>:,
+    {
+        let slice = self.slice::<M>(START.cast());
+        slice
+    }
+
+    #[synth(inline)]
+    #[inline]
     fn msb(&self) -> Bit
     where
         ConstConstr<{ idx_constr(N) }>:,
     {
-        self.clone().pack().idx(unsafe { Idx::from_usize(N - 1) })
+        let msb = self.bit(unsafe { Idx::from_usize(N - 1) });
+        msb
     }
 
     #[synth(inline)]
     fn rotate_left(&self) -> Self
     where
         ConstConstr<{ idx_constr(N) }>:,
-        ConstConstr<{ idx_constr(slice_len(N, N - 1)) }>:,
+        ConstConstr<{ idx_constr(idx_range_len(N, N - 1)) }>:,
     {
-        let packed = self.clone().pack();
-        let msb = packed.idx(unsafe { Idx::from_usize(N - 1) });
+        let packed = self.pack();
+        let msb = packed.bit(unsafe { Idx::from_usize(N - 1) });
         let slice = packed.slice::<{ N - 1 }>(unsafe { Idx::from_usize(0) });
 
-        Self::unpack((slice.cast::<U<N>>() << 1_u8.cast::<U<1>>()) | msb.cast::<U<N>>())
+        let rotate = Self::unpack(
+            (slice.cast::<U<N>>() << 1_u8.cast::<U<1>>()) | msb.cast::<U<N>>(),
+        );
+        rotate
+    }
+
+    #[synth(inline)]
+    fn zero_extend<const M: usize, T: BitPack<Packed = BitVec<M>>>(&self) -> T
+    where
+        ConstConstr<{ assert_extend(N, M) }>:,
+    {
+        let zextend = self.pack().cast::<U<M>>().repack();
+        zextend
+    }
+
+    #[synth(inline)]
+    fn sign_extend<const M: usize, T: BitPack<Packed = BitVec<M>>>(&self) -> T
+    where
+        ConstConstr<{ assert_extend(N, M) }>:,
+    {
+        let sextend = self.pack().cast::<S<M>>().repack();
+        sextend
     }
 }
 

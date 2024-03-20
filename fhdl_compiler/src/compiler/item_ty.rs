@@ -18,6 +18,7 @@ use rustc_middle::ty::{
 use rustc_span::Span;
 use rustc_target::abi::VariantIdx;
 use rustc_type_ir::{
+    IntTy,
     TyKind::{self},
     UintTy,
 };
@@ -566,6 +567,14 @@ impl<'tcx> Compiler<'tcx> {
                 TyKind::Uint(UintTy::U128) => Some(self.alloc_ty(NodeTy::Unsigned(128))),
                 TyKind::Uint(UintTy::Usize) => {
                     Some(self.alloc_ty(NodeTy::Unsigned(usize::BITS as u128)))
+                }
+                TyKind::Int(IntTy::I8) => Some(self.alloc_ty(NodeTy::Signed(8))),
+                TyKind::Int(IntTy::I16) => Some(self.alloc_ty(NodeTy::Signed(16))),
+                TyKind::Int(IntTy::I32) => Some(self.alloc_ty(NodeTy::Signed(32))),
+                TyKind::Int(IntTy::I64) => Some(self.alloc_ty(NodeTy::Signed(64))),
+                TyKind::Int(IntTy::I128) => Some(self.alloc_ty(NodeTy::Signed(128))),
+                TyKind::Int(IntTy::Isize) => {
+                    Some(self.alloc_ty(NodeTy::Signed(isize::BITS as u128)))
                 }
                 TyKind::Tuple(ty) => {
                     let ty = self.resolve_tuple_ty(ty.iter(), generics, span)?;

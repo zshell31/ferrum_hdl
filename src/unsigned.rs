@@ -17,10 +17,8 @@ use crate::{
     bit::Bit,
     bitpack::{BitPack, BitSize, BitVec},
     cast::{Cast, CastFrom},
-    const_functions::slice_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
-    prelude::S,
     signal::SignalValue,
     trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
@@ -82,55 +80,24 @@ impl<const N: usize> U<N> {
         }
     }
 
+    pub(crate) fn slice_<const LEN: usize>(&self, idx: usize) -> U<LEN> {
+        match self {
+            Self::Short(short) => {
+                let mask = mask(LEN as u128);
+                U::<LEN>::from_short((short >> idx) & mask)
+            }
+            Self::Long(long) => {
+                let mask = (BigUint::from(1_u8) << LEN) - 1_u8;
+                U::<LEN>::from_long((long >> idx) & mask)
+            }
+        }
+    }
+
     pub(crate) fn is_non_zero(&self) -> Bit {
         match self {
             Self::Short(short) => *short != 0,
             Self::Long(long) => !long.is_zero(),
         }
-    }
-
-    #[blackbox(Index)]
-    pub fn idx(&self, idx: Idx<N>) -> Bit
-    where
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        self.bit_(idx.cast())
-    }
-
-    #[blackbox(Slice)]
-    pub fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> U<M>
-    where
-        ConstConstr<{ idx_constr(slice_len(N, M)) }>:,
-    {
-        let idx: usize = idx.cast();
-        match self {
-            Self::Short(short) => {
-                let mask = mask(M as u128);
-                U::<M>::from_short((short >> idx) & mask)
-            }
-            Self::Long(long) => {
-                let mask = (BigUint::from(1_u8) << M) - 1_u8;
-                U::<M>::from_long((long >> idx) & mask)
-            }
-        }
-    }
-
-    #[synth(inline)]
-    pub fn zero_extend<const M: usize>(&self) -> U<M>
-    where
-        Assert<{ M > N }>: IsTrue,
-    {
-        let zextend = self.clone().cast();
-        zextend
-    }
-
-    #[synth(inline)]
-    pub fn sign_extend<const M: usize>(&self) -> U<M>
-    where
-        Assert<{ M > N }>: IsTrue,
-    {
-        let sextend = self.clone().cast::<S<M>>().repack();
-        sextend
     }
 }
 
@@ -143,10 +110,12 @@ impl<const N: usize> BitSize for U<N> {
 impl<const N: usize> BitPack for U<N> {
     type Packed = BitVec<N>;
 
+    #[inline]
     fn pack(self) -> Self::Packed {
         self
     }
 
+    #[inline]
     fn unpack(bitvec: Self::Packed) -> Self {
         bitvec
     }
@@ -648,11 +617,6 @@ impl<const N: usize> Not for U<N> {
             )),
         }
     }
-}
-
-pub const fn in_range(n: usize, lo: usize, hi: usize) -> bool {
-    assert!(lo < hi);
-    n >= lo && n < hi
 }
 
 macro_rules! impl_trace_for_prims {

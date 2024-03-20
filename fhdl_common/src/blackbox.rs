@@ -53,4 +53,5 @@ pub enum BlackboxTy {
     BitVec,
     Clock,
     Unsigned,
+    Signed,
 }

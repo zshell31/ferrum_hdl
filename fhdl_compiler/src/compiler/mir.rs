@@ -116,6 +116,10 @@ impl<'tcx> Compiler<'tcx> {
                 return Err(SpanError::new(SpanErrorKind::UnsupportedLoops, span).into());
             }
 
+            if self.args.dump_mir {
+                debug!("mir: {mir:#?}");
+            }
+
             let mut module = Module::new(module_sym, top_module);
             let mod_span = self.span_to_string(span, fn_did);
             module.set_span(mod_span);
@@ -333,15 +337,18 @@ impl<'tcx> Compiler<'tcx> {
                             let lhs = self.visit_operand(&operands.0, ctx, span)?;
                             let rhs = self.visit_operand(&operands.1, ctx, span)?;
 
+                            let lhs_ty = operands.0.ty(&mir.local_decls, self.tcx);
                             let ty = bin_op.ty(
                                 self.tcx,
-                                operands.0.ty(&mir.local_decls, self.tcx),
+                                lhs_ty,
                                 operands.1.ty(&mir.local_decls, self.tcx),
                             );
                             let output_ty =
                                 self.resolve_ty(ty, ctx.generic_args, span)?;
 
-                            let bin_op = BinOp::try_from_op(*bin_op, span)?;
+                            let lhs_ty =
+                                self.resolve_ty(lhs_ty, ctx.generic_args, span)?;
+                            let bin_op = BinOp::try_from_op(lhs_ty, *bin_op, span)?;
 
                             Some(bin_op.bin_op(&lhs, &rhs, output_ty, ctx, span)?)
                         }

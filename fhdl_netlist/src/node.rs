@@ -24,7 +24,7 @@ pub use self::{
     mux::{Case, Mux, MuxArgs, MuxInputs},
     pass::{Pass, PassArgs},
     splitter::{Indices, Splitter, SplitterArgs},
-    zero_extend::{ZeroExtend, ZeroExtendArgs},
+    zero_extend::{Extend, ExtendArgs},
 };
 use crate::{
     netlist::{
@@ -168,7 +168,7 @@ impl Node {
     }
 
     pub fn is_zero_extend(&self) -> bool {
-        matches!(&*self.kind, NodeKind::ZeroExtend(_))
+        matches!(&*self.kind, NodeKind::Extend(_))
     }
 
     pub fn is_mux(&self) -> bool {
@@ -467,5 +467,5 @@ define_nodes!(
     Mux => Mux,
     Pass => Pass,
     Splitter => Splitter,
-    ZeroExtend => ZeroExtend,
+    Extend => Extend,
 );

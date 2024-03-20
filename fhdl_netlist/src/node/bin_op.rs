@@ -17,8 +17,9 @@ pub enum BinOp {
     Div,
     Mul,
     Rem,
-    Shl,
-    Shr,
+    Sll,
+    Slr,
+    Sra,
     Eq,
     Ne,
     Ge,
@@ -55,8 +56,9 @@ impl Display for BinOp {
             Self::Ne => "!=",
             Self::Or => "||",
             Self::Rem => "%",
-            Self::Shl => "<<",
-            Self::Shr => ">>",
+            Self::Sll => "<<",
+            Self::Slr => ">>",
+            Self::Sra => ">>>",
             Self::Sub => "-",
         })
     }
@@ -99,7 +101,7 @@ impl BinOpArgs {
             BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
                 assert_eq!(lhs.width(), rhs.width());
             }
-            BinOp::Shl | BinOp::Shr => {}
+            BinOp::Sll | BinOp::Slr | BinOp::Sra => {}
         }
     }
 }

@@ -20,6 +20,7 @@ use crate::{
     const_functions::slice_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     index::{idx_constr, Idx},
+    prelude::S,
     signal::SignalValue,
     trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
@@ -41,7 +42,7 @@ where
 }
 
 impl<const N: usize> U<N> {
-    fn from_short(val: u128) -> Self {
+    pub(crate) fn from_short(val: u128) -> Self {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
@@ -55,7 +56,7 @@ impl<const N: usize> U<N> {
         }
     }
 
-    fn from_long(val: BigUint) -> Self {
+    pub(crate) fn from_long(val: BigUint) -> Self {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
@@ -70,7 +71,7 @@ impl<const N: usize> U<N> {
         }
     }
 
-    fn bit_(&self, n: usize) -> Bit {
+    pub(crate) fn bit_(&self, n: usize) -> Bit {
         if n >= N {
             return false;
         }
@@ -96,14 +97,6 @@ impl<const N: usize> U<N> {
         self.bit_(idx.cast())
     }
 
-    #[synth(inline)]
-    pub fn msb(&self) -> Bit
-    where
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        self.idx(unsafe { Idx::from_usize(N - 1) })
-    }
-
     #[blackbox(Slice)]
     pub fn slice<const M: usize>(&self, idx: Idx<{ slice_len(N, M) }>) -> U<M>
     where
@@ -123,8 +116,21 @@ impl<const N: usize> U<N> {
     }
 
     #[synth(inline)]
-    pub fn rotate_left(self) -> Self {
-        (self.clone() << 1_u128) | ((self >> (N - 1)) & 1)
+    pub fn zero_extend<const M: usize>(&self) -> U<M>
+    where
+        Assert<{ M > N }>: IsTrue,
+    {
+        let zextend = self.clone().cast();
+        zextend
+    }
+
+    #[synth(inline)]
+    pub fn sign_extend<const M: usize>(&self) -> U<M>
+    where
+        Assert<{ M > N }>: IsTrue,
+    {
+        let sextend = self.clone().cast::<S<M>>().repack();
+        sextend
     }
 }
 
@@ -138,11 +144,11 @@ impl<const N: usize> BitPack for U<N> {
     type Packed = BitVec<N>;
 
     fn pack(self) -> Self::Packed {
-        self.clone()
+        self
     }
 
     fn unpack(bitvec: Self::Packed) -> Self {
-        bitvec.clone()
+        bitvec
     }
 }
 
@@ -584,10 +590,7 @@ macro_rules! impl_shift_ops {
 
 impl_shift_ops!(u8, u16, u32, u64, u128, usize);
 
-impl<const N: usize, const M: usize> Shl<U<M>> for U<N>
-where
-    Assert<{ M <= 128 }>: IsTrue,
-{
+impl<const N: usize, const M: usize> Shl<U<M>> for U<N> {
     type Output = Self;
 
     #[blackbox(OpShl)]
@@ -597,16 +600,37 @@ where
     }
 }
 
-impl<const N: usize, const M: usize> Shr<U<M>> for U<N>
+impl<const N: usize> Shl<Idx<N>> for U<N>
 where
-    Assert<{ M <= 128 }>: IsTrue,
+    ConstConstr<{ idx_constr(N) }>:,
 {
+    type Output = Self;
+
+    #[synth(inline)]
+    fn shl(self, rhs: Idx<N>) -> Self::Output {
+        self.shl(rhs.val())
+    }
+}
+
+impl<const N: usize, const M: usize> Shr<U<M>> for U<N> {
     type Output = Self;
 
     #[blackbox(OpShr)]
     fn shr(self, rhs: U<M>) -> Self::Output {
         let rhs: u128 = rhs.cast();
         self.shr(rhs)
+    }
+}
+
+impl<const N: usize> Shr<Idx<N>> for U<N>
+where
+    ConstConstr<{ idx_constr(N) }>:,
+{
+    type Output = Self;
+
+    #[synth(inline)]
+    fn shr(self, rhs: Idx<N>) -> Self::Output {
+        self.shr(rhs.val())
     }
 }
 
@@ -660,7 +684,7 @@ macro_rules! impl_trace_for_prims {
     };
 }
 
-impl_trace_for_prims!(u128);
+impl_trace_for_prims!(u8, u16, u32, u64, u128, usize);
 
 impl<const N: usize> Traceable for U<N> {
     fn add_vars(vars: &mut TraceVars) {

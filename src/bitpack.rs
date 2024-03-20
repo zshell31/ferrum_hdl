@@ -6,7 +6,13 @@ use std::{
 pub use fhdl_macros::BitPack;
 use fhdl_macros::{blackbox, synth};
 
-use crate::{cast::CastFrom, unsigned::U};
+use crate::{
+    bit::Bit,
+    cast::{Cast, CastFrom},
+    const_functions::slice_len,
+    prelude::{idx_constr, ConstConstr, Idx},
+    unsigned::U,
+};
 
 pub trait BitSize: Sized {
     const BITS: usize;
@@ -72,6 +78,31 @@ impl<T> BitPack for PhantomData<T> {
         PhantomData
     }
 }
+
+pub trait BitPackExt<const N: usize>: BitPack<Packed = BitVec<N>> + Clone {
+    #[synth(inline)]
+    fn msb(&self) -> Bit
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        self.clone().pack().idx(unsafe { Idx::from_usize(N - 1) })
+    }
+
+    #[synth(inline)]
+    fn rotate_left(&self) -> Self
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+        ConstConstr<{ idx_constr(slice_len(N, N - 1)) }>:,
+    {
+        let packed = self.clone().pack();
+        let msb = packed.idx(unsafe { Idx::from_usize(N - 1) });
+        let slice = packed.slice::<{ N - 1 }>(unsafe { Idx::from_usize(0) });
+
+        Self::unpack((slice.cast::<U<N>>() << 1_u8.cast::<U<1>>()) | msb.cast::<U<N>>())
+    }
+}
+
+impl<const N: usize, T> BitPackExt<N> for T where T: BitPack<Packed = BitVec<N>> + Clone {}
 
 #[cfg(test)]
 mod tests {

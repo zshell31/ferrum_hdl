@@ -11,7 +11,6 @@ use crate::{
 };
 
 pub const fn idx_constr(n: usize) -> usize {
-    assert!(n > 0);
     let len = clog2_len(n);
     assert!(len <= usize::BITS as usize);
     len
@@ -78,24 +77,30 @@ pub const fn is_power_of_two(n: usize) -> bool {
     }
 }
 
-impl<const N: usize> CastFrom<U<{ idx_constr(N) }>> for Idx<N> {
-    #[synth(inline)]
-    fn cast_from(val: U<{ idx_constr(N) }>) -> Self {
-        if Self::IS_POWER_OF_TWO || val <= N.cast::<U<{ idx_constr(N) }>>() {
-            Idx(val)
-        } else {
-            Idx(0_u8.cast())
-        }
-    }
-}
-
-impl<const N: usize> CastFrom<Idx<N>> for U<{ idx_constr(N) }>
+impl<const N: usize, const M: usize> CastFrom<U<M>> for Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
 {
     #[synth(inline)]
+    fn cast_from(val: U<M>) -> Self {
+        let val: U<{ idx_constr(N) }> = val.cast();
+        let idx = if Self::IS_POWER_OF_TWO || val <= N.cast::<U<{ idx_constr(N) }>>() {
+            Idx(val)
+        } else {
+            Idx(0_u8.cast())
+        };
+        idx
+    }
+}
+
+impl<const N: usize, const M: usize> CastFrom<Idx<N>> for U<M>
+where
+    ConstConstr<{ idx_constr(N) }>:,
+{
+    #[synth(inline)]
+    #[inline]
     fn cast_from(val: Idx<N>) -> Self {
-        val.val()
+        val.val().cast()
     }
 }
 
@@ -105,7 +110,7 @@ where
 {
     #[synth(inline)]
     fn cast_from(val: Idx<N>) -> Self {
-        val.cast::<U<_>>().cast()
+        val.val().cast()
     }
 }
 
@@ -115,7 +120,7 @@ where
 {
     #[synth(inline)]
     fn cast_from(val: usize) -> Self {
-        val.cast::<U<_>>().cast()
+        val.cast::<U<N>>().cast()
     }
 }
 
@@ -130,9 +135,11 @@ where
         Self(0_u8.cast())
     }
 
+    /// Create [Idx] from usize.
+    ///
+    /// `val` should be less than `N`.
     #[synth(inline)]
     pub(crate) unsafe fn from_usize(val: usize) -> Self {
-        assert!(val < N);
         Self(val.cast())
     }
 

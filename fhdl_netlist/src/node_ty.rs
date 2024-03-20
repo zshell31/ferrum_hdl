@@ -8,6 +8,7 @@ use std::{
 pub enum NodeTy {
     Bit,
     Unsigned(u128),
+    Signed(u128),
     Clock,
     ClockDomain,
 }
@@ -17,6 +18,7 @@ impl Display for NodeTy {
         let s: Cow<'_, str> = match self {
             Self::Bit => "bit".into(),
             Self::Unsigned(n) => format!("unsigned[{n}]").into(),
+            Self::Signed(n) => format!("signed[{n}]").into(),
             Self::Clock => "clock".into(),
             Self::ClockDomain => "clock_domain".into(),
         };
@@ -41,10 +43,15 @@ impl NodeTy {
         matches!(self, Self::Unsigned(_))
     }
 
+    pub fn is_signed(&self) -> bool {
+        matches!(self, Self::Signed(_))
+    }
+
     pub fn width(&self) -> u128 {
         match self {
             Self::Bit => 1,
             Self::Unsigned(n) => *n,
+            Self::Signed(n) => *n,
             Self::Clock => 1,
             Self::ClockDomain => 1,
         }
@@ -54,6 +61,7 @@ impl NodeTy {
         match self {
             Self::Bit => false,
             Self::Unsigned(n) => *n == 0,
+            Self::Signed(n) => *n == 0,
             Self::Clock | Self::ClockDomain => true,
         }
     }

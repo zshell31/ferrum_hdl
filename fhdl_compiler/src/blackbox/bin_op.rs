@@ -11,7 +11,11 @@ use crate::{
 pub struct BinOp(pub NodeBinOp);
 
 impl BinOp {
-    pub fn try_from_op(op: MirBinOp, span: Span) -> Result<Self, Error> {
+    pub fn try_from_op(
+        lhs_ty: ItemTy<'_>,
+        op: MirBinOp,
+        span: Span,
+    ) -> Result<Self, Error> {
         use MirBinOp::*;
 
         Ok(Self(match op {
@@ -23,8 +27,9 @@ impl BinOp {
             Mul | MulUnchecked => NodeBinOp::Mul,
             Rem => NodeBinOp::Rem,
             Div => NodeBinOp::Div,
-            Shl | ShlUnchecked => NodeBinOp::Shl,
-            Shr | ShrUnchecked => NodeBinOp::Shr,
+            Shl | ShlUnchecked => NodeBinOp::Sll,
+            Shr | ShrUnchecked if !lhs_ty.is_signed() => NodeBinOp::Slr,
+            Shr | ShrUnchecked if lhs_ty.is_signed() => NodeBinOp::Sra,
             Eq => NodeBinOp::Eq,
             Ge => NodeBinOp::Ge,
             Gt => NodeBinOp::Gt,

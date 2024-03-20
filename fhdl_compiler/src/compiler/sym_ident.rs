@@ -13,6 +13,7 @@ pub enum SymIdent {
     Out,
     Bit,
     Slice,
+    Extend,
     Cast,
 }
 
@@ -30,6 +31,7 @@ impl SymIdent {
             Self::Out => "out",
             Self::Bit => "bit",
             Self::Slice => "slice",
+            Self::Extend => "extend",
             Self::Cast => "cast",
         }
     }

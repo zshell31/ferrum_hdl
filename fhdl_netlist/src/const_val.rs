@@ -63,6 +63,15 @@ impl ConstVal {
     pub fn is_zero_sized(&self) -> bool {
         self.width == 0
     }
+
+    pub fn sra(self, rhs: ConstVal) -> ConstVal {
+        let width = op_width(&self, &rhs);
+        bin_op(
+            ((val_(self.val, width) as i128) >> val_(rhs.val, width)) as u128,
+            self,
+            rhs,
+        )
+    }
 }
 
 fn bin_op(val: u128, lhs: ConstVal, rhs: ConstVal) -> ConstVal {

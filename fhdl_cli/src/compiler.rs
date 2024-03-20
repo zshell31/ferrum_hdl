@@ -12,6 +12,9 @@ pub struct CompilerArgs {
     /// Dump generated netlist
     #[arg(long)]
     pub dump_netlist: bool,
+    /// Dump MIR
+    #[arg(long)]
+    pub dump_mir: bool,
     #[command(flatten)]
     pub netlist: NetListCfg,
 }

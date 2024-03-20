@@ -26,7 +26,7 @@ use fhdl_cli::CompilerArgs;
 use fhdl_common::{BlackboxKind, NonEmptyStr};
 use fhdl_netlist::{
     netlist::{Module, ModuleId, NetList, Port},
-    node::{Splitter, SplitterArgs, ZeroExtend, ZeroExtendArgs},
+    node::{Extend, ExtendArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -346,6 +346,7 @@ impl<'tcx> Compiler<'tcx> {
         from_ty: NodeTy,
         to_ty: NodeTy,
         sym: Option<Symbol>,
+        is_sign: bool,
     ) -> Port {
         let from_width = from_ty.width();
         let to_width = to_ty.width();
@@ -358,10 +359,11 @@ impl<'tcx> Compiler<'tcx> {
                 rev: false,
             })
         } else {
-            module.add_and_get_port::<_, ZeroExtend>(ZeroExtendArgs {
+            module.add_and_get_port::<_, Extend>(ExtendArgs {
                 ty: to_ty,
                 input: from,
                 sym,
+                is_sign,
             })
         }
     }

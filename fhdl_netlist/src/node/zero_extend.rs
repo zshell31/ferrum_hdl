@@ -6,27 +6,30 @@ use crate::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ZeroExtend {
+pub struct Extend {
     pub output: [NodeOutput; 1],
+    pub is_sign: bool,
 }
 
 #[derive(Debug)]
-pub struct ZeroExtendArgs {
+pub struct ExtendArgs {
     pub ty: NodeTy,
     pub input: Port,
     pub sym: Option<Symbol>,
+    pub is_sign: bool,
 }
 
-impl MakeNode<ZeroExtendArgs> for ZeroExtend {
-    fn make(module: &mut Module, args: ZeroExtendArgs) -> NodeId {
+impl MakeNode<ExtendArgs> for Extend {
+    fn make(module: &mut Module, args: ExtendArgs) -> NodeId {
         let width_in = module[args.input].width();
         let width_out = args.ty.width();
         if width_in > width_out {
-            panic!("ZeroExtend: output width {width_out} < input width {width_in}",);
+            panic!("Extend: output width {width_out} < input width {width_in}",);
         }
 
-        let node_id = module.add_node(ZeroExtend {
+        let node_id = module.add_node(Extend {
             output: [NodeOutput::wire(args.ty, args.sym)],
+            is_sign: args.is_sign,
         });
 
         module.add_edge(args.input, Port::new(node_id, 0));
@@ -35,7 +38,7 @@ impl MakeNode<ZeroExtendArgs> for ZeroExtend {
     }
 }
 
-impl IsNode for ZeroExtend {
+impl IsNode for Extend {
     #[inline]
     fn in_count(&self) -> usize {
         1
@@ -52,7 +55,7 @@ impl IsNode for ZeroExtend {
     }
 }
 
-impl WithId<NodeId, &'_ ZeroExtend> {
+impl WithId<NodeId, &'_ Extend> {
     pub fn input(&self, module: &Module) -> Port {
         let mut incoming = module.incoming(self.id);
         incoming.next(module).unwrap()

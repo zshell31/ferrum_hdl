@@ -6,6 +6,7 @@ pub trait CastFrom<T: Sized>: Sized {
 
 pub trait Cast: Sized {
     #[synth(inline)]
+    #[inline]
     fn cast<T>(self) -> T
     where
         T: Sized + CastFrom<Self>,

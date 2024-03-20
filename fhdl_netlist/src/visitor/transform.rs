@@ -57,7 +57,8 @@ impl Transform {
         let mut inline = false;
         match &*node.kind {
             NodeKind::Pass(pass) => {
-                match module.to_const(node.with(pass).input(module)) {
+                let pass = node.with(pass);
+                match module.to_const(pass.input(module)) {
                     Some(const_val) => {
                         let output = pass.output[0];
 
@@ -68,11 +69,13 @@ impl Transform {
                         });
                     }
                     None => {
-                        if !module.is_mod_output(Port::new(node_id, 0)) {
+                        if !(module.is_mod_output(Port::new(node_id, 0))
+                            && module.is_mod_input(pass.input(module)))
+                        {
                             let pass = node.with(pass);
                             let input_ty = module[pass.input(module)].ty;
                             let output_ty = pass.output[0].ty;
-                            if input_ty == output_ty {
+                            if input_ty.width() == output_ty.width() {
                                 module.reconnect(node_id);
                             }
                         }
@@ -143,8 +146,9 @@ impl Transform {
                         BinOp::BitXor => left ^ right,
                         BinOp::And => left & right,
                         BinOp::Or => left & right,
-                        BinOp::Shl => left << right,
-                        BinOp::Shr => left >> right,
+                        BinOp::Sll => left << right,
+                        BinOp::Slr => left >> right,
+                        BinOp::Sra => left.sra(right),
                         BinOp::Eq => (left == right).into(),
                         BinOp::Ne => (left != right).into(),
                         BinOp::Ge => (left >= right).into(),
@@ -254,10 +258,10 @@ impl Transform {
                 }
             }
 
-            NodeKind::ZeroExtend(zero_extend) => {
-                let zero_extend = node.with(zero_extend);
-                let output = zero_extend.output[0];
-                let input = zero_extend.input(module);
+            NodeKind::Extend(extend) => {
+                let extend = node.with(extend);
+                let output = extend.output[0];
+                let input = extend.input(module);
 
                 match module.to_const(input) {
                     Some(const_val) => {

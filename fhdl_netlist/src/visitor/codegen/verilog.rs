@@ -348,6 +348,7 @@ impl<'n, W: Write> Verilog<'n, W> {
                     start: u128,
                 ) -> Result<()> {
                     let width = output.width();
+                    let end = start + width - 1;
                     let output = output.sym.unwrap();
 
                     buffer.write_tab()?;
@@ -357,7 +358,7 @@ impl<'n, W: Write> Verilog<'n, W> {
                         ))?;
                     } else {
                         buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start} +: {width}];\n\n"
+                            "assign {output} = {input}[{end}:{start}];\n\n"
                         ))?;
                     }
 
@@ -398,13 +399,23 @@ impl<'n, W: Write> Verilog<'n, W> {
                 b.write_tab()?;
                 b.write_str("};\n\n")?;
             }
-            NodeKind::ZeroExtend(zero_extend) => {
-                let zero_extend = node.with(zero_extend);
-                let input = module[zero_extend.input(module)].sym.unwrap();
-                let output = zero_extend.output[0].sym.unwrap();
+            NodeKind::Extend(extend) => {
+                let extend = node.with(extend);
+                let input = module[extend.input(module)].sym.unwrap();
+                let output = extend.output[0].sym.unwrap();
 
                 b.write_tab()?;
-                b.write_fmt(format_args!("assign {output} = {{ 0, {input} }};\n\n"))?;
+                if !extend.is_sign {
+                    b.write_fmt(format_args!("assign {output} = {{ 0, {input} }};\n\n"))?;
+                } else {
+                    let mut w = module[extend.input(module)].width();
+                    if w > 0 {
+                        w -= 1;
+                        b.write_fmt(format_args!(
+                            "assign {output} = {{ {input}[{w}], {input} }};\n\n"
+                        ))?;
+                    }
+                }
             }
             NodeKind::Mux(mux) => {
                 let mux = node.with(mux);

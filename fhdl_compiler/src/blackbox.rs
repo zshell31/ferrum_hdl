@@ -106,8 +106,8 @@ eval_expr!(
     OpMul => bin_op::BinOp(BinOp::Mul),
     OpDiv => bin_op::BinOp(BinOp::Div),
     OpRem => bin_op::BinOp(BinOp::Rem),
-    OpShl => bin_op::BinOp(BinOp::Shl),
-    OpShr => bin_op::BinOp(BinOp::Shr),
+    OpShl => bin_op::BinOp(BinOp::Sll),
+    OpShr => bin_op::BinOp(BinOp::Slr),
     OpNot => un_op::BitNot,
 
     CastFrom => cast::Conversion,

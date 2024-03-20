@@ -1,4 +1,4 @@
-use ferrum_hdl::{cast::CastFrom, unsigned::U};
+use ferrum_hdl::{cast::CastFrom, signed::S, unsigned::U};
 use rustc_span::Span;
 use tracing::error;
 
@@ -32,7 +32,14 @@ impl Conversion {
             {
                 assert_convert::<U<1>, U<1>>();
                 assert_convert::<U<1>, U<2>>();
-                Ok(Self::to_unsigned(from.clone(), to_ty, ctx))
+                Ok(Self::trunc_or_extend(from.clone(), to_ty, ctx, false))
+            }
+            (ItemTyKind::Node(from_ty_), ItemTyKind::Node(to_ty_))
+                if from_ty_.is_signed() && to_ty_.is_signed() =>
+            {
+                assert_convert::<S<1>, S<1>>();
+                assert_convert::<S<1>, S<2>>();
+                Ok(Self::trunc_or_extend(from.clone(), to_ty, ctx, true))
             }
             _ => {
                 error!("from {:?} => to {:?}", from.ty, to_ty);
@@ -42,10 +49,11 @@ impl Conversion {
         }
     }
 
-    fn to_unsigned<'tcx>(
+    fn trunc_or_extend<'tcx>(
         from: Item<'tcx>,
         to_ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
+        is_sign: bool,
     ) -> Item<'tcx> {
         Item::new(
             to_ty,
@@ -55,6 +63,7 @@ impl Conversion {
                 from.ty.node_ty(),
                 to_ty.node_ty(),
                 SymIdent::Cast.into(),
+                is_sign,
             )),
         )
     }

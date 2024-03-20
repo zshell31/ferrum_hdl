@@ -486,6 +486,14 @@ impl<'tcx> ItemTy<'tcx> {
             _ => false,
         }
     }
+
+    #[inline]
+    pub fn is_signed(&self) -> bool {
+        match self.kind() {
+            ItemTyKind::Node(node_ty) => node_ty.is_signed(),
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generic<'tcx> {
@@ -685,6 +693,9 @@ impl<'tcx> Compiler<'tcx> {
                 BlackboxTy::Unsigned => self
                     .generic_const(ty, 0, generics, span)?
                     .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(val)))),
+                BlackboxTy::Signed => self
+                    .generic_const(ty, 0, generics, span)?
+                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)))),
             };
 
             return Ok(item_ty);

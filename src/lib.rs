@@ -19,6 +19,7 @@ pub mod domain;
 pub mod eval;
 pub mod index;
 pub mod signal;
+pub mod signed;
 pub mod trace;
 mod tuples;
 pub mod unsigned;
@@ -29,7 +30,7 @@ pub mod prelude {
     pub use crate::{
         array::{Array, ArrayExt},
         bit::Bit,
-        bitpack::{BitPack, BitVec},
+        bitpack::{BitPack, BitPackExt, BitVec},
         bundle::{Bundle, Unbundle},
         cast::{Cast, CastFrom},
         const_functions::{clog2, slice_len},
@@ -45,6 +46,7 @@ pub mod prelude {
             dff, dff_comb, reg, reg0, reg0_comb, reg_comb, reg_en, reg_en0, reg_en0_comb,
             reg_en_comb, Enable, IntoSignal, Reset, Signal, SignalValue,
         },
+        signed::S,
         trace::{IdCode, Timescale, TraceTy, TraceValue, TraceVars, Traceable, Tracer},
         unsigned::U,
     };

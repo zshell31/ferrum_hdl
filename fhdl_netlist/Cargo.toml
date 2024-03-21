@@ -9,7 +9,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-auto_enums = "0.8.2"
 clap = { workspace = true }
 derive-where = "1.2.5"
 either = { workspace = true }

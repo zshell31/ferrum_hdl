@@ -21,6 +21,7 @@ license = "MIT"
 [workspace.dependencies]
 anstyle = "1.0"
 anyhow = "1.0"
+auto_enums = "0.8.5"
 bumpalo = "3.15"
 clap = { version = "4.5.1", features = ["derive"] }
 darling = "0.20.6"

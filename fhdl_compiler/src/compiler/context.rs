@@ -8,7 +8,10 @@ use rustc_middle::{
 use rustc_span::Span;
 use rustc_type_ir::fold::TypeFoldable;
 
-use super::{switch::Switch, Compiler};
+use super::{
+    switch::{Switch, SwitchLocals},
+    Compiler,
+};
 use crate::{compiler::item::Item, error::Error};
 
 #[derive(Debug, Default, Clone)]
@@ -36,6 +39,10 @@ impl<'tcx> Locals<'tcx> {
             Some(item) => item,
             None => panic!("cannot find item for local {local:?}"),
         }
+    }
+
+    pub fn switch_locals(&self) -> SwitchLocals {
+        SwitchLocals::from_outer(self.0.keys().copied())
     }
 }
 

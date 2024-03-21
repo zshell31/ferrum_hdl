@@ -28,7 +28,7 @@ use rustc_middle::{
     ty::Ty,
 };
 use rustc_span::Span;
-use tracing::{debug, error, instrument};
+use tracing::{debug, debug_span, error, instrument};
 
 use super::{
     item::{Group, Item, ModuleExt},
@@ -54,7 +54,7 @@ impl<'tcx> Branch<'tcx> {
 
 #[derive(Debug, Clone)]
 pub struct Switch<'tcx> {
-    pub locals: Rc<BTreeSet<Local>>,
+    pub locals: Rc<SwitchLocals>,
     pub discr: Item<'tcx>,
     targets: usize,
     branches: Vec<Branch<'tcx>>,
@@ -63,7 +63,7 @@ pub struct Switch<'tcx> {
 }
 
 impl<'tcx> Switch<'tcx> {
-    pub fn new(locals: Rc<BTreeSet<Local>>, discr: Item<'tcx>, targets: usize) -> Self {
+    pub fn new(locals: Rc<SwitchLocals>, discr: Item<'tcx>, targets: usize) -> Self {
         Self {
             locals,
             discr,
@@ -75,7 +75,7 @@ impl<'tcx> Switch<'tcx> {
     }
 
     pub fn contains(&self, local: Local) -> bool {
-        self.locals.contains(&local)
+        self.locals.has(local)
     }
 
     pub fn add_branch(&mut self, discr: Option<u128>) {
@@ -89,7 +89,7 @@ impl<'tcx> Switch<'tcx> {
     }
 
     pub fn add_branch_local(&mut self, local: Local, item: Item<'tcx>) {
-        assert!(self.locals.contains(&local));
+        assert!(self.locals.has(local));
         if self.is_otherwise {
             self.otherwise.as_mut().unwrap().insert(local, item);
         } else {
@@ -98,11 +98,19 @@ impl<'tcx> Switch<'tcx> {
     }
 
     pub fn branch_local(&self, local: Local) -> Option<&Item<'tcx>> {
-        assert!(self.locals.contains(&local));
+        assert!(self.locals.has(local));
         if self.is_otherwise {
             self.otherwise.as_ref().unwrap().get(&local)
         } else {
             self.branches.last().unwrap().locals.get(&local)
+        }
+    }
+
+    pub fn has_branch_local(&self, local: Local) -> bool {
+        if self.is_otherwise {
+            self.otherwise.as_ref().unwrap().contains_key(&local)
+        } else {
+            self.branches.last().unwrap().locals.contains_key(&local)
         }
     }
 
@@ -115,7 +123,7 @@ impl<'tcx> Switch<'tcx> {
         self.branches.iter().map(|branch| {
             assert_eq!(self.locals.len(), branch.locals.len());
             for local in self.locals.iter() {
-                assert!(branch.locals.contains_key(local));
+                assert!(branch.locals.contains_key(&local));
             }
 
             branch
@@ -126,64 +134,10 @@ impl<'tcx> Switch<'tcx> {
         let otherwise = self.otherwise.as_ref()?;
         assert_eq!(self.locals.len(), otherwise.len());
         for local in self.locals.iter() {
-            assert!(otherwise.contains_key(local));
+            assert!(otherwise.contains_key(&local));
         }
 
         self.otherwise.as_ref()
-    }
-}
-
-struct BranchBlocks<'b, 'tcx: 'b> {
-    stop: BasicBlock,
-    basic_blocks: &'b BasicBlocks<'tcx>,
-    to_visit: VecDeque<BasicBlock>,
-}
-
-impl<'b, 'tcx: 'b> BranchBlocks<'b, 'tcx> {
-    fn new(
-        basic_blocks: &'b BasicBlocks<'tcx>,
-        branch: BasicBlock,
-        stop: BasicBlock,
-    ) -> Self {
-        Self {
-            stop,
-            basic_blocks,
-            to_visit: {
-                let mut res = VecDeque::new();
-                res.push_back(branch);
-                res
-            },
-        }
-    }
-
-    fn next(&mut self, switch_blocks: &mut SwitchBlocks) -> Option<BasicBlock> {
-        while let Some(block) = self.to_visit.pop_front() {
-            if block == self.stop {
-                continue;
-            }
-
-            let mut is_switch_block = false;
-            let block_data = &self.basic_blocks[block];
-            if let TerminatorKind::SwitchInt { targets, .. } =
-                &block_data.terminator().kind
-            {
-                let switch_meta =
-                    switch_blocks.switch_meta(block, self.basic_blocks, targets);
-
-                if let Some(switch_meta) = switch_meta {
-                    self.to_visit.push_back(switch_meta.convergent_block);
-                    is_switch_block = true;
-                }
-            }
-
-            if !is_switch_block {
-                self.to_visit.extend(self.basic_blocks.successors(block));
-            }
-
-            return Some(block);
-        }
-
-        None
     }
 }
 
@@ -243,8 +197,9 @@ impl SwitchBlocks {
     fn switch_meta(
         &mut self,
         switch_block: BasicBlock,
-        basic_blocks: &BasicBlocks,
+        basic_blocks: &BasicBlocks<'_>,
         targets: &SwitchTargets,
+        outer: &SwitchLocals,
     ) -> Option<&SwitchMeta> {
         #[allow(clippy::map_entry)]
         if !self.switch_meta.contains_key(&switch_block) {
@@ -256,11 +211,97 @@ impl SwitchBlocks {
                 }
             };
 
-            let meta = SwitchMeta::make(self, basic_blocks, targets, convergent_block);
-            self.switch_meta.insert(switch_block, meta);
+            debug_span!("switch_meta", switch_block = ?switch_block).in_scope(|| {
+                let meta = SwitchMeta::make(
+                    self,
+                    basic_blocks,
+                    targets,
+                    convergent_block,
+                    outer,
+                );
+
+                debug!("{meta:#?}");
+
+                self.switch_meta.insert(switch_block, meta);
+            });
         }
 
         self.switch_meta.get(&switch_block)
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SwitchLocals {
+    // Locals common for all branches of the current switchInt block
+    common: FxHashSet<Local>,
+    // Locals outer to the current switchInt block
+    outer: FxHashSet<Local>,
+    // Is there an assignment for any of the common or outer locals in at least one branch
+    has_assign: bool,
+}
+
+impl SwitchLocals {
+    pub fn from_outer(outer: impl Iterator<Item = Local>) -> Self {
+        Self {
+            outer: outer.collect(),
+            ..Default::default()
+        }
+    }
+
+    pub fn add(&mut self, local: Local, outer: &Self) {
+        if outer.has(local) {
+            self.outer.insert(local);
+        } else {
+            self.common.insert(local);
+        }
+
+        self.has_assign = true;
+    }
+
+    pub fn has(&self, local: Local) -> bool {
+        self.common.contains(&local) || self.outer.contains(&local)
+    }
+
+    pub fn extend(&mut self, locals: &Self, outer: &Self) {
+        self.common.extend(locals.common.iter().copied());
+        self.outer.extend(
+            locals
+                .outer
+                .iter()
+                .copied()
+                .filter(|local| outer.has(*local)),
+        );
+    }
+
+    pub fn ignore(&self) -> bool {
+        !self.has_assign
+    }
+
+    pub fn merge(&mut self, locals: Self) {
+        self.has_assign |= locals.has_assign;
+        self.common = &self.common & &locals.common;
+        self.outer = &self.outer | &locals.outer;
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.common.is_empty() && self.outer.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.common.len() + self.outer.len()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = Local> + '_ {
+        self.common.iter().chain(self.outer.iter()).copied()
+    }
+
+    pub fn outer(&self) -> impl Iterator<Item = Local> + '_ {
+        self.outer.iter().copied()
+    }
+
+    pub fn sorted(&self) -> impl Iterator<Item = Local> {
+        let set: BTreeSet<Local> = self.iter().collect();
+        set.into_iter()
     }
 }
 
@@ -268,7 +309,7 @@ impl SwitchBlocks {
 pub(super) struct SwitchMeta {
     ignore: bool,
     targets_count: usize,
-    common_locals: Rc<BTreeSet<Local>>,
+    locals: Rc<SwitchLocals>,
     convergent_block: BasicBlock,
 }
 
@@ -278,42 +319,57 @@ impl SwitchMeta {
         basic_blocks: &BasicBlocks<'_>,
         targets: &SwitchTargets,
         convergent_block: BasicBlock,
+        outer: &SwitchLocals,
     ) -> Self {
         let targets = targets.all_targets();
 
-        fn search_along_branch(
-            switch_blocks: &mut SwitchBlocks,
-            basic_blocks: &BasicBlocks<'_>,
-            start: BasicBlock,
-            convergent_block: BasicBlock,
-        ) -> FxHashSet<Local> {
-            let mut locals: FxHashSet<Local> = Default::default();
+        let mut search_along_branch = |start: BasicBlock| -> SwitchLocals {
+            let mut locals = SwitchLocals::default();
+            let mut to_visit = VecDeque::default();
 
-            let mut branch = BranchBlocks::new(basic_blocks, start, convergent_block);
-            while let Some(block) = branch.next(switch_blocks) {
+            to_visit.push_back(start);
+            while let Some(block) = to_visit.pop_front() {
+                if block == convergent_block {
+                    break;
+                }
+
                 let block_data = &basic_blocks[block];
                 for stmt in &block_data.statements {
                     if let Some((place, _)) = stmt.kind.as_assign() {
-                        locals.insert(place.local);
+                        locals.add(place.local, outer);
                     }
                 }
+
+                let mut is_switch_block = false;
                 match &block_data.terminator().kind {
                     TerminatorKind::Call { destination, .. } => {
-                        locals.insert(destination.local);
+                        locals.add(destination.local, outer);
                     }
                     TerminatorKind::SwitchInt { targets, .. } => {
-                        if let Some(switch_meta) =
-                            switch_blocks.switch_meta(block, basic_blocks, targets)
-                        {
-                            locals.extend(switch_meta.common_locals.iter().copied());
+                        if let Some(switch_meta) = switch_blocks.switch_meta(
+                            block,
+                            basic_blocks,
+                            targets,
+                            // locals of the current branch + outer locals of the current switchInt
+                            // block are outer to the next switchInt block
+                            &SwitchLocals::from_outer(outer.outer().chain(locals.iter())),
+                        ) {
+                            locals.extend(&switch_meta.locals, outer);
+
+                            is_switch_block = true;
+                            to_visit.push_back(switch_meta.convergent_block);
                         }
                     }
                     _ => {}
                 }
+
+                if !is_switch_block {
+                    to_visit.extend(block_data.terminator().successors());
+                }
             }
 
             locals
-        }
+        };
 
         let mut targets_count = 0;
         let mut targets = targets
@@ -329,30 +385,20 @@ impl SwitchMeta {
             .copied();
 
         let target = targets.next().unwrap();
-        let mut common_locals =
-            search_along_branch(switch_blocks, basic_blocks, target, convergent_block);
-        let mut has_assign = !common_locals.is_empty();
+        let mut locals = search_along_branch(target);
 
         for target in targets {
             if basic_blocks[target].is_empty_unreachable() {
                 continue;
             }
 
-            let locals = search_along_branch(
-                switch_blocks,
-                basic_blocks,
-                target,
-                convergent_block,
-            );
-
-            common_locals = &common_locals & &locals;
-            has_assign |= !locals.is_empty();
+            locals.merge(search_along_branch(target));
         }
 
         Self {
-            ignore: !has_assign,
+            ignore: locals.ignore(),
             targets_count,
-            common_locals: Rc::new(common_locals.into_iter().collect()),
+            locals: Rc::new(locals),
             convergent_block,
         }
     }
@@ -411,29 +457,30 @@ impl<'tcx> Compiler<'tcx> {
             return Ok(Some(targets.target_for_value(0)));
         }
 
-        let switch_meta =
-            match self.switch_meta(fn_did, switch_block, basic_blocks, targets) {
-                Some(switch_meta) => switch_meta,
-                None => {
-                    return Err(
-                        SpanError::new(SpanErrorKind::NotSynthSwitch, span).into()
-                    );
-                }
-            };
-
-        debug!("{:#?}", switch_meta);
+        let switch_meta = match self.switch_meta(
+            fn_did,
+            switch_block,
+            basic_blocks,
+            targets,
+            &ctx.locals.switch_locals(),
+        ) {
+            Some(switch_meta) => switch_meta,
+            None => {
+                return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
+            }
+        };
 
         let targets_count = switch_meta.targets_count;
         let convergent_block = switch_meta.convergent_block;
 
         if !switch_meta.ignore {
-            if switch_meta.common_locals.is_empty() {
+            if switch_meta.locals.is_empty() {
                 error!("switchInt does not have common locals");
                 return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
             }
 
             ctx.push_switch(Switch::new(
-                switch_meta.common_locals.clone(),
+                switch_meta.locals.clone(),
                 discr,
                 targets_count,
             ));
@@ -455,14 +502,32 @@ impl<'tcx> Compiler<'tcx> {
                 } else {
                     let mut switch = ctx.pop_switch().unwrap();
                     switch.add_branch(discr);
+                    ctx.push_switch(switch);
+                }
 
-                    for &local in switch.locals.clone().iter() {
+                // Share outer locals to all branches that do not contain assignments for them.
+                // For example
+                // ```rust
+                // let mut k = 0;
+                // let mut n = 1;
+                // if v {
+                //     k = 1;
+                // } else {
+                //     n = 0;
+                // }
+                // ````
+                //
+                // As result:
+                // - if-branch will get `n = 1`
+                // - else-branch will get `k = 0`
+                let mut switch = ctx.pop_switch().unwrap();
+                for local in switch.locals.clone().outer() {
+                    if !switch.has_branch_local(local) {
                         let item = ctx.locals.get(local);
                         switch.add_branch_local(local, item);
                     }
-
-                    ctx.push_switch(switch);
                 }
+                ctx.push_switch(switch);
             }
 
             let switch = ctx.pop_switch().unwrap();
@@ -500,7 +565,7 @@ impl<'tcx> Compiler<'tcx> {
 
             let output_ty = Ty::new_tup_from_iter(
                 self.tcx,
-                switch.locals.iter().map(|local| mir.local_decls[*local].ty),
+                switch.locals.iter().map(|local| mir.local_decls[local].ty),
             );
             let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
 
@@ -534,8 +599,8 @@ impl<'tcx> Compiler<'tcx> {
 
             let mux = ctx.module.from_bitvec(mux, output_ty);
 
-            for (local, item) in switch.locals.iter().zip(&*mux.group().items()) {
-                self.assign_local(*local, item, ctx)?;
+            for (local, item) in switch.locals.sorted().zip(&*mux.group().items()) {
+                self.assign_local(local, item, ctx)?;
             }
         } else {
             debug!("ignore switchInt because it does have assigns");
@@ -548,14 +613,15 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         fn_did: DefId,
         switch_block: BasicBlock,
-        basic_blocks: &BasicBlocks<'tcx>,
+        basic_blocks: &BasicBlocks<'_>,
         targets: &SwitchTargets,
+        outer: &SwitchLocals,
     ) -> Option<&SwitchMeta> {
         let switch_blocks = self
             .switch_meta
             .entry(fn_did)
             .or_insert_with(|| SwitchBlocks::make(basic_blocks));
 
-        switch_blocks.switch_meta(switch_block, basic_blocks, targets)
+        switch_blocks.switch_meta(switch_block, basic_blocks, targets, outer)
     }
 }

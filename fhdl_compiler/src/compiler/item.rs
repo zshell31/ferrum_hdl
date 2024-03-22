@@ -1,13 +1,13 @@
 use std::{
-    cell::{Ref, RefCell, RefMut},
-    iter::{self, Peekable},
+    cell::{Ref, RefCell},
+    iter::{self},
     rc::Rc,
 };
 
 use either::Either;
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{IterMut, Module, NodeId, Port},
+    netlist::{CursorMut, IterMut, Module, NodeId, Peekable, Port},
     node::{Merger, MergerArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
@@ -17,6 +17,7 @@ use smallvec::SmallVec;
 
 use super::{
     item_ty::{ClosureTy, EnumTy, ItemTy, ItemTyKind},
+    utils::{TreeIter, TreeNode},
     SymIdent,
 };
 use crate::error::Error;
@@ -98,41 +99,6 @@ pub struct GroupIter<'tcx> {
     len: usize,
 }
 
-impl<'tcx> GroupIter<'tcx> {
-    fn next(&mut self) -> Option<Item<'tcx>> {
-        if self.idx < self.len {
-            let item = unsafe { self.group.0.borrow().get_unchecked(self.idx).clone() };
-            self.idx += 1;
-            Some(item)
-        } else {
-            None
-        }
-    }
-
-    fn next_back(&mut self) -> Option<Item<'tcx>> {
-        if self.idx < self.len {
-            let rev_idx = self.len - self.idx - 1;
-            let item = unsafe { self.group.0.borrow().get_unchecked(rev_idx).clone() };
-            self.idx += 1;
-            Some(item)
-        } else {
-            None
-        }
-    }
-
-    fn next_mut(&mut self) -> Option<RefMut<'_, Item<'tcx>>> {
-        if self.idx < self.len {
-            let item = RefMut::map(self.group.0.borrow_mut(), |vec| unsafe {
-                vec.get_unchecked_mut(self.idx)
-            });
-            self.idx += 1;
-            Some(item)
-        } else {
-            None
-        }
-    }
-}
-
 impl<'tcx> Iterator for GroupIter<'tcx> {
     type Item = Item<'tcx>;
 
@@ -186,53 +152,6 @@ pub struct Item<'tcx> {
     pub ty: ItemTy<'tcx>,
     pub kind: ItemKind<'tcx>,
     pub nodes: usize,
-}
-
-pub enum ItemIter<'tcx> {
-    Port(Option<Port>),
-    Stack(Vec<GroupIter<'tcx>>),
-}
-
-fn next<'tcx>(
-    stack: &mut Vec<GroupIter<'tcx>>,
-    next: impl Fn(&mut GroupIter<'tcx>) -> Option<Item<'tcx>>,
-) -> Option<Port> {
-    while let Some(group) = stack.last_mut() {
-        if let Some(item) = next(group) {
-            match item.kind {
-                ItemKind::Port(port) => {
-                    return Some(port);
-                }
-                ItemKind::Group(group) => {
-                    stack.push(group.to_iter());
-                }
-            }
-        } else {
-            stack.pop();
-        }
-    }
-
-    None
-}
-
-impl<'tcx> Iterator for ItemIter<'tcx> {
-    type Item = Port;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Port(port) => port.take(),
-            Self::Stack(stack) => next(stack, GroupIter::next),
-        }
-    }
-}
-
-impl<'tcx> DoubleEndedIterator for ItemIter<'tcx> {
-    fn next_back(&mut self) -> Option<Self::Item> {
-        match self {
-            Self::Port(port) => port.take(),
-            Self::Stack(stack) => next(stack, GroupIter::next_back),
-        }
-    }
 }
 
 impl<'tcx> Item<'tcx> {
@@ -296,58 +215,41 @@ impl<'tcx> Item<'tcx> {
         Self::new(self.ty, self.kind.deep_clone())
     }
 
-    pub fn iter(&self) -> ItemIter<'tcx> {
-        match &self.kind {
-            ItemKind::Port(node_out_id) => ItemIter::Port(Some(*node_out_id)),
-            ItemKind::Group(group) => ItemIter::Stack(vec![group.to_iter()]),
-        }
-    }
-
-    pub fn traverse(&mut self, mut f: impl FnMut(&mut Port)) -> &mut Self {
-        match &mut self.kind {
-            ItemKind::Port(node_out_id) => f(node_out_id),
-            ItemKind::Group(group) => {
-                let mut stack: Vec<GroupIter<'tcx>> = vec![group.to_iter()];
-
-                enum StackCmd<'tcx> {
-                    Push(GroupIter<'tcx>),
-                    Pop,
-                }
-
-                while let Some(group) = stack.last_mut() {
-                    let mut cmd = None;
-
-                    if let Some(mut item) = group.next_mut() {
-                        match &mut item.kind {
-                            ItemKind::Port(node_out_id) => f(node_out_id),
-                            ItemKind::Group(group) => {
-                                cmd = Some(StackCmd::Push(group.to_iter()));
-                            }
-                        }
-                    } else {
-                        cmd = Some(StackCmd::Pop);
-                    }
-
-                    if let Some(cmd) = cmd {
-                        match cmd {
-                            StackCmd::Push(group) => {
-                                stack.push(group);
-                            }
-                            StackCmd::Pop => {
-                                stack.pop();
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        self
+    pub fn iter(&self) -> TreeIter<ItemIter<'tcx>> {
+        TreeIter::new(self.clone())
     }
 
     #[inline]
     pub fn is_unsigned(&self) -> bool {
         self.ty.is_unsigned()
+    }
+}
+
+pub enum ItemIter<'tcx> {
+    Port(Option<Port>),
+    Group(GroupIter<'tcx>),
+}
+
+impl<'tcx> Iterator for ItemIter<'tcx> {
+    type Item = TreeNode<Port, Item<'tcx>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Port(port) => port.take().map(TreeNode::Leaf),
+            Self::Group(group) => group.next().map(TreeNode::Node),
+        }
+    }
+}
+
+impl<'tcx> IntoIterator for Item<'tcx> {
+    type Item = TreeNode<Port, Item<'tcx>>;
+    type IntoIter = ItemIter<'tcx>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self.kind {
+            ItemKind::Port(port) => ItemIter::Port(Some(port)),
+            ItemKind::Group(group) => ItemIter::Group(group.to_iter()),
+        }
     }
 }
 
@@ -375,23 +277,32 @@ impl<'tcx, 'a> ExtractPort for &'a Item<'tcx> {
 
 pub type CombineOutputsIter<'m> = impl Iterator<Item = Port> + 'm;
 
-pub struct CombineOutputs<'m> {
-    module: &'m Module,
-    outputs: Peekable<CombineOutputsIter<'m>>,
+pub struct CombineOutputs<'m, O: CursorMut<Item = Port>> {
+    module: &'m mut Module,
+    outputs: Peekable<O>,
 }
 
-impl<'m> CombineOutputs<'m> {
-    pub fn new(module: &'m Module, node_id: NodeId) -> Self {
+impl<'m, O: CursorMut<Item = Port>> CombineOutputs<'m, O> {
+    pub fn from(module: &'m mut Module, outputs: O) -> Self {
         Self {
             module,
-            outputs: module.node_out_ports(node_id).peekable(),
+            outputs: outputs.peekable_(),
         }
     }
+}
 
+impl<'m> CombineOutputs<'m, CombineOutputsIter<'m>> {
+    pub fn from_node(module: &'m mut Module, node_id: NodeId) -> Self {
+        let outputs = module.node_out_ports(node_id).peekable_();
+        Self { module, outputs }
+    }
+}
+
+impl<'m, O: CursorMut<Item = Port, Storage = Module>> CombineOutputs<'m, O> {
     pub fn next_output<'tcx>(&mut self, item_ty: ItemTy<'tcx>) -> Item<'tcx> {
         match item_ty.kind() {
             ItemTyKind::Node(node_ty) => {
-                let output = self.outputs.next().unwrap();
+                let output = self.outputs.next_mut(self.module).unwrap();
                 assert_eq!(node_ty.width(), self.module[output].width());
                 Item::new(item_ty, ItemKind::Port(output))
             }
@@ -409,14 +320,15 @@ impl<'m> CombineOutputs<'m> {
                     )),
                 )
             }
-            ItemTyKind::Enum(_) => {
-                Item::new(item_ty, ItemKind::Port(self.outputs.next().unwrap()))
-            }
+            ItemTyKind::Enum(_) => Item::new(
+                item_ty,
+                ItemKind::Port(self.outputs.next_mut(self.module).unwrap()),
+            ),
         }
     }
 
     pub fn has_outputs(&mut self) -> bool {
-        self.outputs.peek().is_some()
+        self.outputs.peek(self.module).is_some()
     }
 }
 
@@ -431,7 +343,14 @@ fn struct_field_name(ident: impl AsRef<str>, name: impl AsRef<str>) -> String {
 pub trait ModuleExt<'tcx> {
     fn assign_names_to_item(&mut self, ident: &str, item: &Item, force: bool);
 
-    fn combine_outputs(&self, node_id: NodeId, item_ty: ItemTy<'tcx>) -> Item<'tcx>;
+    fn combine_from_node(&mut self, node_id: NodeId, item_ty: ItemTy<'tcx>)
+        -> Item<'tcx>;
+
+    fn combine<O: CursorMut<Item = Port, Storage = Module>>(
+        &mut self,
+        outputs: O,
+        item_ty: ItemTy<'tcx>,
+    ) -> Item<'tcx>;
 
     #[allow(clippy::wrong_self_convention)]
     fn to_bitvec(&mut self, item: &Item<'tcx>) -> Item<'tcx>;
@@ -475,7 +394,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                 let port = *port;
                 let sym = Some(Symbol::intern(ident));
 
-                if self[port].sym.is_none() || force {
+                if self[port].sym.is_none() || (force && !self.is_mod_input(port)) {
                     self[port].sym = sym;
                 }
             }
@@ -507,8 +426,23 @@ impl<'tcx> ModuleExt<'tcx> for Module {
         }
     }
 
-    fn combine_outputs(&self, node_id: NodeId, item_ty: ItemTy<'tcx>) -> Item<'tcx> {
-        let mut outputs = CombineOutputs::new(self, node_id);
+    fn combine_from_node(
+        &mut self,
+        node_id: NodeId,
+        item_ty: ItemTy<'tcx>,
+    ) -> Item<'tcx> {
+        let mut outputs = CombineOutputs::from_node(self, node_id);
+        let res = outputs.next_output(item_ty);
+        assert!(!outputs.has_outputs());
+        res
+    }
+
+    fn combine<O: CursorMut<Item = Port, Storage = Module>>(
+        &mut self,
+        outputs: O,
+        item_ty: ItemTy<'tcx>,
+    ) -> Item<'tcx> {
+        let mut outputs = CombineOutputs::from(self, outputs);
         let res = outputs.next_output(item_ty);
         assert!(!outputs.has_outputs());
         res
@@ -735,27 +669,22 @@ mod tests {
 
     #[test]
     fn item_node_iter() {
-        let old_node_id = NodeId::new(0);
-        let new_node_id = NodeId::new(1);
+        let node_id = NodeId::new(0);
 
         assert_eq!(
             Item::new(
                 ItemTy::new(&WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)))),
-                ItemKind::Port(Port::new(old_node_id, 0))
+                ItemKind::Port(Port::new(node_id, 0))
             )
-            .traverse(|port| {
-                *port = port.with(new_node_id);
-            })
             .iter()
             .collect::<Vec<_>>(),
-            &[Port::new(new_node_id, 0)]
+            &[Port::new(node_id, 0)]
         );
     }
 
     #[test]
     fn item_group_iter() {
-        let old_node_id = NodeId::new(0);
-        let new_node_id = NodeId::new(1);
+        let node_id = NodeId::new(0);
         let ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)));
         let ty = ItemTy::new(&ty);
 
@@ -763,38 +692,29 @@ mod tests {
             Item::new(
                 ty,
                 ItemKind::Group(Group::new([
-                    Item::new(ty, ItemKind::Port(Port::new(old_node_id, 3))),
+                    Item::new(ty, ItemKind::Port(Port::new(node_id, 3))),
                     Item::new(
                         ty,
                         ItemKind::Group(Group::new([
-                            Item::new(ty, ItemKind::Port(Port::new(old_node_id, 1))),
+                            Item::new(ty, ItemKind::Port(Port::new(node_id, 1))),
                             Item::new(
                                 ty,
                                 ItemKind::Group(Group::new([
-                                    Item::new(
-                                        ty,
-                                        ItemKind::Port(Port::new(old_node_id, 2))
-                                    ),
-                                    Item::new(
-                                        ty,
-                                        ItemKind::Port(Port::new(old_node_id, 0))
-                                    )
+                                    Item::new(ty, ItemKind::Port(Port::new(node_id, 2))),
+                                    Item::new(ty, ItemKind::Port(Port::new(node_id, 0)))
                                 ]))
                             )
                         ]))
                     )
                 ]))
             )
-            .traverse(|port| {
-                *port = port.with(new_node_id);
-            })
             .iter()
             .collect::<Vec<_>>(),
             &[
-                Port::new(new_node_id, 3),
-                Port::new(new_node_id, 1),
-                Port::new(new_node_id, 2),
-                Port::new(new_node_id, 0)
+                Port::new(node_id, 3),
+                Port::new(node_id, 1),
+                Port::new(node_id, 2),
+                Port::new(node_id, 0)
             ]
         );
     }
@@ -806,9 +726,6 @@ mod tests {
                 ItemTy::new(&WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)))),
                 ItemKind::Group(Group::new([]))
             )
-            .traverse(|port| {
-                *port = port.with(NodeId::new(1));
-            })
             .iter()
             .collect::<Vec<_>>(),
             &[]

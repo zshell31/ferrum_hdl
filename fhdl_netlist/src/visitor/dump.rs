@@ -31,7 +31,7 @@ impl Dump {
         let tab: &'static str = "        ";
 
         let mut nodes = module.nodes();
-        while let Some(node_id) = nodes.next(*module) {
+        while let Some(node_id) = nodes.next_(*module) {
             let node = module.node(node_id);
 
             if self.skip && node.skip {

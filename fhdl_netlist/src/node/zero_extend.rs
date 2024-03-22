@@ -58,6 +58,6 @@ impl IsNode for Extend {
 impl WithId<NodeId, &'_ Extend> {
     pub fn input(&self, module: &Module) -> Port {
         let mut incoming = module.incoming(self.id);
-        incoming.next(module).unwrap()
+        incoming.next_(module).unwrap()
     }
 }

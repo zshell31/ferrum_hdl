@@ -23,7 +23,10 @@ use rustc_type_ir::{
     UintTy,
 };
 
-use super::Compiler;
+use super::{
+    utils::{TreeIter, TreeNode},
+    Compiler,
+};
 use crate::error::{Error, SpanError, SpanErrorKind};
 
 pub fn ty_def_id(ty: Ty<'_>) -> Option<DefId> {
@@ -78,6 +81,8 @@ impl<'tcx> Display for ArrayTy<'tcx> {
     }
 }
 
+pub type ArrayTyIter<'tcx> = impl Iterator<Item = ItemTy<'tcx>>;
+
 impl<'tcx> ArrayTy<'tcx> {
     fn new(ty: ItemTy<'tcx>, count: u128) -> Self {
         Self { ty, count }
@@ -93,7 +98,7 @@ impl<'tcx> ArrayTy<'tcx> {
         self.count
     }
 
-    pub fn tys(&self) -> impl Iterator<Item = ItemTy<'tcx>> {
+    pub fn tys(&self) -> ArrayTyIter<'tcx> {
         iter::repeat(self.ty).take(self.count as usize)
     }
 
@@ -122,6 +127,8 @@ impl<'tcx> Display for StructTy<'tcx> {
     }
 }
 
+pub type StructTyIter<'tcx> = impl Iterator<Item = ItemTy<'tcx>>;
+
 impl<'tcx> StructTy<'tcx> {
     fn new(tys: &'tcx [Named<ItemTy<'tcx>>]) -> Self {
         Self { tys }
@@ -136,7 +143,7 @@ impl<'tcx> StructTy<'tcx> {
         self.tys.iter().map(|ty| ty.name.as_str())
     }
 
-    pub fn tys(&self) -> impl Iterator<Item = ItemTy<'tcx>> {
+    pub fn tys(&self) -> StructTyIter<'tcx> {
         self.tys.iter().map(|ty| ty.inner)
     }
 
@@ -450,6 +457,10 @@ impl<'tcx> ItemTy<'tcx> {
         }
     }
 
+    pub fn iter(&self) -> TreeIter<ItemTyIter<'tcx>> {
+        TreeIter::new(*self)
+    }
+
     #[inline]
     pub fn node_ty(&self) -> NodeTy {
         self.0.node_ty()
@@ -496,6 +507,42 @@ impl<'tcx> ItemTy<'tcx> {
         }
     }
 }
+
+pub enum ItemTyIter<'tcx> {
+    Node(Option<NodeTy>),
+    Array(ArrayTyIter<'tcx>),
+    Struct(StructTyIter<'tcx>),
+}
+
+impl<'tcx> Iterator for ItemTyIter<'tcx> {
+    type Item = TreeNode<NodeTy, ItemTy<'tcx>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Node(node_ty) => node_ty.take().map(TreeNode::Leaf),
+            Self::Array(array_ty) => array_ty.next().map(TreeNode::Node),
+            Self::Struct(struct_ty) => struct_ty.next().map(TreeNode::Node),
+        }
+    }
+}
+
+impl<'tcx> IntoIterator for ItemTy<'tcx> {
+    type Item = TreeNode<NodeTy, ItemTy<'tcx>>;
+    type IntoIter = ItemTyIter<'tcx>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        match self.kind() {
+            ItemTyKind::Node(node_ty) => ItemTyIter::Node(Some(*node_ty)),
+            ItemTyKind::Array(array_ty) => ItemTyIter::Array(array_ty.tys()),
+            ItemTyKind::Struct(struct_ty) => ItemTyIter::Struct(struct_ty.tys()),
+            ItemTyKind::Closure(closure_ty) => ItemTyIter::Struct(closure_ty.ty.tys()),
+            ItemTyKind::Enum(enum_ty) => {
+                ItemTyIter::Node(Some(NodeTy::BitVec(enum_ty.width())))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Generic<'tcx> {
     Ty(ItemTy<'tcx>),

@@ -45,7 +45,7 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
 
                 let rec = ctx.module.to_bitvec(rec).port();
                 make_mux(&mut ctx.module, idx, count, output_ty, |module, case| {
-                    slice(module, rec, case, node_ty)
+                    iter::once(slice(module, rec, case, node_ty))
                 })
             }
             ItemTyKind::Array(array_ty) => {
@@ -60,19 +60,17 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
                     (array_ty.count() + 1 - slice_len, slice_len)
                 };
 
-                make_mux(&mut ctx.module, idx, count, output_ty, |module, case| {
-                    module
-                        .to_bitvec(
-                            &(if self.only_one {
-                                group.by_idx(case as usize)
-                            } else {
-                                Item::new(
-                                    output_ty,
-                                    group.slice(case as usize, slice_len as usize),
-                                )
-                            }),
+                make_mux(&mut ctx.module, idx, count, output_ty, |_, case| {
+                    let item = if self.only_one {
+                        group.by_idx(case as usize)
+                    } else {
+                        Item::new(
+                            output_ty,
+                            group.slice(case as usize, slice_len as usize),
                         )
-                        .port()
+                    };
+
+                    item.iter()
                 })
             }
             _ => {
@@ -103,18 +101,21 @@ fn slice(module: &mut Module, value: Port, idx: u128, node_ty: NodeTy) -> Port {
     })
 }
 
-fn make_mux<'tcx>(
+fn make_mux<'tcx, I>(
     module: &mut Module,
     idx: &Item<'tcx>,
     count: u128,
     output_ty: ItemTy<'tcx>,
-    mk_variant: impl Fn(&mut Module, u128) -> Port,
-) -> Item<'tcx> {
+    mk_variant: impl Fn(&mut Module, u128) -> I,
+) -> Item<'tcx>
+where
+    I: Iterator<Item = Port>,
+{
     let sel = module.to_bitvec(idx).port();
     let sel_width = idx.width();
 
-    let mux = MuxArgs {
-        ty: output_ty.to_bitvec(),
+    let mux = MuxArgs::<_, _> {
+        outputs: output_ty.iter().map(|ty| (ty, None)),
         sel,
         variants: IterMut::new(0 .. count, |module, case| {
             let variant = mk_variant(module, case);
@@ -122,9 +123,10 @@ fn make_mux<'tcx>(
             (ConstVal::new(case, sel_width), variant)
         }),
         default: None,
-        sym: SymIdent::Mux.into(),
     };
-    let mux = module.add_and_get_port::<_, Mux>(mux);
+    let mux = module.add::<_, Mux>(mux);
+    let mux = module.combine_from_node(mux, output_ty);
+    module.assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 
-    module.from_bitvec(mux, output_ty)
+    mux
 }

@@ -214,7 +214,7 @@ impl<'n, W: Write> Verilog<'n, W> {
         b.push_tab();
 
         let mut nodes = module.nodes();
-        while let Some(node_id) = nodes.next(module) {
+        while let Some(node_id) = nodes.next_(module) {
             let node = &module[node_id];
             if node.skip {
                 continue;
@@ -334,8 +334,9 @@ impl<'n, W: Write> Verilog<'n, W> {
                     let output = output.sym.unwrap();
 
                     b.write_tab()?;
-                    b.write_fmt(format_args!("assign {output} = {value};\n\n"))?;
+                    b.write_fmt(format_args!("assign {output} = {value};\n"))?;
                 }
+                b.write_str("\n")?;
             }
             NodeKind::Splitter(splitter) => {
                 let splitter = node.with(splitter);
@@ -419,9 +420,10 @@ impl<'n, W: Write> Verilog<'n, W> {
             }
             NodeKind::Mux(mux) => {
                 let mux = node.with(mux);
-                let MuxInputs { sel, cases } = mux.inputs(module);
+                let MuxInputs { sel, mut cases } = mux.inputs(module);
 
-                let output = mux.output[0].sym.unwrap();
+                let outputs = &mux.outputs;
+                let single_assign = outputs.len() == 1;
                 let sel_sym = module[sel].sym.unwrap();
 
                 b.write_tab()?;
@@ -434,22 +436,38 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                 b.push_tab();
 
-                for (case, input) in cases {
+                while let Some((case, inputs)) = cases.next() {
                     match case {
                         Case::Val(case) => {
-                            let input = module[input].sym.unwrap();
-
                             b.write_tab()?;
-                            b.write_fmt(format_args!("{case} : {output} = {input};\n",))?;
+                            b.write_fmt(format_args!("{case}: "))?;
                         }
                         Case::Default => {
-                            let default = module[input].sym.unwrap();
-
                             b.write_tab()?;
-                            b.write_fmt(format_args!(
-                                "default: {output} = {default};\n"
-                            ))?;
+                            b.write_str("default: ")?;
                         }
+                    }
+
+                    if !single_assign {
+                        b.write_str("begin\n")?;
+                        b.push_tab();
+                    }
+
+                    let mut inputs = inputs.enumerate_();
+                    while let Some((idx, input)) = inputs.next_(module) {
+                        let output = outputs[idx].sym.unwrap();
+                        let input = module[input].sym.unwrap();
+
+                        if !single_assign {
+                            b.write_tab()?;
+                        }
+                        b.write_fmt(format_args!("{output} = {input};\n"))?;
+                    }
+
+                    if !single_assign {
+                        b.pop_tab();
+                        b.write_tab()?;
+                        b.write_str("end\n")?;
                     }
                 }
 

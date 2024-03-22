@@ -166,19 +166,19 @@ impl WithId<NodeId, &'_ DFF> {
         let mut incoming = module.incoming(self.id);
 
         DFFInputs {
-            clk: incoming.next(module).unwrap(),
+            clk: incoming.next_(module).unwrap(),
             rst: if self.has_rst {
-                Some(incoming.next(module).unwrap())
+                Some(incoming.next_(module).unwrap())
             } else {
                 None
             },
             en: if self.has_en {
-                Some(incoming.next(module).unwrap())
+                Some(incoming.next_(module).unwrap())
             } else {
                 None
             },
-            init: incoming.next(module).unwrap(),
-            data: incoming.next(module).unwrap(),
+            init: incoming.next_(module).unwrap(),
+            data: incoming.next_(module).unwrap(),
         }
     }
 }

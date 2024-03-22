@@ -35,7 +35,7 @@ impl SetNames {
         self.set_module_name(*module);
 
         let mut nodes = module.nodes();
-        while let Some(node_id) = nodes.next(*module) {
+        while let Some(node_id) = nodes.next_(*module) {
             let node = &mut module[node_id];
 
             if !node.skip {

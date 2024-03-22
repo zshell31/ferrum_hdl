@@ -34,7 +34,7 @@ fn eval_start(rev: bool, width: u128) -> u128 {
 
 impl<O> MakeNode<SplitterArgs<O>> for Splitter
 where
-    O: CursorMut<Item = (NodeTy, Option<Symbol>)>,
+    O: CursorMut<Item = (NodeTy, Option<Symbol>), Storage = Module>,
 {
     fn make(module: &mut Module, mut args: SplitterArgs<O>) -> NodeId {
         let mut outputs = SmallVec::with_capacity(args.outputs.size());
@@ -42,7 +42,7 @@ where
         let width = module[args.input].width();
         let mut start = args.start.unwrap_or_else(|| eval_start(args.rev, width));
 
-        while let Some((ty, sym)) = args.outputs.next(module) {
+        while let Some((ty, sym)) = args.outputs.next_mut(module) {
             let ty_width = ty.width();
             if !args.rev {
                 assert!(
@@ -93,7 +93,7 @@ pub type Indices<'n> = impl Iterator<Item = (u128, &'n NodeOutput)> + 'n;
 impl WithId<NodeId, &'_ Splitter> {
     pub fn input(&self, module: &Module) -> Port {
         let mut incoming = module.incoming(self.id);
-        Cursor::next(&mut incoming, module).unwrap()
+        Cursor::next_(&mut incoming, module).unwrap()
     }
 
     pub fn eval_indices<'n>(&'n self, module: &Module) -> Indices<'n> {

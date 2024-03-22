@@ -24,7 +24,7 @@ pub struct MergerArgs<I> {
 
 impl<I> MakeNode<MergerArgs<I>> for Merger
 where
-    I: CursorMut<Item = Port>,
+    I: CursorMut<Item = Port, Storage = Module>,
 {
     fn make(module: &mut Module, mut args: MergerArgs<I>) -> NodeId {
         let node_id = module.add_node(Merger {
@@ -35,7 +35,7 @@ where
 
         let mut inputs = 0;
         let mut width_in = 0;
-        while let Some(input) = args.inputs.next(module) {
+        while let Some(input) = args.inputs.next_mut(module) {
             module.add_edge(input, Port::new(node_id, inputs));
 
             width_in += module[input].width();

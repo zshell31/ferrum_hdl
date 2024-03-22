@@ -1,7 +1,7 @@
 use std::{convert::identity, fmt::Debug, iter, ops::Deref};
 
 use fhdl_netlist::{
-    netlist::{Module, ModuleId},
+    netlist::{IterMut, Module, ModuleId},
     node::{Pass, PassArgs},
     symbol::Symbol,
 };
@@ -259,31 +259,42 @@ impl<'tcx> Compiler<'tcx> {
 
     pub fn visit_fn_output(&self, ctx: &mut Context<'tcx>) {
         let module = &mut ctx.module;
-        let output = ctx.locals.get_mut(RETURN_PLACE);
+        let output = ctx.locals.get(RETURN_PLACE);
 
-        output.traverse(|port| {
+        let should_add_pass = output.iter().any(|port| {
             let node = module.node(port.node);
-
-            // Add pass if node is input or already added as output
-            let port = if node.is_input() || module.is_mod_output(*port) {
-                let sym = node.only_one_out().sym;
-
-                let new_port = module.add_and_get_port::<_, Pass>(PassArgs {
-                    input: *port,
-                    sym,
-                    ty: None,
-                });
-                *port = new_port;
-
-                new_port
-            } else {
-                *port
-            };
-
-            module.add_mod_output(port);
+            node.is_input() || module.is_mod_output(port)
         });
 
-        module.assign_names_to_item("out", output, false)
+        let output = if !should_add_pass {
+            for port in output.iter() {
+                module.add_mod_output(port);
+            }
+            output
+        } else {
+            let output = module.combine(
+                IterMut::new(output.iter(), |module, port| {
+                    let node = module.node(port.node);
+                    let port = if node.is_input() || module.is_mod_output(port) {
+                        let sym = module[port].sym;
+                        module.add_and_get_port::<_, Pass>(PassArgs {
+                            input: port,
+                            sym,
+                            ty: None,
+                        })
+                    } else {
+                        port
+                    };
+                    module.add_mod_output(port);
+                    port
+                }),
+                output.ty,
+            );
+            ctx.locals.place(RETURN_PLACE, output.clone());
+            output
+        };
+
+        ctx.module.assign_names_to_item("out", &output, false);
     }
 
     pub fn visit_blocks(
@@ -721,7 +732,7 @@ impl<'tcx> Compiler<'tcx> {
 
                             return Ok(ctx
                                 .module
-                                .combine_outputs(mod_inst_id, output_ty));
+                                .combine_from_node(mod_inst_id, output_ty));
                         }
 
                         if let Some(item) =
@@ -767,10 +778,6 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<Item<'tcx>, Error> {
         let mut item = ctx.locals.get(place.local).clone();
 
-        if item.is_unsigned() {
-            return Ok(item);
-        }
-
         for place_elem in place.projection {
             item = match place_elem {
                 PlaceElem::ConstantIndex {
@@ -786,6 +793,9 @@ impl<'tcx> Compiler<'tcx> {
                 PlaceElem::Subtype(_) => item,
                 PlaceElem::Field(idx, _) => item.by_field(idx),
                 PlaceElem::Downcast(_, variant_idx) => {
+                    if item.is_unsigned() {
+                        return Ok(item);
+                    }
                     let enum_ty = item.ty.enum_ty();
                     let variant = ctx.module.to_bitvec(&item);
 
@@ -843,7 +853,7 @@ impl<'tcx> Compiler<'tcx> {
             let span = self.span_to_string(span, ctx.fn_did);
             ctx.module.add_span(mod_inst_id, span);
 
-            Ok(ctx.module.combine_outputs(mod_inst_id, output_ty))
+            Ok(ctx.module.combine_from_node(mod_inst_id, output_ty))
         } else {
             let blackbox = self
                 .find_blackbox(instance_did, span)
@@ -939,7 +949,7 @@ impl<'tcx> Compiler<'tcx> {
         let output_ty = self.fn_output(fn_did, fn_generics);
         let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
-        let mut outputs = CombineOutputs::new(&ctx.module, mod_inst_id);
+        let mut outputs = CombineOutputs::from_node(&mut ctx.module, mod_inst_id);
 
         Ok(outputs.next_output(output_ty))
     }

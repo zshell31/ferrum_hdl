@@ -442,7 +442,6 @@ macro_rules! impl_ops_for_prim {
     (impl $trait:ident ($method:ident) for $($prim:ty),*) => {
         $(
             paste! {
-
                 impl<const N: usize> $trait<$prim> for U<N> {
                     type Output = U<N>;
 

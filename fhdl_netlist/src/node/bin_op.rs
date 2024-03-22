@@ -156,8 +156,8 @@ impl WithId<NodeId, &'_ BinOpNode> {
         let mut incoming = module.incoming(self.id);
 
         BinOpInputs {
-            lhs: incoming.next(module).unwrap(),
-            rhs: incoming.next(module).unwrap(),
+            lhs: incoming.next_(module).unwrap(),
+            rhs: incoming.next_(module).unwrap(),
         }
     }
 }

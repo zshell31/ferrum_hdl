@@ -6,7 +6,6 @@ use std::{
 
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::IterMut,
     node::{Mux, MuxArgs, Splitter, SplitterArgs},
 };
 use petgraph::{
@@ -571,33 +570,29 @@ impl<'tcx> Compiler<'tcx> {
 
             let default = switch.otherwise().map(|otherwise| {
                 let item = Item::new(output_ty, Group::new(otherwise.values().cloned()));
-
-                ctx.module.to_bitvec(&item).port()
+                item.iter()
             });
 
-            let variants = IterMut::new(switch.branches(), |module, variant| {
+            let variants = switch.branches().map(|variant| {
                 let case = ConstVal::new(variant.discr, discr_width);
-
                 let item =
                     Item::new(output_ty, Group::new(variant.locals.values().cloned()));
-                let input = module.to_bitvec(&item).port();
-
-                (case, input)
+                (case, item.iter())
             });
 
             let mux = MuxArgs {
-                ty: output_ty.to_bitvec(),
+                outputs: output_ty.iter().map(|ty| (ty, None)),
                 sel: discr,
                 variants,
                 default,
-                sym: SymIdent::Mux.into(),
             };
-            let mux = ctx.module.add_and_get_port::<_, Mux>(mux);
-
+            let mux = ctx.module.add::<_, Mux>(mux);
             let node_span = self.span_to_string(span, ctx.fn_did);
-            ctx.module.add_span(mux.node, node_span);
+            ctx.module.add_span(mux, node_span);
 
-            let mux = ctx.module.from_bitvec(mux, output_ty);
+            let mux = ctx.module.combine_from_node(mux, output_ty);
+            ctx.module
+                .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 
             for (local, item) in switch.locals.sorted().zip(&*mux.group().items()) {
                 self.assign_local(local, item, ctx)?;

@@ -82,8 +82,8 @@ impl Cursor for Incoming {
     type Storage = Module;
 
     #[inline]
-    fn next(&mut self, module: &Module) -> Option<Self::Item> {
-        let edge_id = self.0.next(&module.graph)?;
+    fn next_(&mut self, module: &Module) -> Option<Self::Item> {
+        let edge_id = self.0.next_(&module.graph)?;
         Some(module.graph[edge_id].port_out)
     }
 }
@@ -97,8 +97,8 @@ impl Cursor for Outgoing {
     type Storage = Module;
 
     #[inline]
-    fn next(&mut self, module: &Module) -> Option<Self::Item> {
-        let edge_id = self.0.next(&module.graph)?;
+    fn next_(&mut self, module: &Module) -> Option<Self::Item> {
+        let edge_id = self.0.next_(&module.graph)?;
         Some(module.graph[edge_id].port_in.node)
     }
 }
@@ -119,8 +119,8 @@ impl Cursor for NodeCursor {
     type Storage = Module;
 
     #[inline]
-    fn next(&mut self, module: &Module) -> Option<Self::Item> {
-        self.0.next(&module.graph)
+    fn next_(&mut self, module: &Module) -> Option<Self::Item> {
+        self.0.next_(&module.graph)
     }
 }
 
@@ -455,10 +455,14 @@ impl Module {
         node.out_ports()
     }
 
-    pub fn reconnect_all_outgoing(&mut self, node_id: NodeId, new_port: Port) {
-        let node = &self[node_id];
-        if node.out_count() == 1 {
-            let old_port = Port::new(node_id, 0);
+    pub fn reconnect_all_outgoing(
+        &mut self,
+        node_id: NodeId,
+        new_ports: impl Cursor<Item = Port, Storage = Module>,
+    ) {
+        let mut new_ports = new_ports.enumerate_();
+        while let Some((idx, new_port)) = new_ports.next_(self) {
+            let old_port = Port::new(node_id, idx as u32);
             self.reconnect_all_outgoing_(old_port, new_port);
         }
     }
@@ -496,7 +500,7 @@ impl Module {
         assert_eq!(from.in_count(), to.out_count());
 
         let mut incoming = self.graph.incoming(from_id);
-        while let Some(edge_id) = incoming.next(&self.graph) {
+        while let Some(edge_id) = incoming.next_(&self.graph) {
             let edge = &self.graph[edge_id];
             let new_port = edge.port_out;
             let old_port = Port {

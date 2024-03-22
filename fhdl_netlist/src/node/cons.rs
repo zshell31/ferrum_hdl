@@ -82,12 +82,15 @@ impl MultiConst {
 }
 
 impl MultiConst {
-    fn new<O: CursorMut<Item = ConstArgs>>(module: &mut Module, mut args: O) -> Self {
+    fn new<O: CursorMut<Item = ConstArgs, Storage = Module>>(
+        module: &mut Module,
+        mut args: O,
+    ) -> Self {
         let size = args.size();
         let mut values = SmallVec::with_capacity(size);
         let mut outputs = SmallVec::with_capacity(size);
 
-        while let Some(arg) = args.next(module) {
+        while let Some(arg) = args.next_mut(module) {
             values.push(arg.value);
             outputs.push(NodeOutput::wire(arg.ty, arg.sym));
         }
@@ -102,7 +105,7 @@ impl MultiConst {
 
 impl<O> MakeNode<O> for MultiConst
 where
-    O: CursorMut<Item = ConstArgs>,
+    O: CursorMut<Item = ConstArgs, Storage = Module>,
 {
     fn make(module: &mut Module, args: O) -> NodeId {
         let node = MultiConst::new(module, args);

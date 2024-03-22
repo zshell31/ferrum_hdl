@@ -355,6 +355,7 @@ dependencies = [
  "ferrum_hdl",
  "fhdl_const_func",
  "indexmap",
+ "itertools",
  "lasso",
  "once_cell",
  "pretty_assertions",

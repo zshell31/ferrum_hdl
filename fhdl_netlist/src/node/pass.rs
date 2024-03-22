@@ -77,6 +77,6 @@ impl IsNode for Pass {
 impl WithId<NodeId, &'_ Pass> {
     pub fn input(&self, module: &Module) -> Port {
         let mut incoming = module.incoming(self.id);
-        incoming.next(module).unwrap()
+        incoming.next_(module).unwrap()
     }
 }

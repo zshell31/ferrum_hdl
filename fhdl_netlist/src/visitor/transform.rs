@@ -1,9 +1,11 @@
+use std::iter;
+
 use smallvec::SmallVec;
 
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    netlist::{Cursor, Module, ModuleId, NetList, NodeId, Port},
+    netlist::{Chunks, Cursor, Module, ModuleId, NetList, NodeId, Port},
     node::{
         BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
         MuxInputs, NodeKind, TyOrData, DFF,
@@ -31,7 +33,7 @@ impl Transform {
 
         let mut nodes = module.nodes();
 
-        while let Some(node_id) = nodes.next(&module) {
+        while let Some(node_id) = nodes.next_(&module) {
             if let Some(mod_inst) = module[node_id].mod_inst() {
                 let mod_id = mod_inst.mod_id;
 
@@ -70,7 +72,7 @@ impl Transform {
                     }
                     None => {
                         if !(module.is_mod_output(Port::new(node_id, 0))
-                            && module.is_mod_input(pass.input(module)))
+                            || module.is_mod_input(pass.input(module)))
                         {
                             let pass = node.with(pass);
                             let input_ty = module[pass.input(module)].ty;
@@ -280,33 +282,37 @@ impl Transform {
             }
 
             NodeKind::Mux(mux) => {
+                let cases_len = mux.cases.len();
                 let mux = node.with(mux);
-                let MuxInputs { sel, cases } = mux.inputs(module);
 
-                if let Some(new_port) = module.to_const(sel).and_then(|sel| {
-                    for (case, input) in cases {
-                        match case {
-                            Case::Val(case) => {
-                                if case == sel {
-                                    return Some(input);
+                let MuxInputs { sel, mut cases } = mux.inputs(module);
+
+                let mut chunks = if cases_len == 1 {
+                    Some(cases.into_chunks())
+                } else {
+                    module.to_const(sel).and_then(|sel| {
+                        while let Some(case) = cases.next_case(module) {
+                            match case {
+                                Case::Val(case) => {
+                                    if case == sel {
+                                        return Some(cases.into_chunks());
+                                    }
+                                }
+                                Case::Default => {
+                                    return Some(cases.into_chunks());
                                 }
                             }
-                            Case::Default => {
-                                return Some(input);
-                            }
                         }
-                    }
 
-                    None
-                }) {
-                    module.reconnect_all_outgoing(node_id, new_port);
-                } else if mux.cases.len() == 1 {
-                    let MuxInputs { mut cases, .. } = mux.inputs(module);
-                    let case = Iterator::next(&mut cases).unwrap();
-                    drop(cases);
+                        None
+                    })
+                };
 
-                    let new_port = case.1;
-                    module.reconnect_all_outgoing(node_id, new_port);
+                if let Some(chunk) = chunks
+                    .as_mut()
+                    .and_then(|chunks: &mut Chunks<_>| chunks.next_chunk())
+                {
+                    module.reconnect_all_outgoing(node_id, chunk);
                 }
             }
 
@@ -358,7 +364,7 @@ impl Transform {
                         sym,
                     });
                 } else if true_rst || false_en {
-                    module.reconnect_all_outgoing(node_id, init);
+                    module.reconnect_all_outgoing(node_id, iter::once(init));
                 }
             }
             _ => {}

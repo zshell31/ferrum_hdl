@@ -23,15 +23,15 @@ pub struct ModInstArgs<'m, I, O> {
 
 impl<'m, I, O> MakeNode<ModInstArgs<'m, I, O>> for ModInst
 where
-    I: CursorMut<Item = Port>,
-    O: CursorMut<Item = Option<Symbol>>,
+    I: CursorMut<Item = Port, Storage = Module>,
+    O: CursorMut<Item = Option<Symbol>, Storage = Module>,
 {
     fn make(module: &mut Module, mut args: ModInstArgs<I, O>) -> NodeId {
         let mod_inputs = args.module.mod_inputs();
         let mod_outputs = args.module.mod_outputs();
 
         let mut outputs = SmallVec::with_capacity(args.outputs.size());
-        while let Some(sym) = args.outputs.next(module) {
+        while let Some(sym) = args.outputs.next_mut(module) {
             let mod_output = args.module[mod_outputs[outputs.len()]];
 
             let ty = mod_output.ty;
@@ -49,7 +49,7 @@ where
         });
 
         let mut inputs = 0;
-        while let Some(input) = args.inputs.next(module) {
+        while let Some(input) = args.inputs.next_mut(module) {
             let ty = module[input].ty;
             let mod_in = args.module[mod_inputs[inputs as usize]];
             // TODO: how to handle signed types

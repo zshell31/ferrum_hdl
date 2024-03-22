@@ -63,6 +63,6 @@ impl IsNode for BitNot {
 impl WithId<NodeId, &'_ BitNot> {
     pub fn input(&self, module: &Module) -> Port {
         let mut incoming = module.incoming(self.id);
-        incoming.next(module).unwrap()
+        incoming.next_(module).unwrap()
     }
 }

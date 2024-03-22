@@ -65,7 +65,7 @@ impl<S: ListStorage<D>, D> Cursor for ListCursor<S, D> {
     type Item = S::Idx;
     type Storage = S;
 
-    fn next(&mut self, storage: &Self::Storage) -> Option<Self::Item> {
+    fn next_(&mut self, storage: &Self::Storage) -> Option<Self::Item> {
         if !self.next.is_empty() {
             let res = self.next;
             self.next = storage[self.next].next();

@@ -107,8 +107,8 @@ impl Cursor for IncomingEdges {
     type Storage = Graph;
 
     #[inline]
-    fn next(&mut self, graph: &Graph) -> Option<Self::Item> {
-        self.0.next(&graph.edges)
+    fn next_(&mut self, graph: &Graph) -> Option<Self::Item> {
+        self.0.next_(&graph.edges)
     }
 }
 
@@ -123,9 +123,9 @@ impl Cursor for OutgoingEdges {
     type Storage = Graph;
 
     #[inline]
-    fn next(&mut self, graph: &Graph) -> Option<Self::Item> {
+    fn next_(&mut self, graph: &Graph) -> Option<Self::Item> {
         loop {
-            let edge_id = self.edges.next(&graph.edges)?;
+            let edge_id = self.edges.next_(&graph.edges)?;
             let edge = &graph.edges[edge_id];
 
             if edge.port_out.port == self.out {
@@ -206,7 +206,7 @@ impl Graph {
         let node = &self.nodes[node_id];
 
         let mut incoming = node.incoming.cursor();
-        while let Some(edge_id) = incoming.next(&self.edges) {
+        while let Some(edge_id) = incoming.next_(&self.edges) {
             self.remove_edge(edge_id);
         }
     }
@@ -215,7 +215,7 @@ impl Graph {
         let node = &self.nodes[node_id];
 
         let mut outgoing = node.outgoing.cursor();
-        while let Some(edge_id) = outgoing.next(&self.edges) {
+        while let Some(edge_id) = outgoing.next_(&self.edges) {
             self.remove_edge(edge_id);
         }
     }
@@ -228,7 +228,7 @@ impl Graph {
     pub fn reconnect_all_outgoing(&mut self, old_port: Port, new_port: Port) {
         let mut outgoing = self.outgoing(old_port);
 
-        while let Some(old_edge_id) = outgoing.next(self) {
+        while let Some(old_edge_id) = outgoing.next_(self) {
             let old_edge = &self.edges[old_edge_id];
             let port_out = old_edge.port_out;
             let port_in = old_edge.port_in;

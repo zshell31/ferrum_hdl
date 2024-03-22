@@ -7,7 +7,7 @@ mod module;
 
 use std::{cell::RefCell, ops::Index};
 
-pub use cursor::{Cursor, CursorMut, IterMut};
+pub use cursor::*;
 pub(crate) use graph::{Edges, Graph, IncomingDir, OutgoingDir};
 pub use ident::*;
 use index_storage::IndexStorage;

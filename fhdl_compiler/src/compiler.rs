@@ -10,6 +10,7 @@ mod pins;
 pub mod switch;
 mod sym_ident;
 mod trie;
+mod utils;
 
 use std::{
     env,

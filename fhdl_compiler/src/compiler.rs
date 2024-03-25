@@ -40,7 +40,6 @@ use rustc_hir::{
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::{
     dep_graph::DepContext,
-    mir::Operand,
     ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
@@ -421,12 +420,5 @@ impl<'tcx> Compiler<'tcx> {
         } else {
             None
         }
-    }
-
-    pub fn has_projections(&self, operand: &Operand) -> bool {
-        operand
-            .place()
-            .filter(|place| !place.projection.is_empty())
-            .is_some()
     }
 }

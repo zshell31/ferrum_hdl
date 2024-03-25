@@ -779,6 +779,9 @@ impl<'tcx> Compiler<'tcx> {
         let mut item = ctx.locals.get(place.local).clone();
 
         for place_elem in place.projection {
+            if item.is_unsigned() {
+                return Ok(item);
+            }
             item = match place_elem {
                 PlaceElem::ConstantIndex {
                     offset, from_end, ..
@@ -793,9 +796,6 @@ impl<'tcx> Compiler<'tcx> {
                 PlaceElem::Subtype(_) => item,
                 PlaceElem::Field(idx, _) => item.by_field(idx),
                 PlaceElem::Downcast(_, variant_idx) => {
-                    if item.is_unsigned() {
-                        return Ok(item);
-                    }
                     let enum_ty = item.ty.enum_ty();
                     let variant = ctx.module.to_bitvec(&item);
 

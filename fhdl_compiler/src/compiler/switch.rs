@@ -18,7 +18,6 @@ use rustc_data_structures::{
     fx::{FxHashMap, FxHashSet},
     graph::WithSuccessors,
 };
-use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         BasicBlock, BasicBlocks, Local, Operand, SwitchTargets, TerminatorKind,
@@ -192,41 +191,6 @@ impl SwitchBlocks {
             .map(BasicBlockWrap::from)
             .map(|wrap| wrap.0)
     }
-
-    fn switch_meta(
-        &mut self,
-        switch_block: BasicBlock,
-        basic_blocks: &BasicBlocks<'_>,
-        targets: &SwitchTargets,
-        outer: &SwitchLocals,
-    ) -> Option<&SwitchMeta> {
-        #[allow(clippy::map_entry)]
-        if !self.switch_meta.contains_key(&switch_block) {
-            let convergent_block = match self.immediate_post_dominator(switch_block) {
-                Some(convergent_block) => convergent_block,
-                None => {
-                    error!("Cannot find convergent block for switchInt targets");
-                    return None;
-                }
-            };
-
-            debug_span!("switch_meta", switch_block = ?switch_block).in_scope(|| {
-                let meta = SwitchMeta::make(
-                    self,
-                    basic_blocks,
-                    targets,
-                    convergent_block,
-                    outer,
-                );
-
-                debug!("{meta:#?}");
-
-                self.switch_meta.insert(switch_block, meta);
-            });
-        }
-
-        self.switch_meta.get(&switch_block)
-    }
 }
 
 #[derive(Debug, Default)]
@@ -270,6 +234,7 @@ impl SwitchLocals {
                 .copied()
                 .filter(|local| outer.has(*local)),
         );
+        self.has_assign |= locals.has_assign;
     }
 
     pub fn ignore(&self) -> bool {
@@ -312,96 +277,7 @@ pub(super) struct SwitchMeta {
     convergent_block: BasicBlock,
 }
 
-impl SwitchMeta {
-    pub fn make(
-        switch_blocks: &mut SwitchBlocks,
-        basic_blocks: &BasicBlocks<'_>,
-        targets: &SwitchTargets,
-        convergent_block: BasicBlock,
-        outer: &SwitchLocals,
-    ) -> Self {
-        let targets = targets.all_targets();
-
-        let mut search_along_branch = |start: BasicBlock| -> SwitchLocals {
-            let mut locals = SwitchLocals::default();
-            let mut to_visit = VecDeque::default();
-
-            to_visit.push_back(start);
-            while let Some(block) = to_visit.pop_front() {
-                if block == convergent_block {
-                    break;
-                }
-
-                let block_data = &basic_blocks[block];
-                for stmt in &block_data.statements {
-                    if let Some((place, _)) = stmt.kind.as_assign() {
-                        locals.add(place.local, outer);
-                    }
-                }
-
-                let mut is_switch_block = false;
-                match &block_data.terminator().kind {
-                    TerminatorKind::Call { destination, .. } => {
-                        locals.add(destination.local, outer);
-                    }
-                    TerminatorKind::SwitchInt { targets, .. } => {
-                        if let Some(switch_meta) = switch_blocks.switch_meta(
-                            block,
-                            basic_blocks,
-                            targets,
-                            // locals of the current branch + outer locals of the current switchInt
-                            // block are outer to the next switchInt block
-                            &SwitchLocals::from_outer(outer.outer().chain(locals.iter())),
-                        ) {
-                            locals.extend(&switch_meta.locals, outer);
-
-                            is_switch_block = true;
-                            to_visit.push_back(switch_meta.convergent_block);
-                        }
-                    }
-                    _ => {}
-                }
-
-                if !is_switch_block {
-                    to_visit.extend(block_data.terminator().successors());
-                }
-            }
-
-            locals
-        };
-
-        let mut targets_count = 0;
-        let mut targets = targets
-            .iter()
-            .filter(|target| {
-                if basic_blocks[**target].is_empty_unreachable() {
-                    return false;
-                }
-
-                targets_count += 1;
-                **target != convergent_block
-            })
-            .copied();
-
-        let target = targets.next().unwrap();
-        let mut locals = search_along_branch(target);
-
-        for target in targets {
-            if basic_blocks[target].is_empty_unreachable() {
-                continue;
-            }
-
-            locals.merge(search_along_branch(target));
-        }
-
-        Self {
-            ignore: locals.ignore(),
-            targets_count,
-            locals: Rc::new(locals),
-            convergent_block,
-        }
-    }
-}
+impl SwitchMeta {}
 
 fn create_rev_graph(
     basic_blocks: &BasicBlocks,
@@ -445,29 +321,28 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<Option<BasicBlock>, Error> {
         let mir = ctx.mir;
         let basic_blocks = &ctx.mir.basic_blocks;
-        let fn_did = ctx.fn_did;
 
         let has_projections = self.has_projections(discr);
         let discr = self.visit_operand(discr, ctx, span)?;
+
+        let switch_meta = match self.switch_meta(
+            switch_block,
+            basic_blocks,
+            targets,
+            &ctx.locals.switch_locals(),
+            ctx,
+        )? {
+            Some(switch_meta) => switch_meta,
+            None => {
+                return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
+            }
+        };
 
         if discr.is_unsigned() && !has_projections {
             // handle `match unsigned<N>` block
             // case 0 responds to Unsigned::Short
             return Ok(Some(targets.target_for_value(0)));
         }
-
-        let switch_meta = match self.switch_meta(
-            fn_did,
-            switch_block,
-            basic_blocks,
-            targets,
-            &ctx.locals.switch_locals(),
-        ) {
-            Some(switch_meta) => switch_meta,
-            None => {
-                return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
-            }
-        };
 
         let targets_count = switch_meta.targets_count;
         let convergent_block = switch_meta.convergent_block;
@@ -606,17 +481,159 @@ impl<'tcx> Compiler<'tcx> {
 
     fn switch_meta(
         &mut self,
-        fn_did: DefId,
         switch_block: BasicBlock,
-        basic_blocks: &BasicBlocks<'_>,
+        basic_blocks: &BasicBlocks<'tcx>,
         targets: &SwitchTargets,
         outer: &SwitchLocals,
-    ) -> Option<&SwitchMeta> {
+        ctx: &mut Context<'tcx>,
+    ) -> Result<Option<&SwitchMeta>, Error> {
         let switch_blocks = self
             .switch_meta
-            .entry(fn_did)
+            .entry(ctx.fn_did)
             .or_insert_with(|| SwitchBlocks::make(basic_blocks));
 
-        switch_blocks.switch_meta(switch_block, basic_blocks, targets, outer)
+        #[allow(clippy::map_entry)]
+        if !switch_blocks.switch_meta.contains_key(&switch_block) {
+            let convergent_block =
+                match switch_blocks.immediate_post_dominator(switch_block) {
+                    Some(convergent_block) => convergent_block,
+                    None => {
+                        error!("Cannot find convergent block for switchInt targets");
+                        return Ok(None);
+                    }
+                };
+
+            let span = debug_span!("switch_meta", switch_block = ?switch_block);
+            let meta = {
+                let _enter = span.enter();
+                let meta = self.make_switch_meta(
+                    basic_blocks,
+                    targets,
+                    convergent_block,
+                    outer,
+                    ctx,
+                )?;
+
+                debug!("{meta:#?}");
+
+                meta
+            };
+
+            self.switch_meta
+                .get_mut(&ctx.fn_did)
+                .unwrap()
+                .switch_meta
+                .insert(switch_block, meta);
+        }
+
+        Ok(self
+            .switch_meta
+            .get(&ctx.fn_did)
+            .unwrap()
+            .switch_meta
+            .get(&switch_block))
+    }
+
+    fn make_switch_meta(
+        &mut self,
+        basic_blocks: &BasicBlocks<'tcx>,
+        targets: &SwitchTargets,
+        convergent_block: BasicBlock,
+        outer: &SwitchLocals,
+        ctx: &mut Context<'tcx>,
+    ) -> Result<SwitchMeta, Error> {
+        let targets = targets.all_targets();
+
+        let mut search_along_branch = |start: BasicBlock| -> Result<SwitchLocals, Error> {
+            let mut locals = SwitchLocals::default();
+            let mut to_visit = VecDeque::default();
+
+            to_visit.push_back(start);
+            while let Some(block) = to_visit.pop_front() {
+                if block == convergent_block {
+                    break;
+                }
+
+                let block_data = &basic_blocks[block];
+                if block_data.is_empty_unreachable() {
+                    to_visit.extend(block_data.terminator().successors());
+                    continue;
+                }
+
+                for stmt in &block_data.statements {
+                    if let Some((place, _)) = stmt.kind.as_assign() {
+                        locals.add(place.local, outer);
+                    }
+                }
+
+                let mut is_switch_block = false;
+                let terminator = block_data.terminator();
+                match &terminator.kind {
+                    TerminatorKind::Call { destination, .. } => {
+                        locals.add(destination.local, outer);
+                    }
+                    TerminatorKind::SwitchInt { targets, .. } => {
+                        if let Some(switch_meta) = self.switch_meta(
+                            block,
+                            basic_blocks,
+                            targets,
+                            // locals of the current branch + outer locals of the current switchInt
+                            // block are outer to the next switchInt block
+                            &SwitchLocals::from_outer(outer.outer().chain(locals.iter())),
+                            ctx,
+                        )? {
+                            locals.extend(&switch_meta.locals, outer);
+
+                            is_switch_block = true;
+                            to_visit.push_back(switch_meta.convergent_block);
+                        }
+                    }
+                    _ => {}
+                }
+
+                if !is_switch_block {
+                    to_visit.extend(block_data.terminator().successors());
+                }
+            }
+
+            Ok(locals)
+        };
+
+        let mut targets_count = 0;
+        let mut targets = targets
+            .iter()
+            .filter(|target| {
+                if basic_blocks[**target].is_empty_unreachable() {
+                    false
+                } else {
+                    targets_count += 1;
+                    true
+                }
+            })
+            .copied();
+
+        let target = targets.next().unwrap();
+        let mut locals = search_along_branch(target)?;
+        for target in targets {
+            if basic_blocks[target].is_empty_unreachable() {
+                continue;
+            }
+
+            locals.merge(search_along_branch(target)?);
+        }
+
+        Ok(SwitchMeta {
+            ignore: locals.ignore(),
+            targets_count,
+            locals: Rc::new(locals),
+            convergent_block,
+        })
+    }
+
+    fn has_projections(&self, operand: &Operand<'tcx>) -> bool {
+        operand
+            .place()
+            .filter(|place| !place.projection.is_empty())
+            .is_some()
     }
 }

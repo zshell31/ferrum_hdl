@@ -23,19 +23,27 @@ use crate::{
     trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
 
+#[allow(non_camel_case_types)]
 #[derive(Debug, Clone)]
-#[blackbox_ty(Unsigned)]
-pub enum U<const N: usize> {
+pub struct _priv<T>(pub(crate) T);
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum U_ {
     Short(u128),
     Long(BigUint),
 }
+
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+#[blackbox_ty(Unsigned)]
+pub struct U<const N: usize>(pub(crate) U_);
 
 impl<const N: usize> U<N>
 where
     Assert<{ N <= 128 }>: IsTrue,
 {
     pub const fn from(val: u128) -> Self {
-        Self::Short(val)
+        Self(U_::Short(val))
     }
 }
 
@@ -44,12 +52,12 @@ impl<const N: usize> U<N> {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
-                Self::Short(val & mask)
+                Self(U_::Short(val & mask))
             }
-            Ordering::Equal => Self::Short(val),
+            Ordering::Equal => Self(U_::Short(val)),
             Ordering::Greater => {
                 let mask = (BigUint::from(1_u8) << N) - 1_u8;
-                Self::Long(BigUint::from(val) & mask)
+                Self(U_::Long(BigUint::from(val) & mask))
             }
         }
     }
@@ -58,13 +66,13 @@ impl<const N: usize> U<N> {
         match N.cmp(&128) {
             Ordering::Less => {
                 let mask = (1 << N) - 1;
-                Self::Short(u128::try_from(val).unwrap() & mask)
+                Self(U_::Short(u128::try_from(val).unwrap() & mask))
             }
-            Ordering::Equal => Self::Short(u128::try_from(val).unwrap()),
-            Ordering::Greater if val.bits() as usize == N => Self::Long(val),
+            Ordering::Equal => Self(U_::Short(u128::try_from(val).unwrap())),
+            Ordering::Greater if val.bits() as usize == N => Self(U_::Long(val)),
             _ => {
                 let mask = (BigUint::from(1_u8) << N) - 1_u8;
-                Self::Long(val & mask)
+                Self(U_::Long(val & mask))
             }
         }
     }
@@ -74,19 +82,19 @@ impl<const N: usize> U<N> {
             return false;
         }
 
-        match self {
-            Self::Short(short) => (short & (1 << n)) > 0,
-            Self::Long(long) => long.bit(n as u64),
+        match &self.0 {
+            U_::Short(short) => (short & (1 << n)) > 0,
+            U_::Long(long) => long.bit(n as u64),
         }
     }
 
     pub(crate) fn slice_<const LEN: usize>(&self, idx: usize) -> U<LEN> {
-        match self {
-            Self::Short(short) => {
+        match &self.0 {
+            U_::Short(short) => {
                 let mask = mask(LEN as u128);
                 U::<LEN>::from_short((short >> idx) & mask)
             }
-            Self::Long(long) => {
+            U_::Long(long) => {
                 let mask = (BigUint::from(1_u8) << LEN) - 1_u8;
                 U::<LEN>::from_long((long >> idx) & mask)
             }
@@ -94,9 +102,9 @@ impl<const N: usize> U<N> {
     }
 
     pub(crate) fn is_non_zero(&self) -> Bit {
-        match self {
-            Self::Short(short) => *short != 0,
-            Self::Long(long) => !long.is_zero(),
+        match &self.0 {
+            U_::Short(short) => *short != 0,
+            U_::Long(long) => !long.is_zero(),
         }
     }
 }
@@ -131,18 +139,18 @@ impl<const N: usize> Default for U<N> {
 
 impl<const N: usize> Display for U<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Short(short) => Display::fmt(short, f),
-            Self::Long(long) => Display::fmt(long, f),
+        match &self.0 {
+            U_::Short(short) => Display::fmt(short, f),
+            U_::Long(long) => Display::fmt(long, f),
         }
     }
 }
 
 impl<const N: usize> Binary for U<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Short(short) => write!(f, "{:0width$b}", short, width = N),
-            Self::Long(long) => write!(f, "{:0width$b}", long, width = N),
+        match &self.0 {
+            U_::Short(short) => write!(f, "{:0width$b}", short, width = N),
+            U_::Long(long) => write!(f, "{:0width$b}", long, width = N),
         }
     }
 }
@@ -150,9 +158,9 @@ impl<const N: usize> Binary for U<N> {
 impl<const N: usize> LowerHex for U<N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let width = N.div_ceil(8);
-        match self {
-            Self::Short(short) => write!(f, "{:0width$x}", short, width = width),
-            Self::Long(long) => write!(f, "{:0width$x}", long, width = width),
+        match &self.0 {
+            U_::Short(short) => write!(f, "{:0width$x}", short, width = width),
+            U_::Long(long) => write!(f, "{:0width$x}", long, width = width),
         }
     }
 }
@@ -161,9 +169,9 @@ impl<const N: usize> PartialEq for U<N> {
     #[blackbox(OpEq)]
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Short(lhs), Self::Short(rhs)) => lhs == rhs,
-            (Self::Long(lhs), Self::Long(rhs)) => lhs == rhs,
+        match (&self.0, &other.0) {
+            (U_::Short(lhs), U_::Short(rhs)) => lhs == rhs,
+            (U_::Long(lhs), U_::Long(rhs)) => lhs == rhs,
             _ => unreachable!(),
         }
     }
@@ -214,9 +222,9 @@ impl<const N: usize> PartialOrd for U<N> {
 impl<const N: usize> Ord for U<N> {
     #[inline]
     fn cmp(&self, other: &Self) -> Ordering {
-        match (self, other) {
-            (Self::Short(lhs), Self::Short(rhs)) => lhs.cmp(rhs),
-            (Self::Long(lhs), Self::Long(rhs)) => lhs.cmp(rhs),
+        match (&self.0, &other.0) {
+            (U_::Short(lhs), U_::Short(rhs)) => lhs.cmp(rhs),
+            (U_::Long(lhs), U_::Long(rhs)) => lhs.cmp(rhs),
             _ => unreachable!(),
         }
     }
@@ -239,9 +247,9 @@ macro_rules! impl_for_unsigned_prim_ty {
                 #[blackbox(CastFrom)]
                 #[inline]
                 fn cast_from(val: U<N>) -> Self {
-                    match val {
-                        U::Short(short) => short as $prim,
-                        U::Long(long) => long.try_into().unwrap()
+                    match val.0 {
+                        U_::Short(short) => short as $prim,
+                        U_::Long(long) => long.try_into().unwrap()
                     }
                 }
             }
@@ -357,9 +365,9 @@ impl<const N: usize> CastFrom<Bit> for U<N> {
 impl<const N: usize, const M: usize> CastFrom<U<M>> for U<N> {
     #[blackbox(CastFrom)]
     fn cast_from(from: U<M>) -> U<N> {
-        match from {
-            U::<M>::Short(short) => U::<N>::from_short(short),
-            U::<M>::Long(long) => U::<N>::from_long(long),
+        match from.0 {
+            U_::Short(short) => U::<N>::from_short(short),
+            U_::Long(long) => U::<N>::from_long(long),
         }
     }
 }
@@ -372,11 +380,11 @@ macro_rules! impl_op {
 
                 #[blackbox([<Op $trait>])]
                 fn $method(self, rhs: U<N>) -> Self::Output {
-                    match (self, rhs) {
-                        (U::Short(lhs), U::Short(rhs)) => {
+                    match (self.0, rhs.0) {
+                        (U_::Short(lhs), U_::Short(rhs)) => {
                             U::from_short(lhs.$spec_method(rhs))
                         }
-                        (U::Long(lhs), U::Long(rhs)) => {
+                        (U_::Long(lhs), U_::Long(rhs)) => {
                             U::from_long(lhs.$method(rhs))
                         }
                         _ => unreachable!(),
@@ -389,11 +397,11 @@ macro_rules! impl_op {
 
                 #[blackbox([<Op $trait>])]
                 fn $method(self, rhs: U<N>) -> Self::Output {
-                    match (self, rhs) {
-                        (U::Short(lhs), U::Short(rhs)) => {
+                    match (&self.0, rhs.0) {
+                        (U_::Short(lhs), U_::Short(rhs)) => {
                             U::from_short((*lhs).$spec_method(rhs))
                         }
-                        (U::Long(lhs), U::Long(rhs)) => {
+                        (U_::Long(lhs), U_::Long(rhs)) => {
                             U::from_long(lhs.$method(rhs))
                         }
                         _ => unreachable!(),
@@ -406,11 +414,11 @@ macro_rules! impl_op {
 
                 #[blackbox([<Op $trait>])]
                 fn $method(self, rhs: &'a U<N>) -> Self::Output {
-                    match (self, rhs) {
-                        (U::Short(lhs), U::Short(rhs)) => {
+                    match (self.0, &rhs.0) {
+                        (U_::Short(lhs), U_::Short(rhs)) => {
                             U::from_short(lhs.$spec_method(*rhs))
                         }
-                        (U::Long(lhs), U::Long(rhs)) => {
+                        (U_::Long(lhs), U_::Long(rhs)) => {
                             U::from_long(lhs.$method(rhs))
                         }
                         _ => unreachable!(),
@@ -423,11 +431,11 @@ macro_rules! impl_op {
 
                 #[blackbox([<Op $trait>])]
                 fn $method(self, rhs: &'a BitVec<N>) -> Self::Output {
-                    match (self, rhs) {
-                        (U::Short(lhs), U::Short(rhs)) => {
+                    match (&self.0, &rhs.0) {
+                        (U_::Short(lhs), U_::Short(rhs)) => {
                             U::from_short((*lhs).$spec_method(*rhs))
                         }
-                        (U::Long(lhs), U::Long(rhs)) => {
+                        (U_::Long(lhs), U_::Long(rhs)) => {
                             U::from_long(lhs.$method(rhs))
                         }
                         _ => unreachable!(),
@@ -510,9 +518,9 @@ macro_rules! impl_shift_ops {
 
                 #[blackbox(OpShl)]
                 fn shl(self, rhs: $prim) -> Self::Output {
-                    match self {
-                        Self::Short(short) => Self::from_short(short.shl(rhs)),
-                        Self::Long(long) => Self::from_long(long.shl(rhs)),
+                    match self.0 {
+                        U_::Short(short) => Self::from_short(short.shl(rhs)),
+                        U_::Long(long) => Self::from_long(long.shl(rhs)),
                     }
                 }
             }
@@ -522,9 +530,9 @@ macro_rules! impl_shift_ops {
 
                 #[blackbox(OpShl)]
                 fn shl(self, rhs: $prim) -> Self::Output {
-                    match self {
-                        U::Short(short) => U::from_short((*short).shl(rhs)),
-                        U::Long(long) => U::from_long(long.shl(rhs)),
+                    match &self.0 {
+                        U_::Short(short) => U::from_short((*short).shl(rhs)),
+                        U_::Long(long) => U::from_long(long.shl(rhs)),
                     }
                 }
             }
@@ -534,9 +542,9 @@ macro_rules! impl_shift_ops {
 
                 #[blackbox(OpShr)]
                 fn shr(self, rhs: $prim) -> Self::Output {
-                    match self {
-                        U::Short(short) => U::from_short(short.shr(rhs)),
-                        U::Long(long) => U::from_long(long.shr(rhs)),
+                    match self.0 {
+                        U_::Short(short) => U::from_short(short.shr(rhs)),
+                        U_::Long(long) => U::from_long(long.shr(rhs)),
                     }
                 }
             }
@@ -546,9 +554,9 @@ macro_rules! impl_shift_ops {
 
                 #[blackbox(OpShr)]
                 fn shr(self, rhs: $prim) -> Self::Output {
-                    match self {
-                        U::Short(short) => U::from_short((*short).shr(rhs)),
-                        U::Long(long) => U::from_long(long.shr(rhs)),
+                    match &self.0 {
+                        U_::Short(short) => U::from_short((*short).shr(rhs)),
+                        U_::Long(long) => U::from_long(long.shr(rhs)),
                     }
                 }
             }
@@ -606,9 +614,9 @@ impl<const N: usize> Not for U<N> {
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        match self {
-            Self::Short(short) => Self::from_short(short.not()),
-            Self::Long(long) => Self::from_long(BigUint::from_slice(
+        match self.0 {
+            U_::Short(short) => Self::from_short(short.not()),
+            U_::Long(long) => Self::from_long(BigUint::from_slice(
                 long.iter_u32_digits()
                     .map(|digit| !digit)
                     .collect::<Vec<u32>>()

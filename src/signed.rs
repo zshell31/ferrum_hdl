@@ -12,6 +12,7 @@ use crate::{
         Assert, BitPack, BitVec, IsTrue, SignalValue, TraceTy, TraceVars, Traceable,
         Tracer, U,
     },
+    unsigned::U_,
 };
 
 #[derive(Debug, Clone)]
@@ -79,16 +80,16 @@ impl<const N: usize> BitPack for S<N> {
 
     fn pack(self) -> Self::Packed {
         match self {
-            Self::Short(val) => BitVec::Short(val as u128),
-            Self::Long(val) => BitVec::Long(val.into_parts().1),
+            Self::Short(val) => U(U_::Short(val as u128)),
+            Self::Long(val) => U(U_::Long(val.into_parts().1)),
         }
     }
 
     fn unpack(packed: Self::Packed) -> Self {
         let msb = packed.bit_(N - 1);
-        match packed {
-            BitVec::Short(val) => Self::Short(val as i128),
-            BitVec::Long(val) => {
+        match packed.0 {
+            U_::Short(val) => Self::Short(val as i128),
+            U_::Long(val) => {
                 let sign = bit_to_sign(msb);
                 Self::Long(BigInt::from_biguint(sign, val))
             }

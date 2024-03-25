@@ -44,7 +44,8 @@ pub mod prelude {
         index::{idx_constr, Idx},
         signal::{
             dff, dff_comb, reg, reg0, reg0_comb, reg_comb, reg_en, reg_en0, reg_en0_comb,
-            reg_en_comb, Enable, IntoSignal, Reset, Signal, SignalValue,
+            reg_en_comb, rise_every, rise_period, rise_rate, Enable, IntoSignal, Reset,
+            Signal, SignalValue,
         },
         signed::S,
         trace::{IdCode, Timescale, TraceTy, TraceValue, TraceVars, Traceable, Tracer},

@@ -1,3 +1,4 @@
+mod counters;
 mod ops;
 mod reg;
 mod signal_fn;
@@ -11,6 +12,7 @@ use std::{
     rc::Rc,
 };
 
+pub use counters::{rise_every, rise_period, rise_rate};
 use derive_where::derive_where;
 pub use fhdl_macros::SignalValue;
 use fhdl_macros::{blackbox, blackbox_ty, synth};

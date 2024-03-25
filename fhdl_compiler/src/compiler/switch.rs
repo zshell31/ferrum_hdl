@@ -439,7 +439,10 @@ impl<'tcx> Compiler<'tcx> {
 
             let output_ty = Ty::new_tup_from_iter(
                 self.tcx,
-                switch.locals.iter().map(|local| mir.local_decls[local].ty),
+                switch
+                    .locals
+                    .sorted()
+                    .map(|local| mir.local_decls[local].ty),
             );
             let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
 

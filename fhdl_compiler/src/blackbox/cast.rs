@@ -1,4 +1,4 @@
-use ferrum_hdl::{cast::CastFrom, signed::S, unsigned::U};
+use ferrum_hdl::{cast, signed::S, unsigned::U};
 use rustc_span::Span;
 use tracing::error;
 
@@ -13,9 +13,9 @@ use crate::{
 };
 
 #[allow(dead_code)]
-pub struct Conversion;
+pub struct CastFrom;
 
-impl Conversion {
+impl CastFrom {
     pub fn convert<'tcx>(
         from: &Item<'tcx>,
         to_ty: ItemTy<'tcx>,
@@ -69,9 +69,9 @@ impl Conversion {
     }
 }
 
-fn assert_convert<F, T: CastFrom<F>>() {}
+fn assert_convert<F, T: cast::CastFrom<F>>() {}
 
-impl<'tcx> EvalExpr<'tcx> for Conversion {
+impl<'tcx> EvalExpr<'tcx> for CastFrom {
     fn eval(
         &self,
         _: &mut Compiler<'tcx>,

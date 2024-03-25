@@ -176,9 +176,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
             b.intersperse(SEP, inputs, |buffer, port| {
                 buffer.write_tab()?;
-                write_param(buffer, &module[port], ParamKind::Input)?;
-
-                Ok(())
+                write_param(buffer, &module[port], ParamKind::Input)
             })?;
         }
         b.pop_tab();
@@ -201,9 +199,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
             b.intersperse(SEP, outputs, |buffer, port| {
                 buffer.write_tab()?;
-                write_param(buffer, &module[port], ParamKind::Output)?;
-
-                Ok(())
+                write_param(buffer, &module[port], ParamKind::Output)
             })?;
         }
         b.pop_tab();
@@ -266,20 +262,17 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                     b.intersperse(
                         SEP,
-                        module.mod_inst_inputs(mod_inst, orig_mod.as_deref()),
+                        module
+                            .mod_inst_inputs(mod_inst, orig_mod.as_deref())
+                            .filter(|(_, orig_mod_input)| !orig_mod_input.skip),
                         |buffer, (mod_inst_input, orig_mod_input)| {
-                            if orig_mod_input.skip {
-                                return Ok(());
-                            }
                             let mod_inst_sym = mod_inst_input.sym.unwrap();
                             let orig_mod_sym = orig_mod_input.sym.unwrap();
 
                             buffer.write_tab()?;
                             buffer.write_fmt(format_args!(
                                 ".{orig_mod_sym}({mod_inst_sym})"
-                            ))?;
-
-                            Ok(())
+                            ))
                         },
                     )?;
                 }
@@ -293,21 +286,17 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                     b.intersperse(
                         SEP,
-                        module.mod_inst_outputs(mod_inst, orig_mod.as_deref()),
+                        module
+                            .mod_inst_outputs(mod_inst, orig_mod.as_deref())
+                            .filter(|(_, orig_mod_output)| !orig_mod_output.skip),
                         |buffer, (mod_inst_output, orig_mod_output)| {
-                            if orig_mod_output.skip {
-                                return Ok(());
-                            }
-
                             let mod_inst_sym = mod_inst_output.sym.unwrap();
                             let orig_mod_sym = orig_mod_output.sym.unwrap();
 
                             buffer.write_tab()?;
                             buffer.write_fmt(format_args!(
                                 ".{orig_mod_sym}({mod_inst_sym})"
-                            ))?;
-
-                            Ok(())
+                            ))
                         },
                     )?;
                 }
@@ -355,11 +344,11 @@ impl<'n, W: Write> Verilog<'n, W> {
                     buffer.write_tab()?;
                     if width == 1 {
                         buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{start}];\n\n"
+                            "assign {output} = {input}[{start}];\n"
                         ))?;
                     } else {
                         buffer.write_fmt(format_args!(
-                            "assign {output} = {input}[{end}:{start}];\n\n"
+                            "assign {output} = {input}[{end}:{start}];\n"
                         ))?;
                     }
 
@@ -373,6 +362,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                         write_out(b, output, input.as_ref(), index)?;
                     }
                 }
+
+                b.write_str("\n")?;
             }
             NodeKind::Merger(merger) => {
                 let merger = node.with(merger);
@@ -389,9 +380,7 @@ impl<'n, W: Write> Verilog<'n, W> {
                     inputs.map(|input| module[input].sym.unwrap()),
                     |buffer, input| {
                         buffer.write_tab()?;
-                        buffer.write_fmt(format_args!("{}", input))?;
-
-                        Ok(())
+                        buffer.write_fmt(format_args!("{}", input))
                     },
                 )?;
                 b.pop_tab();
@@ -423,7 +412,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let MuxInputs { sel, mut cases } = mux.inputs(module);
 
                 let outputs = &mux.outputs;
-                let single_assign = outputs.len() == 1;
+                let single_assign =
+                    outputs.iter().filter(|output| !output.skip).count() == 1;
                 let sel_sym = module[sel].sym.unwrap();
 
                 b.write_tab()?;
@@ -455,6 +445,10 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                     let mut inputs = inputs.enumerate_();
                     while let Some((idx, input)) = inputs.next_(module) {
+                        if outputs[idx].skip {
+                            continue;
+                        }
+
                         let output = outputs[idx].sym.unwrap();
                         let input = module[input].sym.unwrap();
 

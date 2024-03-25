@@ -564,14 +564,14 @@ macro_rules! impl_shift_ops {
     };
 }
 
-impl_shift_ops!(u8, u16, u32, u64, u128, usize);
+impl_shift_ops!(usize);
 
 impl<const N: usize, const M: usize> Shl<U<M>> for U<N> {
     type Output = Self;
 
     #[blackbox(OpShl)]
     fn shl(self, rhs: U<M>) -> Self::Output {
-        let rhs: u128 = rhs.cast();
+        let rhs: usize = rhs.cast();
         self.shl(rhs)
     }
 }
@@ -593,7 +593,7 @@ impl<const N: usize, const M: usize> Shr<U<M>> for U<N> {
 
     #[blackbox(OpShr)]
     fn shr(self, rhs: U<M>) -> Self::Output {
-        let rhs: u128 = rhs.cast();
+        let rhs: usize = rhs.cast();
         self.shr(rhs)
     }
 }
@@ -670,7 +670,7 @@ impl<const N: usize> Traceable for U<N> {
             id,
             (0 .. N).map(move |_| {
                 let value = bool_to_vcd((self & &bv) > zero);
-                bv = (&bv) >> 1_u8;
+                bv = (&bv) >> 1;
                 value
             }),
         )

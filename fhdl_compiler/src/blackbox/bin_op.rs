@@ -2,7 +2,7 @@ use fhdl_netlist::node::{BinOp as NodeBinOp, BinOpArgs, BinOpNode};
 use rustc_middle::mir::BinOp as MirBinOp;
 use rustc_span::Span;
 
-use super::{args, cast::Conversion, EvalExpr};
+use super::{args, cast::CastFrom, EvalExpr};
 use crate::{
     compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
     error::{Error, SpanError, SpanErrorKind},
@@ -57,7 +57,7 @@ impl BinOp {
         let mut subnode =
             |expr: &Item<'tcx>, expr_ty: ItemTy<'tcx>| -> Result<Item<'tcx>, Error> {
                 Ok(if should_convert_operands && expr_ty != output_ty {
-                    Conversion::convert(expr, output_ty, ctx, span)?
+                    CastFrom::convert(expr, output_ty, ctx, span)?
                 } else {
                     expr.clone()
                 })

@@ -5,7 +5,7 @@ use smallvec::SmallVec;
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    netlist::{Chunks, Cursor, Module, ModuleId, NetList, NodeId, Port},
+    netlist::{Chunks, Cursor, Module, ModuleId, NetList, NodeId, Port, WithId},
     node::{
         BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
         MuxInputs, NodeKind, TyOrData, DFF,
@@ -41,7 +41,8 @@ impl Transform {
                 self.visit_module(netlist, mod_id);
             }
 
-            let should_be_inlined = self.transform(netlist, &mut module, node_id);
+            let should_be_inlined =
+                self.transform(netlist, module.as_deref_mut(), node_id);
 
             if should_be_inlined {
                 let node_id = netlist.inline_mod(module.as_deref_mut(), node_id);
@@ -53,14 +54,19 @@ impl Transform {
         }
     }
 
-    fn transform(&self, netlist: &NetList, module: &mut Module, node_id: NodeId) -> bool {
+    fn transform(
+        &self,
+        netlist: &NetList,
+        mut module: WithId<ModuleId, &mut Module>,
+        node_id: NodeId,
+    ) -> bool {
         let node = module.node(node_id);
 
         let mut inline = false;
         match &*node.kind {
             NodeKind::Pass(pass) => {
                 let pass = node.with(pass);
-                match module.to_const(pass.input(module)) {
+                match module.to_const(pass.input(&module)) {
                     Some(const_val) => {
                         let output = pass.output[0];
 
@@ -72,10 +78,10 @@ impl Transform {
                     }
                     None => {
                         if !(module.is_mod_output(Port::new(node_id, 0))
-                            || module.is_mod_input(pass.input(module)))
+                            || module.is_mod_input(pass.input(&module)))
                         {
                             let pass = node.with(pass);
-                            let input_ty = module[pass.input(module)].ty;
+                            let input_ty = module[pass.input(&module)].ty;
                             let output_ty = pass.output[0].ty;
                             if input_ty.width() == output_ty.width() {
                                 module.reconnect(node_id);
@@ -119,7 +125,8 @@ impl Transform {
                 }
             }
             NodeKind::BitNot(bit_not) => {
-                if let Some(const_val) = module.to_const(node.with(bit_not).input(module))
+                if let Some(const_val) =
+                    module.to_const(node.with(bit_not).input(&module))
                 {
                     let const_val = !const_val;
                     let output = bit_not.output[0];
@@ -132,7 +139,7 @@ impl Transform {
             }
 
             NodeKind::BinOp(bin_op) => {
-                let BinOpInputs { lhs, rhs } = node.with(bin_op).inputs(module);
+                let BinOpInputs { lhs, rhs } = node.with(bin_op).inputs(&module);
 
                 if let (Some(left), Some(right)) =
                     (module.to_const(lhs), module.to_const(rhs))
@@ -171,11 +178,11 @@ impl Transform {
             NodeKind::Splitter(splitter) => {
                 let splitter = node.with(splitter);
 
-                if splitter.pass_all_bits(module) {
+                if splitter.pass_all_bits(&module) {
                     module.reconnect(node_id);
                 } else {
-                    let indices = splitter.eval_indices(module);
-                    let input = splitter.input(module);
+                    let indices = splitter.eval_indices(&module);
+                    let input = splitter.input(&module);
                     let input_val = module.to_const(input);
 
                     if let Some(input_val) = input_val {
@@ -199,7 +206,7 @@ impl Transform {
                     } else {
                         drop(indices);
 
-                        let input_id = splitter.input(module).node;
+                        let input_id = splitter.input(&module).node;
                         let input = &module[input_id];
 
                         if let NodeKind::Merger(merger) = &*input.kind {
@@ -237,7 +244,7 @@ impl Transform {
                 // }
 
                 let mut val = Some(ConstVal::new(0, 0));
-                node.with(merger).inputs(module).for_each(|input| {
+                node.with(merger).inputs(&module).for_each(|input| {
                     match module.to_const(input) {
                         Some(new_val) => {
                             if let Some(val) = val.as_mut() {
@@ -263,7 +270,7 @@ impl Transform {
             NodeKind::Extend(extend) => {
                 let extend = node.with(extend);
                 let output = extend.output[0];
-                let input = extend.input(module);
+                let input = extend.input(&module);
 
                 match module.to_const(input) {
                     Some(const_val) => {
@@ -285,13 +292,13 @@ impl Transform {
                 let cases_len = mux.cases.len();
                 let mux = node.with(mux);
 
-                let MuxInputs { sel, mut cases } = mux.inputs(module);
+                let MuxInputs { sel, mut cases } = mux.inputs(&module);
 
                 let mut chunks = if cases_len == 1 {
                     Some(cases.into_chunks())
                 } else {
                     module.to_const(sel).and_then(|sel| {
-                        while let Some(case) = cases.next_case(module) {
+                        while let Some(case) = cases.next_case(&module) {
                             match case {
                                 Case::Val(case) => {
                                     if case == sel {
@@ -324,7 +331,7 @@ impl Transform {
                     mut en,
                     init,
                     data,
-                } = dff.inputs(module);
+                } = dff.inputs(&module);
 
                 let mut replace = false;
 

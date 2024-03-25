@@ -137,6 +137,7 @@ pub enum Case {
 pub struct Cases<C, P> {
     cases: C,
     chunks: Chunks<P>,
+    skip_chunk: bool,
 }
 
 impl<C, P> Cases<C, P>
@@ -144,6 +145,14 @@ where
     C: Iterator<Item = Case>,
     P: Cursor<Item = Port, Storage = Module>,
 {
+    fn new(cases: C, chunks: Chunks<P>) -> Self {
+        Self {
+            cases,
+            chunks,
+            skip_chunk: false,
+        }
+    }
+
     pub fn next(&mut self) -> Option<(Case, Chunk<'_, P>)> {
         let case = self.cases.next()?;
         let chunk = self.chunks.next_chunk()?;
@@ -152,7 +161,11 @@ where
     }
     pub fn next_case(&mut self, module: &Module) -> Option<Case> {
         let case = self.cases.next()?;
-        self.chunks.skip_chunk(module)?;
+        if !self.skip_chunk {
+            self.skip_chunk = true;
+        } else {
+            self.chunks.skip_chunk(module)?;
+        }
 
         Some(case)
     }
@@ -198,7 +211,7 @@ impl WithId<NodeId, &'_ Mux> {
 
         MuxInputs {
             sel,
-            cases: Cases { cases, chunks },
+            cases: Cases::new(cases, chunks),
         }
     }
 }

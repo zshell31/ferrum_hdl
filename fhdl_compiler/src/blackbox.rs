@@ -110,7 +110,7 @@ eval_expr!(
     OpShr => bin_op::BinOp(BinOp::Slr),
     OpNot => un_op::BitNot,
 
-    CastFrom => cast::Conversion,
+    CastFrom => cast::CastFrom,
 
     Index => bitvec::Slice { only_one: true },
     Slice => bitvec::Slice { only_one: false },

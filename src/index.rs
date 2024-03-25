@@ -1,6 +1,6 @@
 use std::fmt::{Binary, Debug, Display, LowerHex};
 
-use fhdl_const_func::{clog2_len, max_val};
+use fhdl_const_func::clog2_len;
 use fhdl_macros::synth;
 
 use crate::{
@@ -69,14 +69,6 @@ where
 
 impl<const N: usize> SignalValue for Idx<N> where ConstConstr<{ idx_constr(N) }>: {}
 
-#[inline(always)]
-pub const fn is_power_of_two(n: usize) -> bool {
-    n.is_power_of_two() && {
-        let bits = idx_constr(n);
-        n == max_val(bits as u128) as usize + 1
-    }
-}
-
 impl<const N: usize, const M: usize> CastFrom<U<M>> for Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
@@ -128,7 +120,7 @@ impl<const N: usize> Idx<N>
 where
     ConstConstr<{ idx_constr(N) }>:,
 {
-    const IS_POWER_OF_TWO: bool = is_power_of_two(N);
+    pub const IS_POWER_OF_TWO: bool = N.is_power_of_two();
 
     #[synth(inline)]
     pub fn new() -> Self {
@@ -150,30 +142,40 @@ where
 
     #[synth(inline)]
     pub fn succ(self) -> Self {
-        if self.is_max() {
+        let succ = if !Self::IS_POWER_OF_TWO && self.is_max() {
             Self(0_u8.cast())
         } else {
             Self(self.0 + 1)
-        }
+        };
+        succ
     }
 
     #[synth(inline)]
     pub fn pred(self) -> Self {
-        if self.is_min() {
+        let pred = if !Self::IS_POWER_OF_TWO && self.is_min() {
             Self((N - 1).cast::<U<_>>())
         } else {
             Self(self.0 - 1)
-        }
+        };
+        pred
     }
 
     #[synth(inline)]
     pub fn is_max(&self) -> bool {
-        self.0 == (N - 1).cast::<U<_>>()
+        let is_max = self.0 == (N - 1).cast::<U<_>>();
+        is_max
     }
 
     #[synth(inline)]
     pub fn is_min(&self) -> bool {
-        self.0 == 0_u8.cast::<U<_>>()
+        let is_min = self.0 == 0_u8.cast::<U<_>>();
+        is_min
+    }
+
+    #[synth(inline)]
+    pub fn is_zero(&self) -> bool {
+        let is_zero = self.0 == 0.cast::<U<_>>();
+        is_zero
     }
 
     #[synth(inline)]

@@ -34,7 +34,10 @@ impl BinOp {
     pub fn should_convert_operands(&self) -> bool {
         use BinOp::*;
 
-        matches!(self, BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem)
+        matches!(
+            self,
+            BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem | Sll | Slr | Sra
+        )
     }
 }
 

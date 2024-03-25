@@ -261,38 +261,25 @@ impl<'tcx> Compiler<'tcx> {
         let module = &mut ctx.module;
         let output = ctx.locals.get(RETURN_PLACE);
 
-        let should_add_pass = output.iter().any(|port| {
-            let node = module.node(port.node);
-            node.is_input() || module.is_mod_output(port)
-        });
-
-        let output = if !should_add_pass {
-            for port in output.iter() {
-                module.add_mod_output(port);
-            }
-            output
-        } else {
-            let output = module.combine(
-                IterMut::new(output.iter(), |module, port| {
-                    let node = module.node(port.node);
-                    let port = if node.is_input() || module.is_mod_output(port) {
-                        let sym = module[port].sym;
-                        module.add_and_get_port::<_, Pass>(PassArgs {
-                            input: port,
-                            sym,
-                            ty: None,
-                        })
-                    } else {
-                        port
-                    };
-                    module.add_mod_output(port);
+        let output = module.combine(
+            IterMut::new(output.iter(), |module, port| {
+                let node = module.node(port.node);
+                let port = if node.is_input() || module.is_mod_output(port) {
+                    let sym = module[port].sym;
+                    module.add_and_get_port::<_, Pass>(PassArgs {
+                        input: port,
+                        sym,
+                        ty: None,
+                    })
+                } else {
                     port
-                }),
-                output.ty,
-            );
-            ctx.locals.place(RETURN_PLACE, output.clone());
-            output
-        };
+                };
+                module.add_mod_output(port);
+                port
+            }),
+            output.ty,
+        );
+        ctx.locals.place(RETURN_PLACE, output.clone());
 
         ctx.module.assign_names_to_item("out", &output, false);
     }
@@ -776,7 +763,12 @@ impl<'tcx> Compiler<'tcx> {
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        let mut item = ctx.locals.get(place.local).clone();
+        let mut item = match ctx.last_switch() {
+            Some(switch) if switch.has_branch_local(place.local) => {
+                switch.branch_local(place.local).unwrap().clone()
+            }
+            _ => ctx.locals.get(place.local).clone(),
+        };
 
         for place_elem in place.projection {
             if item.is_unsigned() {

@@ -47,23 +47,23 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Option<Item<'tcx>> {
         let unevaluated = ctx.instantiate(self.tcx, unevaluated);
         debug!("resolve_unevaluated: unevaluated = {unevaluated:?} ty = {ty:?}");
-        let item_ty = self
+        let const_ty = self
             .resolve_ty(ty, ctx.generic_args, span)
             .map_err(|e| error!("resolve_unevaluated: {e}"))
             .ok()?;
 
-        match item_ty.kind() {
+        match const_ty.kind() {
             ItemTyKind::Node(node_ty @ NodeTy::Bit) => {
                 let val = self.const_eval_resolve(unevaluated)?;
                 let val = const_val_to_u128(val)?;
 
-                Some(Item::new(item_ty, ctx.module.const_val(*node_ty, val)))
+                Some(Item::new(const_ty, ctx.module.const_val(*node_ty, val)))
             }
             ItemTyKind::Node(node_ty @ NodeTy::Unsigned(n)) if *n <= 128 => {
                 let val = self.const_eval_resolve(unevaluated)?;
                 let val = const_val_to_u128(val)?;
 
-                Some(Item::new(item_ty, ctx.module.const_val(*node_ty, val)))
+                Some(Item::new(const_ty, ctx.module.const_val(*node_ty, val)))
             }
             ItemTyKind::Enum(enum_ty) if enum_ty.is_fieldless() => {
                 let val = self.const_eval_resolve(unevaluated)?;
@@ -98,7 +98,7 @@ impl<'tcx> Compiler<'tcx> {
 
                             let byte_size = Size::from_bytes(1);
                             return Some(Item::new(
-                                item_ty,
+                                const_ty,
                                 Group::new_opt((0 .. count).map(|_| {
                                     let val = alloc
                                         .read_scalar(

@@ -171,7 +171,7 @@ unsafe impl IndexType for BasicBlockWrap {
 
 pub(super) struct SwitchBlocks {
     post_dominators: Dominators<NodeIndex<BasicBlockWrap>>,
-    switch_meta: FxHashMap<BasicBlock, SwitchMeta>,
+    switch_meta: FxHashMap<BasicBlock, Rc<SwitchMeta>>,
 }
 
 impl SwitchBlocks {
@@ -277,8 +277,6 @@ pub(super) struct SwitchMeta {
     convergent_block: BasicBlock,
 }
 
-impl SwitchMeta {}
-
 fn create_rev_graph(
     basic_blocks: &BasicBlocks,
 ) -> (
@@ -353,126 +351,141 @@ impl<'tcx> Compiler<'tcx> {
                 return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
             }
 
-            ctx.push_switch(Switch::new(
-                switch_meta.locals.clone(),
-                discr,
-                targets_count,
-            ));
+            let mux = match ctx.is_visited(switch_block) {
+                Some(mux) => mux,
+                None => {
+                    ctx.push_switch(Switch::new(
+                        switch_meta.locals.clone(),
+                        discr,
+                        targets_count,
+                    ));
 
-            for (discr, target) in targets
-                .iter()
-                .map(|(discr, target)| (Some(discr), target))
-                .chain(iter::once((None, targets.otherwise())))
-            {
-                if basic_blocks[target].is_empty_unreachable() {
-                    continue;
-                }
+                    for (discr, target) in targets
+                        .iter()
+                        .map(|(discr, target)| (Some(discr), target))
+                        .chain(iter::once((None, targets.otherwise())))
+                    {
+                        if basic_blocks[target].is_empty_unreachable() {
+                            continue;
+                        }
 
-                if target != convergent_block {
-                    let switch = ctx.last_switch().unwrap();
-                    switch.add_branch(discr);
+                        if target != convergent_block {
+                            let switch = ctx.last_switch().unwrap();
+                            switch.add_branch(discr);
 
-                    self.visit_blocks(Some(target), Some(convergent_block), ctx)?;
-                } else {
-                    let mut switch = ctx.pop_switch().unwrap();
-                    switch.add_branch(discr);
-                    ctx.push_switch(switch);
-                }
+                            self.visit_blocks(Some(target), Some(convergent_block), ctx)?;
+                        } else {
+                            let mut switch = ctx.pop_switch().unwrap();
+                            switch.add_branch(discr);
+                            ctx.push_switch(switch);
+                        }
 
-                // Share outer locals to all branches that do not contain assignments for them.
-                // For example
-                // ```rust
-                // let mut k = 0;
-                // let mut n = 1;
-                // if v {
-                //     k = 1;
-                // } else {
-                //     n = 0;
-                // }
-                // ````
-                //
-                // As result:
-                // - if-branch will get `n = 1`
-                // - else-branch will get `k = 0`
-                let mut switch = ctx.pop_switch().unwrap();
-                for local in switch.locals.clone().outer() {
-                    if !switch.has_branch_local(local) {
-                        let item = ctx.locals.get(local);
-                        switch.add_branch_local(local, item);
+                        // Share outer locals to all branches that do not contain assignments for them.
+                        // For example
+                        // ```rust
+                        // let mut k = 0;
+                        // let mut n = 1;
+                        // if v {
+                        //     k = 1;
+                        // } else {
+                        //     n = 0;
+                        // }
+                        // ````
+                        //
+                        // As result:
+                        // - if-branch will get `n = 1`
+                        // - else-branch will get `k = 0`
+                        let mut switch = ctx.pop_switch().unwrap();
+                        for local in switch.locals.clone().outer() {
+                            if !switch.has_branch_local(local) {
+                                let item = ctx.locals.get(local);
+                                switch.add_branch_local(local, item);
+                            }
+                        }
+                        ctx.push_switch(switch);
                     }
+
+                    let switch = ctx.pop_switch().unwrap();
+
+                    let (discr, discr_width) = match switch.discr.ty.kind() {
+                        ItemTyKind::Enum(enum_ty) => {
+                            let discr_ty = enum_ty.discr_ty();
+                            let discr = ctx.module.to_bitvec(&switch.discr);
+
+                            (
+                                Item::new(discr_ty, {
+                                    let splitter = SplitterArgs {
+                                        input: discr.port(),
+                                        outputs: iter::once((
+                                            discr_ty.node_ty(),
+                                            SymIdent::Discr.into(),
+                                        )),
+                                        start: None,
+                                        rev: true,
+                                    };
+                                    let splitter = ctx
+                                        .module
+                                        .add_and_get_port::<_, Splitter>(splitter);
+
+                                    let span = self.span_to_string(span, ctx.fn_did);
+                                    ctx.module.add_span(splitter.node, span);
+
+                                    splitter
+                                }),
+                                enum_ty.discr_width(),
+                            )
+                        }
+                        _ => {
+                            (ctx.module.to_bitvec(&switch.discr), switch.discr.ty.width())
+                        }
+                    };
+                    let discr = discr.port();
+
+                    let output_ty = Ty::new_tup_from_iter(
+                        self.tcx,
+                        switch
+                            .locals
+                            .sorted()
+                            .map(|local| mir.local_decls[local].ty),
+                    );
+                    let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
+
+                    let default = switch.otherwise().map(|otherwise| {
+                        let item =
+                            Item::new(output_ty, Group::new(otherwise.values().cloned()));
+                        item.iter()
+                    });
+
+                    let variants = switch.branches().map(|variant| {
+                        let case = ConstVal::new(variant.discr, discr_width);
+                        let item = Item::new(
+                            output_ty,
+                            Group::new(variant.locals.values().cloned()),
+                        );
+                        (case, item.iter())
+                    });
+
+                    let mux = MuxArgs {
+                        outputs: output_ty.iter().map(|ty| (ty, None)),
+                        sel: discr,
+                        variants,
+                        default,
+                    };
+                    let mux = ctx.module.add::<_, Mux>(mux);
+                    let node_span = self.span_to_string(span, ctx.fn_did);
+                    ctx.module.add_span(mux, node_span);
+
+                    let mux = ctx.module.combine_from_node(mux, output_ty);
+                    ctx.module
+                        .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
+
+                    ctx.mark_as_visited(switch_block, &mux);
+
+                    mux
                 }
-                ctx.push_switch(switch);
-            }
-
-            let switch = ctx.pop_switch().unwrap();
-
-            let (discr, discr_width) = match switch.discr.ty.kind() {
-                ItemTyKind::Enum(enum_ty) => {
-                    let discr_ty = enum_ty.discr_ty();
-                    let discr = ctx.module.to_bitvec(&switch.discr);
-
-                    (
-                        Item::new(discr_ty, {
-                            let splitter = SplitterArgs {
-                                input: discr.port(),
-                                outputs: iter::once((
-                                    discr_ty.node_ty(),
-                                    SymIdent::Discr.into(),
-                                )),
-                                start: None,
-                                rev: true,
-                            };
-                            let splitter =
-                                ctx.module.add_and_get_port::<_, Splitter>(splitter);
-
-                            let span = self.span_to_string(span, ctx.fn_did);
-                            ctx.module.add_span(splitter.node, span);
-
-                            splitter
-                        }),
-                        enum_ty.discr_width(),
-                    )
-                }
-                _ => (ctx.module.to_bitvec(&switch.discr), switch.discr.ty.width()),
             };
-            let discr = discr.port();
 
-            let output_ty = Ty::new_tup_from_iter(
-                self.tcx,
-                switch
-                    .locals
-                    .sorted()
-                    .map(|local| mir.local_decls[local].ty),
-            );
-            let output_ty = self.resolve_ty(output_ty, ctx.generic_args, span)?;
-
-            let default = switch.otherwise().map(|otherwise| {
-                let item = Item::new(output_ty, Group::new(otherwise.values().cloned()));
-                item.iter()
-            });
-
-            let variants = switch.branches().map(|variant| {
-                let case = ConstVal::new(variant.discr, discr_width);
-                let item =
-                    Item::new(output_ty, Group::new(variant.locals.values().cloned()));
-                (case, item.iter())
-            });
-
-            let mux = MuxArgs {
-                outputs: output_ty.iter().map(|ty| (ty, None)),
-                sel: discr,
-                variants,
-                default,
-            };
-            let mux = ctx.module.add::<_, Mux>(mux);
-            let node_span = self.span_to_string(span, ctx.fn_did);
-            ctx.module.add_span(mux, node_span);
-
-            let mux = ctx.module.combine_from_node(mux, output_ty);
-            ctx.module
-                .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
-
-            for (local, item) in switch.locals.sorted().zip(&*mux.group().items()) {
+            for (local, item) in switch_meta.locals.sorted().zip(&*mux.group().items()) {
                 self.assign_local(local, item, ctx)?;
             }
         } else {
@@ -489,7 +502,7 @@ impl<'tcx> Compiler<'tcx> {
         targets: &SwitchTargets,
         outer: &SwitchLocals,
         ctx: &mut Context<'tcx>,
-    ) -> Result<Option<&SwitchMeta>, Error> {
+    ) -> Result<Option<Rc<SwitchMeta>>, Error> {
         let switch_blocks = self
             .switch_meta
             .entry(ctx.fn_did)
@@ -526,7 +539,7 @@ impl<'tcx> Compiler<'tcx> {
                 .get_mut(&ctx.fn_did)
                 .unwrap()
                 .switch_meta
-                .insert(switch_block, meta);
+                .insert(switch_block, Rc::new(meta));
         }
 
         Ok(self
@@ -534,7 +547,8 @@ impl<'tcx> Compiler<'tcx> {
             .get(&ctx.fn_did)
             .unwrap()
             .switch_meta
-            .get(&switch_block))
+            .get(&switch_block)
+            .cloned())
     }
 
     fn make_switch_meta(

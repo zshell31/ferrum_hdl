@@ -107,7 +107,7 @@ idx_ty!(NodeId);
 idx_ty!(EdgeId);
 idx_ty!(Symbol, true);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Port {
     pub node: NodeId,
     pub port: u32,
@@ -116,6 +116,12 @@ pub struct Port {
 impl Display for Port {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "({} {})", self.node.as_u32(), self.port)
+    }
+}
+
+impl Debug for Port {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
     }
 }
 
@@ -216,6 +222,13 @@ impl<I: Copy, T> WithId<I, &RefCell<T>> {
 
     pub fn borrow_mut(&self) -> WithId<I, RefMut<'_, T>> {
         self.map(|inner| inner.borrow_mut())
+    }
+}
+
+impl<I: Copy, T> WithId<I, Option<T>> {
+    pub fn as_opt(self) -> Option<WithId<I, T>> {
+        let id = self.id;
+        self.inner.map(|inner| WithId { id, inner })
     }
 }
 

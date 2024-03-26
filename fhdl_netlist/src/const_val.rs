@@ -1,13 +1,13 @@
 use std::{
     cmp,
-    fmt::{self, Display},
+    fmt::{self, Debug, Display},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
 use fhdl_const_func::mask;
 
 // TODO: use long arithmetic
-#[derive(Debug, Clone, Copy)]
+#[derive(Clone, Copy)]
 pub struct ConstVal {
     val: u128,
     width: u128,
@@ -16,6 +16,12 @@ pub struct ConstVal {
 impl Display for ConstVal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}'d{}", self.width, self.val())
+    }
+}
+
+impl Debug for ConstVal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
     }
 }
 

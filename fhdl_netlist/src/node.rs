@@ -206,6 +206,13 @@ impl Node {
             _ => None,
         }
     }
+
+    pub fn mux(&self) -> Option<&Mux> {
+        match &*self.kind {
+            NodeKind::Mux(mux) => Some(mux),
+            _ => None,
+        }
+    }
 }
 
 pub trait MakeNode<Args> {

@@ -5,9 +5,10 @@ use smallvec::SmallVec;
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    netlist::{Chunks, Cursor, Module, ModuleId, NetList, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, ModuleId, NetList, NodeId, Port, WithId},
     node::{
-        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
+        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst, Mux,
         MuxInputs, NodeKind, TyOrData, DFF,
     },
 };
@@ -63,7 +64,7 @@ impl Transform {
         let node = module.node(node_id);
 
         let mut inline = false;
-        match &*node.kind {
+        match node.kind() {
             NodeKind::Pass(pass) => {
                 let pass = node.with(pass);
                 match module.to_const(pass.input(&module)) {
@@ -209,7 +210,7 @@ impl Transform {
                         let input_id = splitter.input(&module).node;
                         let input = &module[input_id];
 
-                        if let NodeKind::Merger(merger) = &*input.kind {
+                        if let NodeKind::Merger(merger) = input.kind() {
                             if splitter.rev != merger.rev
                                 && module.is_reversible(input_id, node_id)
                             {
@@ -292,34 +293,38 @@ impl Transform {
                 let cases_len = mux.cases.len();
                 let mux = node.with(mux);
 
-                let MuxInputs { sel, mut cases } = mux.inputs(&module);
+                let chunk = {
+                    let MuxInputs { sel, cases } = mux.inputs(&module);
 
-                let mut chunks = if cases_len == 1 {
-                    Some(cases.into_chunks())
-                } else {
-                    module.to_const(sel).and_then(|sel| {
-                        while let Some(case) = cases.next_case(&module) {
-                            match case {
-                                Case::Val(case) => {
-                                    if case == sel {
-                                        return Some(cases.into_chunks());
+                    let mut cases_ref = cases.into_iter();
+                    let chunk = if cases_len == 1 {
+                        Some(cases_ref.next().unwrap().1)
+                    } else {
+                        module.to_const(sel).and_then(|sel| {
+                            for (case, chunk) in cases_ref {
+                                match case {
+                                    Case::Val(case) => {
+                                        if case == sel {
+                                            return Some(chunk);
+                                        }
+                                    }
+                                    Case::Default => {
+                                        return Some(chunk);
                                     }
                                 }
-                                Case::Default => {
-                                    return Some(cases.into_chunks());
-                                }
                             }
-                        }
 
-                        None
-                    })
+                            None
+                        })
+                    };
+
+                    chunk.map(|chunk| chunk.collect::<SmallVec<[_; 1]>>())
                 };
 
-                if let Some(chunk) = chunks
-                    .as_mut()
-                    .and_then(|chunks: &mut Chunks<_>| chunks.next_chunk())
-                {
+                if let Some(chunk) = chunk {
                     module.reconnect_all_outgoing(node_id, chunk);
+                } else if !netlist.cfg().no_embed_muxs && mux.has_default() {
+                    Mux::transform_embedded_muxs(&mut module, node_id);
                 }
             }
 

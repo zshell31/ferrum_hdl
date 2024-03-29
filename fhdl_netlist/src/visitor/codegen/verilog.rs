@@ -5,7 +5,8 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     buffer::Buffer,
-    netlist::{Cursor, Module, NetList, NodeId, WithId},
+    cursor::Cursor,
+    netlist::{Module, NetList, NodeId, WithId},
     node::{
         BinOpInputs, Case, DFFInputs, MuxInputs, NetKind, Node, NodeKind, NodeOutput,
     },
@@ -233,7 +234,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
         let b = &mut self.buffer;
 
-        match &*node.kind {
+        match node.kind() {
             NodeKind::Input(_) => {}
             NodeKind::Pass(pass) => {
                 let input = node.with(pass).input(module);
@@ -409,7 +410,7 @@ impl<'n, W: Write> Verilog<'n, W> {
             }
             NodeKind::Mux(mux) => {
                 let mux = node.with(mux);
-                let MuxInputs { sel, mut cases } = mux.inputs(module);
+                let MuxInputs { sel, cases } = mux.inputs(module);
 
                 let outputs = &mux.outputs;
                 let single_assign =
@@ -426,7 +427,7 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                 b.push_tab();
 
-                while let Some((case, inputs)) = cases.next() {
+                for (case, inputs) in cases.into_iter() {
                     match case {
                         Case::Val(case) => {
                             b.write_tab()?;
@@ -443,8 +444,7 @@ impl<'n, W: Write> Verilog<'n, W> {
                         b.push_tab();
                     }
 
-                    let mut inputs = inputs.enumerate_();
-                    while let Some((idx, input)) = inputs.next_(module) {
+                    for (idx, input) in inputs.enumerate() {
                         if outputs[idx].skip {
                             continue;
                         }

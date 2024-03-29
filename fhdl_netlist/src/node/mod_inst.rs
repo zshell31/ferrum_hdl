@@ -2,7 +2,8 @@ use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    netlist::{Cursor, CursorMut, Module, ModuleId, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, ModuleId, NodeId, Port, WithId},
     symbol::Symbol,
 };
 
@@ -23,15 +24,16 @@ pub struct ModInstArgs<'m, I, O> {
 
 impl<'m, I, O> MakeNode<ModInstArgs<'m, I, O>> for ModInst
 where
-    I: CursorMut<Item = Port, Storage = Module>,
-    O: CursorMut<Item = Option<Symbol>, Storage = Module>,
+    I: IntoIterator<Item = Port>,
+    O: IntoIterator<Item = Option<Symbol>>,
 {
-    fn make(module: &mut Module, mut args: ModInstArgs<I, O>) -> NodeId {
+    fn make(module: &mut Module, args: ModInstArgs<I, O>) -> NodeId {
         let mod_inputs = args.module.mod_inputs();
         let mod_outputs = args.module.mod_outputs();
 
-        let mut outputs = SmallVec::with_capacity(args.outputs.size());
-        while let Some(sym) = args.outputs.next_mut(module) {
+        let arg_outputs = args.outputs.into_iter();
+        let mut outputs = SmallVec::with_capacity(arg_outputs.size_hint().0);
+        for sym in arg_outputs {
             let mod_output = args.module[mod_outputs[outputs.len()]];
 
             let ty = mod_output.ty;
@@ -49,7 +51,7 @@ where
         });
 
         let mut inputs = 0;
-        while let Some(input) = args.inputs.next_mut(module) {
+        for input in args.inputs {
             let ty = module[input].ty;
             let mod_in = args.module[mod_inputs[inputs as usize]];
             // TODO: how to handle signed types
@@ -60,7 +62,7 @@ where
         }
         assert_eq!(inputs as usize, mod_inputs.len());
 
-        if let NodeKind::ModInst(mod_inst) = &mut *module[node_id].kind {
+        if let NodeKind::ModInst(mod_inst) = module[node_id].kind_mut() {
             mod_inst.inputs = inputs;
         }
 
@@ -104,6 +106,6 @@ impl ModInst {
 
 impl WithId<NodeId, &'_ ModInst> {
     pub fn inputs<'m>(&self, module: &'m Module) -> impl Iterator<Item = Port> + 'm {
-        module.incoming(self.id).into_iter(module)
+        module.incoming(self.id).into_iter_(module)
     }
 }

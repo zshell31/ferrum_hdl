@@ -1,6 +1,7 @@
 use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
-    netlist::{Cursor, Module, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };

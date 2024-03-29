@@ -1,13 +1,13 @@
 use std::{
     cell::{Ref, RefCell},
-    iter::{self},
+    iter::{self, Peekable},
     rc::Rc,
 };
 
 use either::Either;
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{CursorMut, IterMut, Module, NodeId, Peekable, Port},
+    netlist::{Module, NodeId, Port},
     node::{Merger, MergerArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
@@ -277,32 +277,32 @@ impl<'tcx, 'a> ExtractPort for &'a Item<'tcx> {
 
 pub type CombineOutputsIter<'m> = impl Iterator<Item = Port> + 'm;
 
-pub struct CombineOutputs<'m, O: CursorMut<Item = Port>> {
+pub struct CombineOutputs<'m, O: Iterator<Item = Port>> {
     module: &'m mut Module,
     outputs: Peekable<O>,
 }
 
-impl<'m, O: CursorMut<Item = Port>> CombineOutputs<'m, O> {
+impl<'m, O: Iterator<Item = Port>> CombineOutputs<'m, O> {
     pub fn from(module: &'m mut Module, outputs: O) -> Self {
         Self {
             module,
-            outputs: outputs.peekable_(),
+            outputs: outputs.peekable(),
         }
     }
 }
 
 impl<'m> CombineOutputs<'m, CombineOutputsIter<'m>> {
     pub fn from_node(module: &'m mut Module, node_id: NodeId) -> Self {
-        let outputs = module.node_out_ports(node_id).peekable_();
+        let outputs = module.node_out_ports(node_id).peekable();
         Self { module, outputs }
     }
 }
 
-impl<'m, O: CursorMut<Item = Port, Storage = Module>> CombineOutputs<'m, O> {
+impl<'m, O: Iterator<Item = Port>> CombineOutputs<'m, O> {
     pub fn next_output<'tcx>(&mut self, item_ty: ItemTy<'tcx>) -> Item<'tcx> {
         match item_ty.kind() {
             ItemTyKind::Node(node_ty) => {
-                let output = self.outputs.next_mut(self.module).unwrap();
+                let output = self.outputs.next().unwrap();
                 assert_eq!(node_ty.width(), self.module[output].width());
                 Item::new(item_ty, ItemKind::Port(output))
             }
@@ -320,15 +320,14 @@ impl<'m, O: CursorMut<Item = Port, Storage = Module>> CombineOutputs<'m, O> {
                     )),
                 )
             }
-            ItemTyKind::Enum(_) => Item::new(
-                item_ty,
-                ItemKind::Port(self.outputs.next_mut(self.module).unwrap()),
-            ),
+            ItemTyKind::Enum(_) => {
+                Item::new(item_ty, ItemKind::Port(self.outputs.next().unwrap()))
+            }
         }
     }
 
     pub fn has_outputs(&mut self) -> bool {
-        self.outputs.peek(self.module).is_some()
+        self.outputs.peek().is_some()
     }
 }
 
@@ -346,7 +345,7 @@ pub trait ModuleExt<'tcx> {
     fn combine_from_node(&mut self, node_id: NodeId, item_ty: ItemTy<'tcx>)
         -> Item<'tcx>;
 
-    fn combine<O: CursorMut<Item = Port, Storage = Module>>(
+    fn combine<O: Iterator<Item = Port>>(
         &mut self,
         outputs: O,
         item_ty: ItemTy<'tcx>,
@@ -437,7 +436,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
         res
     }
 
-    fn combine<O: CursorMut<Item = Port, Storage = Module>>(
+    fn combine<O: Iterator<Item = Port>>(
         &mut self,
         outputs: O,
         item_ty: ItemTy<'tcx>,
@@ -459,12 +458,14 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                 } else {
                     let width = item.width();
 
-                    let items = group.items();
+                    let inputs = group
+                        .items()
+                        .iter()
+                        .map(|item| self.to_bitvec(item).port())
+                        .collect::<SmallVec<[_; 1]>>();
                     let merger = MergerArgs {
                         width,
-                        inputs: IterMut::new(items.iter(), |module, item| {
-                            module.to_bitvec(item).port()
-                        }),
+                        inputs,
                         rev: false,
                         sym: None,
                     };

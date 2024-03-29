@@ -472,7 +472,9 @@ impl<'tcx> Compiler<'tcx> {
                         default,
                     };
                     let mux = ctx.module.add::<_, Mux>(mux);
-                    let node_span = self.span_to_string(span, ctx.fn_did);
+                    let node_span = self
+                        .span_to_string(span, ctx.fn_did)
+                        .map(|span| format!("{span} ({switch_block:?})"));
                     ctx.module.add_span(mux, node_span);
 
                     let mux = ctx.module.combine_from_node(mux, output_ty);

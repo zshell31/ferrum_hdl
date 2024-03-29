@@ -3,7 +3,10 @@ use std::collections::VecDeque;
 use either::Either;
 use rustc_hash::FxHashSet;
 
-use crate::netlist::{Cursor, Module, ModuleId, NetList, Port, WithId};
+use crate::{
+    cursor::Cursor,
+    netlist::{Module, ModuleId, NetList, Port, WithId},
+};
 
 pub struct Reachability {
     ports: Vec<Port>,
@@ -62,7 +65,7 @@ impl Reachability {
                 if module.is_const(init)
                     && module
                         .outgoing(init)
-                        .into_iter(module)
+                        .into_iter_(module)
                         .all(|node| node == port.node)
                 {
                     module[init].skip = true;
@@ -75,7 +78,7 @@ impl Reachability {
             module[port.node].skip = false;
             module.skip = false;
 
-            let incoming = module.incoming(port.node).into_iter(module);
+            let incoming = module.incoming(port.node).into_iter_(module);
             let incoming = if let Some(exclude) = exclude {
                 Either::Left(incoming.filter(move |port| *port != exclude))
             } else {

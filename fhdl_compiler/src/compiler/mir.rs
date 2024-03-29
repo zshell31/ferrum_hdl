@@ -1,7 +1,7 @@
 use std::{convert::identity, fmt::Debug, iter, ops::Deref};
 
 use fhdl_netlist::{
-    netlist::{IterMut, Module, ModuleId},
+    netlist::{Module, ModuleId},
     node::{Pass, PassArgs},
     symbol::Symbol,
 };
@@ -261,8 +261,10 @@ impl<'tcx> Compiler<'tcx> {
         let module = &mut ctx.module;
         let output = ctx.locals.get(RETURN_PLACE);
 
-        let output = module.combine(
-            IterMut::new(output.iter(), |module, port| {
+        // TODO: optimize
+        let outputs = output
+            .iter()
+            .map(|port| {
                 let node = module.node(port.node);
                 let port = if node.is_input() || module.is_mod_output(port) {
                     let sym = module[port].sym;
@@ -275,10 +277,12 @@ impl<'tcx> Compiler<'tcx> {
                     port
                 };
                 module.add_mod_output(port);
+
                 port
-            }),
-            output.ty,
-        );
+            })
+            .collect::<SmallVec<[_; 1]>>();
+
+        let output = module.combine(outputs.into_iter(), output.ty);
         ctx.locals.place(RETURN_PLACE, output.clone());
 
         ctx.module.assign_names_to_item("out", &output, false);

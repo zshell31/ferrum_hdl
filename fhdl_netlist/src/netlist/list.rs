@@ -4,8 +4,10 @@ use std::{
 };
 
 use derive_where::derive_where;
+use tracing::debug;
 
-use super::{Cursor, IndexType};
+use super::IndexType;
+use crate::cursor::Cursor;
 
 pub trait ListItem<I: IndexType, D = ()> {
     fn next(&self) -> I;
@@ -56,6 +58,15 @@ pub struct ListCursor<S: ListStorage<D>, D = ()> {
 }
 
 impl<S: ListStorage<D>, D> ListCursor<S, D> {
+    fn new(idx: S::Idx) -> Self {
+        Self {
+            next: idx,
+            _dir: PhantomData,
+        }
+    }
+}
+
+impl<S: ListStorage<D>, D> ListCursor<S, D> {
     pub fn set_next(&mut self, next: S::Idx) {
         self.next = next;
     }
@@ -82,11 +93,9 @@ impl<S: ListStorage<D>, D> List<S, D> {
         self.head.is_empty()
     }
 
+    #[inline]
     pub fn cursor(&self) -> ListCursor<S, D> {
-        ListCursor {
-            next: self.head,
-            _dir: PhantomData,
-        }
+        ListCursor::new(self.head)
     }
 
     pub fn add(&mut self, storage: &mut S, idx: S::Idx) {
@@ -182,14 +191,16 @@ impl<S: ListStorage<D>, D> List<S, D> {
 
     #[allow(dead_code)]
     pub(super) fn dump(&self, storage: &S) {
-        println!("{}", self.dump_to_str(storage))
+        let mut buf = String::new();
+        buf.push_str(&self.dump_to_str(storage));
+        debug!("\n{}", buf);
     }
 
     pub(super) fn dump_to_str(&self, storage: &S) -> String {
         format!(
             "[{}]",
             self.cursor()
-                .into_iter(storage)
+                .into_iter_(storage)
                 .map(|idx| idx.as_usize().to_string())
                 .intersperse(", ".to_string())
                 .collect::<String>()

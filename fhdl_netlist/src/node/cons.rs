@@ -3,7 +3,7 @@ use smallvec::SmallVec;
 use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
     const_val::ConstVal,
-    netlist::{CursorMut, Module, NodeId},
+    netlist::{Module, NodeId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -82,15 +82,16 @@ impl MultiConst {
 }
 
 impl MultiConst {
-    fn new<O: CursorMut<Item = ConstArgs, Storage = Module>>(
-        module: &mut Module,
-        mut args: O,
-    ) -> Self {
-        let size = args.size();
+    fn new<O>(args: O) -> Self
+    where
+        O: IntoIterator<Item = ConstArgs>,
+    {
+        let args = args.into_iter();
+        let size = args.size_hint().0;
         let mut values = SmallVec::with_capacity(size);
         let mut outputs = SmallVec::with_capacity(size);
 
-        while let Some(arg) = args.next_mut(module) {
+        for arg in args {
             values.push(arg.value);
             outputs.push(NodeOutput::wire(arg.ty, arg.sym));
         }
@@ -105,10 +106,10 @@ impl MultiConst {
 
 impl<O> MakeNode<O> for MultiConst
 where
-    O: CursorMut<Item = ConstArgs, Storage = Module>,
+    O: IntoIterator<Item = ConstArgs>,
 {
     fn make(module: &mut Module, args: O) -> NodeId {
-        let node = MultiConst::new(module, args);
+        let node = MultiConst::new(args);
         if node.values.len() == 1 {
             module.add_node(Const::from_multi_const(
                 node.values[0],

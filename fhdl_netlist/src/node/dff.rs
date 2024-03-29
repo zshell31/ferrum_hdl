@@ -2,7 +2,8 @@ use ferrum_hdl::domain::{Polarity, SyncKind};
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    netlist::{Cursor, Module, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -120,7 +121,7 @@ impl MakeNode<DFFArgs> for DFF {
             port += 1;
         }
 
-        if let NodeKind::DFF(dff) = &mut *module[node_id].kind {
+        if let NodeKind::DFF(dff) = module[node_id].kind_mut() {
             dff.inputs = port as u8;
         }
 

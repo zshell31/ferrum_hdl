@@ -150,6 +150,14 @@ pub struct WithId<I, T> {
     pub inner: T,
 }
 
+impl<I: PartialEq, T> PartialEq for WithId<I, T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl<I: Eq, T> Eq for WithId<I, T> {}
+
 impl<I, T> WithId<I, T> {
     pub fn new(id: I, inner: T) -> Self {
         Self { id, inner }

@@ -9,11 +9,11 @@ use rustc_hash::FxHashMap;
 use super::{
     graph::{IncomingEdges, OutgoingEdges},
     list::{List, ListCursor, ListStorage},
-    Graph, IndexType, ListItem, ModuleId, NodeId, Port, PortPos, WithId,
+    EdgeId, Graph, IndexType, ListItem, ModuleId, NodeId, Port, PortPos, WithId,
 };
 use crate::{
     const_val::ConstVal,
-    netlist::Cursor,
+    cursor::Cursor,
     node::{
         Const, ConstArgs, Input, InputArgs, IsNode, MakeNode, ModInst, Node, NodeKind,
         NodeOutput, Pass, PassArgs,
@@ -145,9 +145,9 @@ impl NodeWithInputs {
 
     pub fn from_node(node_id: NodeId, module: &Module) -> Self {
         let node = &module[node_id];
-        let kind = (*node.kind).clone();
+        let kind = node.kind().clone();
 
-        NodeWithInputs::new(kind, module.incoming(node_id).into_iter(module))
+        NodeWithInputs::new(kind, module.incoming(node_id).into_iter_(module))
     }
 }
 
@@ -188,6 +188,45 @@ impl Module {
         node_id
     }
 
+    pub fn add_and_get_port<Args, N: MakeNode<Args>>(&mut self, args: Args) -> Port {
+        let node_id = self.add::<Args, N>(args);
+        let node = &self.graph[node_id];
+        assert_eq!(node.out_count(), 1);
+
+        Port {
+            node: node_id,
+            port: 0,
+        }
+    }
+
+    pub fn insert<Args, N: MakeNode<Args>>(
+        &mut self,
+        prev_node_id: NodeId,
+        args: Args,
+    ) -> NodeId {
+        let node_id = N::make(self, args);
+
+        self.add_mod_input(Port::new(node_id, 0));
+        self.list.insert(&mut self.graph, prev_node_id, node_id);
+
+        node_id
+    }
+
+    pub fn insert_and_get_port<Args, N: MakeNode<Args>>(
+        &mut self,
+        prev_node_id: NodeId,
+        args: Args,
+    ) -> Port {
+        let node_id = self.insert::<Args, N>(prev_node_id, args);
+        let node = &self.graph[node_id];
+        assert_eq!(node.out_count(), 1);
+
+        Port {
+            node: node_id,
+            port: 0,
+        }
+    }
+
     pub fn add_input(&mut self, ty: NodeTy, sym: Option<impl AsRef<str>>) -> Port {
         self.add_and_get_port::<_, Input>(InputArgs {
             ty,
@@ -209,20 +248,14 @@ impl Module {
         self.const_val(ty, 0)
     }
 
-    pub fn add_and_get_port<Args, N: MakeNode<Args>>(&mut self, args: Args) -> Port {
-        let node_id = self.add::<Args, N>(args);
-        let node = &self.graph[node_id];
-        assert_eq!(node.out_count(), 1);
-
-        Port {
-            node: node_id,
-            port: 0,
-        }
-    }
-
     pub fn add_span(&mut self, node_id: NodeId, span: Option<String>) {
         let node = &mut self.graph[node_id];
         node.set_span(span);
+    }
+
+    fn clone_span(&mut self, from: NodeId, to: NodeId) {
+        let span = self[from].span_rc();
+        self[to].set_span_rc(span);
     }
 
     pub(crate) fn replace<Args, N: MakeNode<Args>>(
@@ -231,8 +264,10 @@ impl Module {
         args: Args,
     ) {
         let new_node_id = N::make(self, args);
-        let new_node = self.node(new_node_id);
+        self.clone_span(node_id, new_node_id);
+
         let old_node = self.node(node_id);
+        let new_node = self.node(new_node_id);
 
         assert!(!old_node.is_input());
         assert!(!new_node.is_input());
@@ -256,13 +291,18 @@ impl Module {
     }
 
     #[inline]
-    pub(crate) fn add_edge(&mut self, port_out: Port, port_in: Port) {
-        self.graph.add_edge(port_out, port_in);
+    pub(crate) fn add_edge(&mut self, port_out: Port, port_in: Port) -> EdgeId {
+        self.graph.add_edge(port_out, port_in)
     }
 
     #[inline]
     pub fn incoming(&self, node_id: NodeId) -> Incoming {
         Incoming(self.graph.incoming(node_id))
+    }
+
+    #[inline]
+    pub fn incoming_iter(&self, node_id: NodeId) -> impl Iterator<Item = Port> + '_ {
+        self.incoming(node_id).into_iter_(self)
     }
 
     #[inline]
@@ -279,7 +319,7 @@ impl Module {
         assert_eq!(mod_inst.mod_id, orig_mod.id);
 
         self.incoming(mod_inst.id)
-            .into_iter(self)
+            .into_iter_(self)
             .map(|port| WithId::new(port, &self[port]))
             .zip(
                 orig_mod
@@ -406,7 +446,7 @@ impl Module {
     #[cfg(test)]
     pub fn nodes_vec(&self, skip: bool) -> Vec<NodeWithInputs> {
         self.nodes()
-            .into_iter(self)
+            .into_iter_(self)
             .filter(|node_id| !(skip && self[*node_id].skip))
             .map(|node_id| NodeWithInputs::from_node(node_id, self))
             .collect()
@@ -435,7 +475,7 @@ impl Module {
     }
 
     pub fn to_const(&self, port: Port) -> Option<ConstVal> {
-        match &*self.graph[port.node].kind {
+        match self.graph[port.node].kind() {
             NodeKind::Const(cons) => Some(cons.value()),
             NodeKind::MultiConst(multi_cons) => {
                 Some(multi_cons.value(port.port as usize))
@@ -446,7 +486,7 @@ impl Module {
 
     pub fn node_has_const_inputs(&self, node_id: NodeId) -> bool {
         self.incoming(node_id)
-            .into_iter(self)
+            .into_iter_(self)
             .all(|port| self.graph[port.node].is_const())
     }
 
@@ -458,10 +498,9 @@ impl Module {
     pub fn reconnect_all_outgoing(
         &mut self,
         node_id: NodeId,
-        new_ports: impl Cursor<Item = Port, Storage = Module>,
+        new_ports: impl IntoIterator<Item = Port>,
     ) {
-        let mut new_ports = new_ports.enumerate_();
-        while let Some((idx, new_port)) = new_ports.next_(self) {
+        for (idx, new_port) in new_ports.into_iter().enumerate() {
             let old_port = Port::new(node_id, idx as u32);
             self.reconnect_all_outgoing_(old_port, new_port);
         }
@@ -525,7 +564,7 @@ impl Module {
             && from.out_count() == to.in_count()
             && self
                 .incoming(from_id)
-                .into_iter(self)
+                .into_iter_(self)
                 .zip(to.outputs())
                 .all(|(from, to)| {
                     let from = &self[from];
@@ -534,7 +573,7 @@ impl Module {
             && self
                 .graph
                 .incoming(to_id)
-                .into_iter(&self.graph)
+                .into_iter_(&self.graph)
                 .all(|edge_id| {
                     let edge = &self.graph[edge_id];
                     let port_out = edge.port_out;
@@ -593,7 +632,7 @@ impl Module {
             for edge_id in source_mod
                 .graph
                 .incoming(node_id)
-                .into_iter(&source_mod.graph)
+                .into_iter_(&source_mod.graph)
             {
                 let edge = &source_mod.graph[edge_id];
                 let port_out = calc_port(edge.port_out);

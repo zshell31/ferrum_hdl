@@ -1,4 +1,3 @@
-mod cursor;
 mod graph;
 mod ident;
 mod index_storage;
@@ -7,7 +6,6 @@ mod module;
 
 use std::{cell::RefCell, ops::Index};
 
-pub use cursor::*;
 pub(crate) use graph::{Edges, Graph, IncomingDir, OutgoingDir};
 pub use ident::*;
 use index_storage::IndexStorage;

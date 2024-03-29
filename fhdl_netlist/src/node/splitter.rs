@@ -4,7 +4,8 @@ use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeOutput};
 use crate::{
-    netlist::{Cursor, CursorMut, Module, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -34,15 +35,16 @@ fn eval_start(rev: bool, width: u128) -> u128 {
 
 impl<O> MakeNode<SplitterArgs<O>> for Splitter
 where
-    O: CursorMut<Item = (NodeTy, Option<Symbol>), Storage = Module>,
+    O: IntoIterator<Item = (NodeTy, Option<Symbol>)>,
 {
-    fn make(module: &mut Module, mut args: SplitterArgs<O>) -> NodeId {
-        let mut outputs = SmallVec::with_capacity(args.outputs.size());
+    fn make(module: &mut Module, args: SplitterArgs<O>) -> NodeId {
+        let arg_outputs = args.outputs.into_iter();
+        let mut outputs = SmallVec::with_capacity(arg_outputs.size_hint().0);
 
         let width = module[args.input].width();
         let mut start = args.start.unwrap_or_else(|| eval_start(args.rev, width));
 
-        while let Some((ty, sym)) = args.outputs.next_mut(module) {
+        for (ty, sym) in arg_outputs {
             let ty_width = ty.width();
             if !args.rev {
                 assert!(

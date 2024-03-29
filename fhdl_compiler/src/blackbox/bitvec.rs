@@ -2,7 +2,7 @@ use std::iter;
 
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{IterMut, Module, Port},
+    netlist::{Module, Port},
     node::{Mux, MuxArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
 };
@@ -114,16 +114,21 @@ where
     let sel = module.to_bitvec(idx).port();
     let sel_width = idx.width();
 
-    let mux = MuxArgs::<_, _> {
-        outputs: output_ty.iter().map(|ty| (ty, None)),
-        sel,
-        variants: IterMut::new(0 .. count, |module, case| {
+    let variants = (0 .. count)
+        .map(|case| {
             let variant = mk_variant(module, case);
 
             (ConstVal::new(case, sel_width), variant)
-        }),
+        })
+        .collect::<Vec<_>>();
+
+    let mux = MuxArgs::<_, _> {
+        outputs: output_ty.iter().map(|ty| (ty, None)),
+        sel,
+        variants,
         default: None,
     };
+
     let mux = module.add::<_, Mux>(mux);
     let mux = module.combine_from_node(mux, output_ty);
     module.assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);

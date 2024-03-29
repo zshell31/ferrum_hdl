@@ -45,6 +45,10 @@ impl ConstVal {
         Self { val, width }
     }
 
+    pub fn zero(width: u128) -> Self {
+        Self { val: 0, width }
+    }
+
     #[inline]
     pub fn val(&self) -> u128 {
         val_(self.val, self.width)

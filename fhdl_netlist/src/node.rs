@@ -27,8 +27,9 @@ pub use self::{
     zero_extend::{Extend, ExtendArgs},
 };
 use crate::{
+    cursor::Cursor,
     netlist::{
-        Cursor, Edges, IncomingDir, IndexType, List, ListItem, Module, NetList, NodeId,
+        Edges, IncomingDir, IndexType, List, ListItem, Module, NetList, NodeId,
         OutgoingDir, Port, WithId,
     },
     node_ty::NodeTy,
@@ -84,9 +85,9 @@ impl NodeOutput {
 #[derive(Debug)]
 pub struct Node {
     pub skip: bool,
-    pub(crate) kind: Box<NodeKind>,
     pub(crate) incoming: List<Edges, IncomingDir>,
     pub(crate) outgoing: List<Edges, OutgoingDir>,
+    kind: Box<NodeKind>,
     next: NodeId,
     prev: NodeId,
     span: Option<Rc<String>>,
@@ -139,12 +140,30 @@ impl Node {
         node
     }
 
+    #[inline]
+    pub fn kind(&self) -> &NodeKind {
+        &self.kind
+    }
+
+    #[inline]
+    fn kind_mut(&mut self) -> &mut NodeKind {
+        &mut self.kind
+    }
+
     pub fn set_span(&mut self, span: Option<String>) {
         self.span = span.map(Rc::new);
     }
 
     pub fn span(&self) -> Option<&str> {
         self.span.as_ref().map(|s| s.as_str())
+    }
+
+    pub(crate) fn span_rc(&self) -> Option<Rc<String>> {
+        self.span.clone()
+    }
+
+    pub(crate) fn set_span_rc(&mut self, span: Option<Rc<String>>) {
+        self.span = span;
     }
 
     pub fn is_input(&self) -> bool {
@@ -187,7 +206,7 @@ impl Node {
     }
 
     pub fn mod_inst_mut(&mut self) -> Option<&mut ModInst> {
-        match &mut *self.kind {
+        match self.kind_mut() {
             NodeKind::ModInst(mod_inst) => Some(mod_inst),
             _ => None,
         }
@@ -201,7 +220,7 @@ impl Node {
     }
 
     pub fn dff_mut(&mut self) -> Option<&mut DFF> {
-        match &mut *self.kind {
+        match self.kind_mut() {
             NodeKind::DFF(dff) => Some(dff),
             _ => None,
         }
@@ -250,7 +269,7 @@ impl IsNode for Node {
 
     #[inline]
     fn outputs_mut(&mut self) -> &mut [NodeOutput] {
-        self.kind.outputs_mut()
+        self.kind_mut().outputs_mut()
     }
 }
 
@@ -369,7 +388,7 @@ impl WithId<NodeId, &'_ Node> {
                 tab,
                 module
                     .incoming(self.id)
-                    .into_iter(module)
+                    .into_iter_(module)
                     .map(|input| format!("{}{}{}", tab, tab, input))
                     .intersperse("\n".to_string())
                     .collect::<String>()

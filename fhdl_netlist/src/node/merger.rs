@@ -2,7 +2,8 @@ use std::fmt::Debug;
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    netlist::{Cursor, CursorMut, Module, NodeId, Port, WithId},
+    cursor::Cursor,
+    netlist::{Module, NodeId, Port, WithId},
     node_ty::NodeTy,
     symbol::Symbol,
 };
@@ -24,9 +25,9 @@ pub struct MergerArgs<I> {
 
 impl<I> MakeNode<MergerArgs<I>> for Merger
 where
-    I: CursorMut<Item = Port, Storage = Module>,
+    I: IntoIterator<Item = Port>,
 {
-    fn make(module: &mut Module, mut args: MergerArgs<I>) -> NodeId {
+    fn make(module: &mut Module, args: MergerArgs<I>) -> NodeId {
         let node_id = module.add_node(Merger {
             inputs: 0,
             output: [NodeOutput::wire(NodeTy::BitVec(args.width), args.sym)],
@@ -35,7 +36,7 @@ where
 
         let mut inputs = 0;
         let mut width_in = 0;
-        while let Some(input) = args.inputs.next_mut(module) {
+        for input in args.inputs {
             module.add_edge(input, Port::new(node_id, inputs));
 
             width_in += module[input].width();
@@ -45,7 +46,7 @@ where
         assert!(inputs > 0);
         assert_eq!(args.width, width_in);
 
-        if let NodeKind::Merger(merger) = &mut *module[node_id].kind {
+        if let NodeKind::Merger(merger) = module[node_id].kind_mut() {
             merger.inputs = inputs;
         }
 
@@ -72,6 +73,6 @@ impl IsNode for Merger {
 
 impl WithId<NodeId, &'_ Merger> {
     pub fn inputs<'m>(&self, module: &'m Module) -> impl Iterator<Item = Port> + 'm {
-        module.incoming(self.id).into_iter(module)
+        module.incoming(self.id).into_iter_(module)
     }
 }

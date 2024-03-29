@@ -1,10 +1,15 @@
-use std::ops::{Index, IndexMut};
+use std::{
+    fmt::Write,
+    ops::{Index, IndexMut},
+};
+
+use tracing::debug;
 
 use super::{
-    index_storage::IndexStorage, list::ListCursor, Cursor, EdgeId, IndexType, ListItem,
+    index_storage::IndexStorage, list::ListCursor, EdgeId, IndexType, ListItem,
     ListStorage, NodeId, Port,
 };
-use crate::node::Node;
+use crate::{cursor::Cursor, node::Node};
 
 pub trait Direction {
     const IDX: usize;
@@ -288,19 +293,30 @@ impl Graph {
 
     #[allow(dead_code)]
     pub(super) fn dump_edges(&self) {
+        let mut buf = String::new();
+
         for (node_id, node) in &self.nodes {
-            println!(
+            writeln!(
+                &mut buf,
                 "node {}: {} {}",
                 node_id,
                 node.incoming.dump_to_str(&self.edges),
                 node.outgoing.dump_to_str(&self.edges)
-            );
+            )
+            .unwrap();
         }
 
         for (edge_id, edge) in &self.edges {
-            println!("edge {}: {} -> {}", edge_id, edge.port_out, edge.port_in);
+            writeln!(
+                &mut buf,
+                "edge {}: {} -> {}",
+                edge_id, edge.port_out, edge.port_in
+            )
+            .unwrap();
         }
 
-        println!();
+        writeln!(&mut buf).unwrap();
+
+        debug!("\n{}", buf);
     }
 }

@@ -1,4 +1,7 @@
-use crate::netlist::{Cursor, IndexType, Module, ModuleId, NetList, WithId};
+use crate::{
+    cursor::Cursor,
+    netlist::{IndexType, Module, ModuleId, NetList, WithId},
+};
 
 pub struct Dump {
     skip: bool,
@@ -46,7 +49,7 @@ impl Dump {
             for port in node.out_ports() {
                 let links = module
                     .outgoing(port)
-                    .into_iter(*module)
+                    .into_iter_(*module)
                     .map(|node_id| node_id.as_u32().to_string())
                     .intersperse(", ".to_string())
                     .collect::<String>();

@@ -1,7 +1,8 @@
 use rustc_hash::FxHashMap;
 
 use crate::{
-    netlist::{Cursor, Module, ModuleId, NetList, WithId},
+    cursor::Cursor,
+    netlist::{Module, ModuleId, NetList, WithId},
     node::{IsNode, Node},
     symbol::Symbol,
 };

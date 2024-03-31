@@ -1,21 +1,26 @@
 use rustc_hash::FxHashMap;
-use smallvec::SmallVec;
 use tracing::debug;
 
-use super::{Case, Merger, MergerArgs, Mux, MuxArgs, MuxInputs, Node};
+use super::{Case, Mux, MuxArgs, MuxInputs, Node};
 use crate::{
     const_val::ConstVal,
-    netlist::{ListItem, Module, NodeId, Port, Symbol, WithId},
+    netlist::{ListItem, Module, NodeId, Port, WithId},
     utils::IteratorExt,
+    visitor::transform::ModCtx,
 };
 
 impl Mux {
-    pub fn transform_embedded_muxs(module: &mut Module, mux_id: NodeId) -> bool {
-        if let Some(embedded) = EmbeddedMuxs::collect_embedded_muxs(module, mux_id) {
-            let node = &module[mux_id];
+    pub fn transform_embedded_muxs(
+        mux_id: &mut NodeId,
+        module: &mut Module,
+        mod_ctx: &mut ModCtx,
+    ) {
+        let mux = module.node(*mux_id).map(|node| node.mux().unwrap());
+
+        if let Some(embedded) = EmbeddedMuxs::collect_embedded_muxs(mux, module) {
+            let node = &module[*mux_id];
             let span = node.span().unwrap();
 
-            let mux = node.mux().unwrap();
             let cases = &mux.cases;
 
             #[allow(dead_code)]
@@ -24,100 +29,108 @@ impl Mux {
                 case: ConstVal,
                 span: String,
                 nested: Vec<Nested>,
+                default: Option<Port>,
             }
 
             #[allow(dead_code)]
             #[derive(Debug)]
             struct Nested {
                 case: ConstVal,
-                inputs: Vec<Port>,
+                input: Port,
             }
             debug!(
                 "switch '{span}' has embedded switches {:#?}",
                 embedded
                     .muxs
                     .iter()
-                    .map(|(idx, (node_id, _))| {
+                    .map(|(idx, node_id)| {
                         let node = module.node(*node_id);
                         let span = node.span().unwrap().to_string();
+                        let mux = node.map(|node| node.mux().unwrap());
 
-                        let nested = node
-                            .map(|node| node.mux().unwrap())
-                            .inputs(module)
-                            .cases
-                            .into_iter()
-                            .filter(|(case, _)| !case.is_default())
-                            .map(|(case, inputs)| {
-                                let case = case.val();
-                                let inputs = inputs.collect();
-
-                                Nested { case, inputs }
-                            })
+                        let nested = mux
+                            .cases(module)
+                            .map(|(case, input)| Nested { case, input })
                             .collect();
+
+                        let default = mux.default(module);
 
                         Test {
                             case: cases[*idx],
                             span,
                             nested,
+                            default,
                         }
                     })
                     .collect::<Vec<_>>()
             );
-            embedded.transform(module, mux_id);
-            true
-        } else {
-            false
+            embedded.transform(mux_id, module, mod_ctx);
         }
     }
 }
 
 struct EmbeddedMuxs {
-    muxs: FxHashMap<usize, (NodeId, Port)>,
+    muxs: FxHashMap<usize, NodeId>,
     total_variants: usize,
     sel: Port,
     sel_width: u128,
+    default: Option<Port>,
 }
 
 impl EmbeddedMuxs {
-    fn collect_embedded_muxs(module: &Module, mux_id: NodeId) -> Option<EmbeddedMuxs> {
-        let mux = module.node(mux_id).map(|node| node.mux().unwrap());
-
-        if !mux.has_default() {
+    fn collect_embedded_muxs(
+        mux: WithId<NodeId, &Mux>,
+        module: &Module,
+    ) -> Option<EmbeddedMuxs> {
+        if !mux.has_default {
             return None;
         }
 
-        let MuxInputs { cases, .. } = mux.inputs(module);
-        let mut muxs: FxHashMap<usize, (NodeId, Port)> = Default::default();
+        let node_span = module[mux.id].span();
+        let span = tracing::debug_span!("embedded_muxs", node_span = node_span);
+        let _enter = span.enter();
+
+        let mut muxs: FxHashMap<usize, NodeId> = Default::default();
 
         let mut total_variants = 0;
-        for (idx, (case, chunk)) in cases.into_iter().enumerate() {
-            if let Case::Val(_) = case {
-                let case_mux = chunk
-                    .map(|input| module.node(input.node).map(Node::mux).as_opt())
-                    .into_one_item();
+        for (idx, (_, input)) in mux.inputs(module).cases.enumerate() {
+            let case_mux = module.node(input.node).map(Node::mux).as_opt();
 
-                if let Some(Some(case_mux)) = case_mux {
-                    if mux.has_the_same_default(case_mux, module) {
-                        let sel = case_mux.sel(module);
-                        muxs.insert(idx, (case_mux.id, sel));
-                        total_variants += case_mux.cases.len();
-                        continue;
-                    }
-                }
+            if let Some(case_mux) = case_mux {
+                muxs.insert(idx, case_mux.id);
+                total_variants += case_mux.cases.len();
+                continue;
             }
 
             total_variants += 1;
         }
 
         if !muxs.is_empty() {
-            let sel = muxs.values().map(|(_, sel)| *sel).into_one_item();
+            let one = muxs
+                .values()
+                .map(|mux| {
+                    let mux = module.node(*mux).map(|node| node.mux().unwrap());
+                    let sel = mux.sel(module);
+                    let default = mux.default(module);
 
-            if let Some(sel) = sel {
+                    (sel, default)
+                })
+                .fold_into_one();
+
+            if let Some((sel, default)) = one {
+                if let (Some(mux_default), Some(default)) = (mux.default(module), default)
+                {
+                    if mux_default != default {
+                        return None;
+                    }
+                }
                 let sel_width = module[sel].width();
+
                 return Some(EmbeddedMuxs {
                     muxs,
                     sel,
                     sel_width,
+                    default,
                     total_variants,
                 });
             }
@@ -126,35 +139,27 @@ impl EmbeddedMuxs {
         None
     }
 
-    fn transform(self, module: &mut Module, mux_id: NodeId) {
-        let node = module.node(mux_id);
+    fn transform(self, mux_id: &mut NodeId, module: &mut Module, mod_ctx: &mut ModCtx) {
+        let node = module.node(*mux_id);
         let prev_id = node.prev();
-        let mux = node.map(|node| node.mux().unwrap());
 
-        let outputs = mux
-            .outputs()
-            .map(|out| (out.ty, out.sym))
-            .collect::<SmallVec<[_; 1]>>();
+        let mux = node.map(|node| node.mux().unwrap());
+        let mux_ty = mux.output[0].ty;
+        let mux_sym = mux.output[0].sym;
 
         let sel1 = mux.sel(module);
-        let sel1_width = module[sel1].width();
         let sel2 = self.sel;
-        let sel2_width = self.sel_width;
 
-        let default = Some(mux.default(module).collect::<SmallVec<[_; 1]>>());
+        let default = self.default;
         let variants = self.make_new_variants(module, mux);
 
-        debug!("after transforming: {variants:#?}");
+        debug!("after transforming: default = {default:?}, variants = {variants:#?}",);
 
-        let new_sel = module.insert_and_get_port::<_, Merger>(prev_id, MergerArgs {
-            width: sel1_width + sel2_width,
-            inputs: [sel1, sel2],
-            rev: false,
-            sym: Some(Symbol::intern("sel")),
-        });
+        let new_sel = mod_ctx.get_or_add_combined_sel(module, prev_id, sel1, sel2);
 
-        module.replace::<_, Mux>(mux_id, MuxArgs {
-            outputs,
+        *mux_id = module.replace::<_, Mux>(*mux_id, MuxArgs {
+            ty: mux_ty,
+            sym: mux_sym,
             sel: new_sel,
             variants,
             default,
@@ -165,12 +170,13 @@ impl EmbeddedMuxs {
         self,
         module: &Module,
         mux: WithId<NodeId, &Mux>,
-    ) -> Vec<(ConstVal, SmallVec<[Port; 1]>)> {
+    ) -> Vec<(ConstVal, Port)> {
         let mut variants = Vec::with_capacity(self.total_variants);
 
-        let MuxInputs { cases, .. } = mux.inputs(module);
-        for variant in cases.into_iter().enumerate() {
-            self.extend_variants(module, &mut variants, variant);
+        let MuxInputs { sel, cases } = mux.inputs(module);
+        let sel_width = module[sel].width();
+        for variant in cases.enumerate() {
+            self.extend_variants(module, sel_width, &mut variants, variant);
         }
 
         variants
@@ -179,48 +185,43 @@ impl EmbeddedMuxs {
     fn extend_variants(
         &self,
         module: &Module,
-        variants: &mut Vec<(ConstVal, SmallVec<[Port; 1]>)>,
-        (case_idx, (case1, chunk1)): (usize, (Case, impl Iterator<Item = Port>)),
+        sel_width: u128,
+        variants: &mut Vec<(ConstVal, Port)>,
+        (case_idx, (case1, input1)): (usize, (Case, Port)),
     ) {
-        if case1.is_default() {
-            return;
+        fn shift(case1: Case, sel_width: u128, case2: ConstVal) -> ConstVal {
+            match case1 {
+                Case::Val(mut case1) | Case::DefaultVal(mut case1) => {
+                    case1.shift(case2);
+                    case1
+                }
+                Case::Default => {
+                    let mut case1 = ConstVal::zero(sel_width);
+                    case1.shift(case2);
+                    case1
+                }
+            }
         }
 
-        let mut case1 = case1.val();
-        let chunk1 = chunk1.collect::<SmallVec<[_; 1]>>();
-
         match self.muxs.get(&case_idx) {
-            Some((mux_id, _)) => {
-                let MuxInputs { cases, .. } = module
+            Some(mux_id) => {
+                let cases = module
                     .node(*mux_id)
                     .map(|node| node.mux().unwrap())
-                    .inputs(module);
+                    .cases(module);
 
-                variants.extend(
-                    cases
-                        .into_iter()
-                        .filter(|(case2, _)| !case2.is_default())
-                        .map(move |(case2, chunk2)| {
-                            let chunk2 = chunk2.collect::<SmallVec<[_; 1]>>();
+                variants.extend(cases.into_iter().map(move |(case2, input2)| {
+                    let case = shift(case1, sel_width, case2);
 
-                            let mut case1 = case1;
-                            case1.shift(case2.val());
-                            (
-                                case1,
-                                chunk1
-                                    .iter()
-                                    .map(|port| {
-                                        let idx = port.port as usize;
-                                        chunk2[idx]
-                                    })
-                                    .collect::<SmallVec<[_; 1]>>(),
-                            )
-                        }),
-                );
+                    (case, input2)
+                }));
             }
             None => {
-                case1.shift(ConstVal::zero(self.sel_width));
-                variants.push((case1, chunk1));
+                if let Case::Default = case1 {
+                    return;
+                }
+                let case = shift(case1, sel_width, ConstVal::zero(self.sel_width));
+                variants.push((case, input1));
             }
         }
     }

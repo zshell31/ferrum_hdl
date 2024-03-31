@@ -1,34 +1,77 @@
 use std::iter;
 
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
     cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, NodeId, Port, WithId},
+    netlist::{Module, ModuleId, NetList, NodeId, Port, Symbol, WithId},
     node::{
-        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst, Mux,
-        MuxInputs, NodeKind, TyOrData, DFF,
+        BinOp, BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, Merger, MergerArgs,
+        MultiConst, Mux, NodeKind, TyOrData, DFF,
     },
 };
 
 const NODES_LIMIT_TO_INLINE: usize = 10;
 
-pub struct Transform {}
+pub struct Transform {
+    ctx: TransformCtx,
+}
+
+#[derive(Default)]
+pub struct TransformCtx {
+    mod_ctx: FxHashMap<ModuleId, ModCtx>,
+}
+
+impl TransformCtx {
+    pub fn mod_ctx(&mut self, module_id: ModuleId) -> &mut ModCtx {
+        self.mod_ctx.entry(module_id).or_default()
+    }
+}
+
+#[derive(Default)]
+pub struct ModCtx {
+    combined_sel: FxHashMap<(Port, Port), Port>,
+}
+
+impl ModCtx {
+    pub fn get_or_add_combined_sel(
+        &mut self,
+        module: &mut Module,
+        prev_id: NodeId,
+        sel1: Port,
+        sel2: Port,
+    ) -> Port {
+        *self.combined_sel.entry((sel1, sel2)).or_insert_with(|| {
+            let sel1_width = module[sel1].width();
+            let sel2_width = module[sel2].width();
+
+            module.insert_and_get_port::<_, Merger>(prev_id, MergerArgs {
+                width: sel1_width + sel2_width,
+                inputs: [sel1, sel2],
+                rev: false,
+                sym: Some(Symbol::intern("sel")),
+            })
+        })
+    }
+}
 
 impl Transform {
     pub fn new() -> Self {
-        Self {}
+        Self {
+            ctx: Default::default(),
+        }
     }
 
-    pub fn run(self, netlist: &NetList) {
+    pub fn run(mut self, netlist: &NetList) {
         if let Some(top) = netlist.top {
             self.visit_module(netlist, top);
         }
     }
 
-    fn visit_module(&self, netlist: &NetList, mod_id: ModuleId) {
+    fn visit_module(&mut self, netlist: &NetList, mod_id: ModuleId) {
         let module = netlist.module(mod_id);
         let mut module = module.borrow_mut();
 
@@ -56,7 +99,7 @@ impl Transform {
     }
 
     fn transform(
-        &self,
+        &mut self,
         netlist: &NetList,
         mut module: WithId<ModuleId, &mut Module>,
         node_id: NodeId,
@@ -289,43 +332,9 @@ impl Transform {
                 }
             }
 
-            NodeKind::Mux(mux) => {
-                let cases_len = mux.cases.len();
-                let mux = node.with(mux);
-
-                let chunk = {
-                    let MuxInputs { sel, cases } = mux.inputs(&module);
-
-                    let mut cases_ref = cases.into_iter();
-                    let chunk = if cases_len == 1 {
-                        Some(cases_ref.next().unwrap().1)
-                    } else {
-                        module.to_const(sel).and_then(|sel| {
-                            for (case, chunk) in cases_ref {
-                                match case {
-                                    Case::Val(case) => {
-                                        if case == sel {
-                                            return Some(chunk);
-                                        }
-                                    }
-                                    Case::Default => {
-                                        return Some(chunk);
-                                    }
-                                }
-                            }
-
-                            None
-                        })
-                    };
-
-                    chunk.map(|chunk| chunk.collect::<SmallVec<[_; 1]>>())
-                };
-
-                if let Some(chunk) = chunk {
-                    module.reconnect_all_outgoing(node_id, chunk);
-                } else if !netlist.cfg().no_embed_muxs && mux.has_default() {
-                    Mux::transform_embedded_muxs(&mut module, node_id);
-                }
+            NodeKind::Mux(_) => {
+                let mod_ctx = self.ctx.mod_ctx(module.id);
+                Mux::transform(node_id, &mut module, mod_ctx);
             }
 
             NodeKind::DFF(dff) => {
@@ -393,9 +402,8 @@ mod tests {
     use super::*;
     use crate::{
         netlist::NodeWithInputs,
-        node::{Merger, MergerArgs, Splitter, SplitterArgs},
+        node::{Splitter, SplitterArgs},
         node_ty::NodeTy,
-        symbol::Symbol,
         visitor::reachability::Reachability,
     };
 

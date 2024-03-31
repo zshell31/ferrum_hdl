@@ -216,7 +216,7 @@ impl<'tcx> Item<'tcx> {
     }
 
     pub fn iter(&self) -> TreeIter<ItemIter<'tcx>> {
-        TreeIter::new(self.clone())
+        TreeIter::new(self.clone(), self.nodes())
     }
 
     #[inline]

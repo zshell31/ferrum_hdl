@@ -1,4 +1,5 @@
 use std::{
+    iter,
     ops::{Index, IndexMut},
     rc::Rc,
 };
@@ -151,6 +152,12 @@ impl NodeWithInputs {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PortOrConst {
+    Port(Port),
+    Const(ConstVal),
+}
+
 impl Module {
     pub fn new(name: impl AsRef<str>, is_top: bool) -> Self {
         Self {
@@ -262,7 +269,7 @@ impl Module {
         &mut self,
         node_id: NodeId,
         args: Args,
-    ) {
+    ) -> NodeId {
         let new_node_id = N::make(self, args);
         self.clone_span(node_id, new_node_id);
 
@@ -279,6 +286,8 @@ impl Module {
 
         self.list.insert(&mut self.graph, node_id, new_node_id);
         self.remove(node_id);
+
+        new_node_id
     }
 
     pub(crate) fn remove(&mut self, node_id: NodeId) {
@@ -481,6 +490,34 @@ impl Module {
                 Some(multi_cons.value(port.port as usize))
             }
             _ => None,
+        }
+    }
+
+    pub fn to_port_or_const(&self, port: Port) -> PortOrConst {
+        match self.to_const(port) {
+            Some(val) => PortOrConst::Const(val),
+            None => PortOrConst::Port(port),
+        }
+    }
+
+    pub fn reconnect_or_replace(&mut self, node_id: NodeId, input: PortOrConst) {
+        let node = &self[node_id];
+        assert_eq!(node.out_count(), 1);
+        match input {
+            PortOrConst::Port(input) => {
+                self.reconnect_all_outgoing(node_id, iter::once(input));
+            }
+            PortOrConst::Const(value) => {
+                let out = &node.outputs()[0];
+                let ty = out.ty;
+                let sym = out.sym;
+
+                self.replace::<_, Const>(node_id, ConstArgs {
+                    ty,
+                    sym,
+                    value: value.val(),
+                });
+            }
         }
     }
 

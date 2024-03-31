@@ -106,6 +106,10 @@ impl<'tcx> ArrayTy<'tcx> {
     pub fn width(&self) -> u128 {
         self.count * self.ty.width()
     }
+
+    fn nodes(&self) -> usize {
+        self.ty.nodes() * (self.count as usize)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -157,6 +161,10 @@ impl<'tcx> StructTy<'tcx> {
 
     pub fn width(&self) -> u128 {
         self.tys.iter().map(|ty| ty.width()).sum()
+    }
+
+    pub fn nodes(&self) -> usize {
+        self.tys.iter().map(|ty| ty.inner.nodes()).sum()
     }
 }
 
@@ -268,6 +276,10 @@ impl<'tcx> EnumTy<'tcx> {
     pub fn is_fieldless(&self) -> bool {
         self.variants.iter().all(|variant| variant.width() == 0)
     }
+
+    pub fn nodes(&self) -> usize {
+        1
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -294,6 +306,10 @@ impl<'tcx> ClosureTy<'tcx> {
             fn_generics,
             ty,
         }
+    }
+
+    pub fn nodes(&self) -> usize {
+        self.ty.nodes()
     }
 }
 
@@ -367,6 +383,16 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Enum(ty) => ty.width(),
         }
     }
+
+    pub fn nodes(&self) -> usize {
+        match self {
+            Self::Node(_) => 1,
+            Self::Array(ty) => ty.nodes(),
+            Self::Struct(ty) => ty.nodes(),
+            Self::Closure(ty) => ty.nodes(),
+            Self::Enum(ty) => ty.nodes(),
+        }
+    }
 }
 
 impl<'tcx> From<NodeTy> for ItemTyKind<'tcx> {
@@ -401,6 +427,7 @@ impl<'tcx> From<EnumTy<'tcx>> for ItemTyKind<'tcx> {
 pub struct WithTypeInfo<T> {
     internee: T,
     width: u128,
+    nodes: usize,
 }
 
 impl<T> Deref for WithTypeInfo<T> {
@@ -414,7 +441,12 @@ impl<T> Deref for WithTypeInfo<T> {
 impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
     pub fn new(internee: ItemTyKind<'tcx>) -> Self {
         let width = internee.width();
-        Self { internee, width }
+        let nodes = internee.nodes();
+        Self {
+            internee,
+            width,
+            nodes,
+        }
     }
 }
 
@@ -457,8 +489,12 @@ impl<'tcx> ItemTy<'tcx> {
         }
     }
 
+    pub fn nodes(&self) -> usize {
+        self.0.nodes
+    }
+
     pub fn iter(&self) -> TreeIter<ItemTyIter<'tcx>> {
-        TreeIter::new(*self)
+        TreeIter::new(*self, self.nodes())
     }
 
     #[inline]

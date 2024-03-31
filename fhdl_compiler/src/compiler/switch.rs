@@ -6,7 +6,7 @@ use std::{
 
 use fhdl_netlist::{
     const_val::ConstVal,
-    node::{Mux, MuxArgs, Splitter, SplitterArgs},
+    node::{Mux, Splitter, SplitterArgs},
 };
 use petgraph::{
     algo::dominators::{simple_fast, Dominators},
@@ -453,6 +453,7 @@ impl<'tcx> Compiler<'tcx> {
                     let default = switch.otherwise().map(|otherwise| {
                         let item =
                             Item::new(output_ty, Group::new(otherwise.values().cloned()));
+                        assert_eq!(output_ty.nodes(), item.nodes());
                         item.iter()
                     });
 
@@ -462,22 +463,24 @@ impl<'tcx> Compiler<'tcx> {
                             output_ty,
                             Group::new(variant.locals.values().cloned()),
                         );
+                        assert_eq!(output_ty.nodes(), item.nodes());
                         (case, item.iter())
                     });
 
-                    let mux = MuxArgs {
-                        outputs: output_ty.iter().map(|ty| (ty, None)),
-                        sel: discr,
-                        variants,
-                        default,
-                    };
-                    let mux = ctx.module.add::<_, Mux>(mux);
                     let node_span = self
                         .span_to_string(span, ctx.fn_did)
                         .map(|span| format!("{span} ({switch_block:?})"));
-                    ctx.module.add_span(mux, node_span);
 
-                    let mux = ctx.module.combine_from_node(mux, output_ty);
+                    let muxs = Mux::add_multiple_muxs(
+                        &mut ctx.module,
+                        discr,
+                        output_ty.iter(),
+                        variants,
+                        default,
+                        node_span,
+                    );
+                    let mux = ctx.module.combine(muxs.into_iter(), output_ty);
+
                     ctx.module
                         .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 

@@ -1,11 +1,11 @@
 pub trait IteratorExt: Iterator {
-    fn into_one_item(self) -> Option<Self::Item>
+    fn fold_into_one(self) -> Option<Self::Item>
     where
         Self::Item: Clone + PartialEq;
 }
 
 impl<I: Iterator> IteratorExt for I {
-    fn into_one_item(self) -> Option<Self::Item>
+    fn fold_into_one(self) -> Option<Self::Item>
     where
         Self::Item: Clone + PartialEq,
     {

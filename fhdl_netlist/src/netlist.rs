@@ -12,7 +12,7 @@ use index_storage::IndexStorage;
 pub(crate) use list::{List, ListItem, ListStorage};
 #[cfg(test)]
 pub(crate) use module::NodeWithInputs;
-pub use module::{Incoming, Module, NodeCursor, Outgoing};
+pub use module::{Incoming, Module, NodeCursor, Outgoing, PortOrConst};
 
 use crate::cfg::NetListCfg;
 

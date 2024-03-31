@@ -5,15 +5,17 @@ pub enum TreeNode<L, N> {
 
 pub struct TreeIter<I> {
     stack: Vec<I>,
+    size: usize,
 }
 
 impl<I> TreeIter<I> {
-    pub fn new<T>(seed: T) -> Self
+    pub fn new<T>(seed: T, size: usize) -> Self
     where
         T: IntoIterator<IntoIter = I>,
     {
         Self {
             stack: vec![seed.into_iter()],
+            size,
         }
     }
 }
@@ -43,5 +45,9 @@ where
         }
 
         None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.size, Some(self.size))
     }
 }

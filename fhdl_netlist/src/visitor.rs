@@ -2,7 +2,7 @@ mod codegen;
 mod dump;
 mod reachability;
 mod set_names;
-mod transform;
+pub(crate) mod transform;
 
 use std::{
     fs::File,

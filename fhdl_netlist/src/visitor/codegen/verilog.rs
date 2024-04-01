@@ -412,7 +412,9 @@ impl<'n, W: Write> Verilog<'n, W> {
                 let mux = node.with(mux);
                 let MuxInputs { sel, cases } = mux.inputs(module);
 
-                let output = mux.output[0].sym.unwrap();
+                let outputs = &mux.outputs;
+                let single_assign =
+                    outputs.iter().filter(|output| !output.skip).count() == 1;
                 let sel_sym = module[sel].sym.unwrap();
 
                 b.write_tab()?;
@@ -425,18 +427,41 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                 b.push_tab();
 
-                for (case, input) in cases.into_iter() {
-                    let input = module[input].sym.unwrap();
-
+                for (case, inputs) in cases.into_iter() {
                     match case {
                         Case::Val(case) => {
                             b.write_tab()?;
-                            b.write_fmt(format_args!("{case}: {output} = {input};\n"))?;
+                            b.write_fmt(format_args!("{case}: "))?;
                         }
-                        Case::Default | Case::DefaultVal(_) => {
+                        Case::Default => {
                             b.write_tab()?;
-                            b.write_fmt(format_args!("default: {output} = {input};\n"))?;
+                            b.write_str("default: ")?;
                         }
+                    }
+
+                    if !single_assign {
+                        b.write_str("begin\n")?;
+                        b.push_tab();
+                    }
+
+                    for (idx, input) in inputs.enumerate() {
+                        if outputs[idx].skip {
+                            continue;
+                        }
+
+                        let output = outputs[idx].sym.unwrap();
+                        let input = module[input].sym.unwrap();
+
+                        if !single_assign {
+                            b.write_tab()?;
+                        }
+                        b.write_fmt(format_args!("{output} = {input};\n"))?;
+                    }
+
+                    if !single_assign {
+                        b.pop_tab();
+                        b.write_tab()?;
+                        b.write_str("end\n")?;
                     }
                 }
 

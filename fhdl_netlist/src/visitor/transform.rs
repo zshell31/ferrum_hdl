@@ -1,68 +1,25 @@
 use std::iter;
 
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
     cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, NodeId, Port, Symbol, WithId},
+    netlist::{Module, ModuleId, NetList, NodeId, Port, WithId},
     node::{
-        BinOp, BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, Merger, MergerArgs,
-        MultiConst, Mux, NodeKind, TyOrData, DFF,
+        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
+        MuxInputs, NodeKind, TyOrData, DFF,
     },
 };
 
 const NODES_LIMIT_TO_INLINE: usize = 10;
 
-pub struct Transform {
-    ctx: TransformCtx,
-}
-
-#[derive(Default)]
-pub struct TransformCtx {
-    mod_ctx: FxHashMap<ModuleId, ModCtx>,
-}
-
-impl TransformCtx {
-    pub fn mod_ctx(&mut self, module_id: ModuleId) -> &mut ModCtx {
-        self.mod_ctx.entry(module_id).or_default()
-    }
-}
-
-#[derive(Default)]
-pub struct ModCtx {
-    combined_sel: FxHashMap<(Port, Port), Port>,
-}
-
-impl ModCtx {
-    pub fn get_or_add_combined_sel(
-        &mut self,
-        module: &mut Module,
-        prev_id: NodeId,
-        sel1: Port,
-        sel2: Port,
-    ) -> Port {
-        *self.combined_sel.entry((sel1, sel2)).or_insert_with(|| {
-            let sel1_width = module[sel1].width();
-            let sel2_width = module[sel2].width();
-
-            module.insert_and_get_port::<_, Merger>(prev_id, MergerArgs {
-                width: sel1_width + sel2_width,
-                inputs: [sel1, sel2],
-                rev: false,
-                sym: Some(Symbol::intern("sel")),
-            })
-        })
-    }
-}
+pub struct Transform {}
 
 impl Transform {
     pub fn new() -> Self {
-        Self {
-            ctx: Default::default(),
-        }
+        Self {}
     }
 
     pub fn run(mut self, netlist: &NetList) {
@@ -332,9 +289,41 @@ impl Transform {
                 }
             }
 
-            NodeKind::Mux(_) => {
-                let mod_ctx = self.ctx.mod_ctx(module.id);
-                Mux::transform(node_id, &mut module, mod_ctx);
+            NodeKind::Mux(mux) => {
+                let cases_len = mux.cases.len();
+                let mux = node.with(mux);
+
+                let chunk = {
+                    let MuxInputs { sel, cases } = mux.inputs(&module);
+
+                    let mut cases_ref = cases.into_iter();
+                    let chunk = if cases_len == 1 {
+                        Some(cases_ref.next().unwrap().1)
+                    } else {
+                        module.to_const(sel).and_then(|sel| {
+                            for (case, chunk) in cases_ref {
+                                match case {
+                                    Case::Val(case) => {
+                                        if case == sel {
+                                            return Some(chunk);
+                                        }
+                                    }
+                                    Case::Default => {
+                                        return Some(chunk);
+                                    }
+                                }
+                            }
+
+                            None
+                        })
+                    };
+
+                    chunk.map(|chunk| chunk.collect::<SmallVec<[_; 1]>>())
+                };
+
+                if let Some(chunk) = chunk {
+                    module.reconnect_all_outgoing(node_id, chunk);
+                }
             }
 
             NodeKind::DFF(dff) => {
@@ -401,8 +390,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        netlist::NodeWithInputs,
-        node::{Splitter, SplitterArgs},
+        netlist::{NodeWithInputs, Symbol},
+        node::{Merger, MergerArgs, Splitter, SplitterArgs},
         node_ty::NodeTy,
         visitor::reachability::Reachability,
     };
@@ -434,7 +423,6 @@ mod tests {
         let input3 = module.add_input(input3_ty, input3_sym);
 
         let merger = module.add_and_get_port::<_, Merger>(MergerArgs {
-            width: IN1 + IN2 + IN3,
             inputs: [input1, input2, input3].into_iter(),
             rev: false,
             sym: Some(Symbol::intern("merger")),

@@ -17,7 +17,6 @@ pub struct Merger {
 
 #[derive(Debug)]
 pub struct MergerArgs<I> {
-    pub width: u128,
     pub inputs: I,
     pub rev: bool,
     pub sym: Option<Symbol>,
@@ -30,24 +29,24 @@ where
     fn make(module: &mut Module, args: MergerArgs<I>) -> NodeId {
         let node_id = module.add_node(Merger {
             inputs: 0,
-            output: [NodeOutput::wire(NodeTy::BitVec(args.width), args.sym)],
+            output: [NodeOutput::wire(NodeTy::BitVec(0), args.sym)],
             rev: args.rev,
         });
 
         let mut inputs = 0;
-        let mut width_in = 0;
+        let mut width = 0;
         for input in args.inputs {
             module.add_edge(input, Port::new(node_id, inputs));
 
-            width_in += module[input].width();
+            width += module[input].width();
             inputs += 1;
         }
 
         assert!(inputs > 0);
-        assert_eq!(args.width, width_in);
 
         if let NodeKind::Merger(merger) = module[node_id].kind_mut() {
             merger.inputs = inputs;
+            merger.output[0].ty = NodeTy::BitVec(width);
         }
 
         node_id

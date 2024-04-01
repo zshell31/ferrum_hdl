@@ -1,9 +1,9 @@
-use std::iter::{self, Empty};
+use std::iter::{self};
 
 use fhdl_netlist::{
     const_val::ConstVal,
     netlist::{Module, Port},
-    node::{Mux, Splitter, SplitterArgs},
+    node::{Mux, MuxArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
 };
 use rustc_span::Span;
@@ -122,15 +122,13 @@ where
         })
         .collect::<Vec<_>>();
 
-    let muxs = Mux::add_multiple_muxs::<_, _, Empty<Port>>(
-        module,
+    let mux = module.add::<_, Mux>(MuxArgs::<_, _> {
+        outputs: output_ty.iter().map(|ty| (ty, None)),
         sel,
-        output_ty.iter(),
-        variants.into_iter(),
-        None,
-        None,
-    );
-    let mux = module.combine(muxs.into_iter(), output_ty);
+        variants,
+        default: None,
+    });
+    let mux = module.combine_from_node(mux, output_ty);
     module.assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 
     mux

@@ -4,10 +4,13 @@ use std::{
     rc::Rc,
 };
 
+use either::Either;
 use fhdl_netlist::{
     const_val::ConstVal,
-    node::{Mux, Splitter, SplitterArgs},
+    netlist::Port,
+    node::{Merger, MergerArgs, Mux, MuxArgs},
 };
+use itertools::Itertools;
 use petgraph::{
     algo::dominators::{simple_fast, Dominators},
     prelude::NodeIndex,
@@ -15,34 +18,34 @@ use petgraph::{
     Directed, Graph,
 };
 use rustc_data_structures::{
-    fx::{FxHashMap, FxHashSet},
+    fx::{FxHashMap, FxHashSet, FxIndexSet},
     graph::WithSuccessors,
 };
 use rustc_middle::{
     mir::{
-        BasicBlock, BasicBlocks, Local, Operand, SwitchTargets, TerminatorKind,
+        BasicBlock, BasicBlocks, Local, Operand, Rvalue, SwitchTargets, TerminatorKind,
         START_BLOCK,
     },
     ty::Ty,
 };
 use rustc_span::Span;
+use smallvec::{smallvec, SmallVec};
 use tracing::{debug, debug_span, error, instrument};
 
 use super::{
     item::{Group, Item, ModuleExt},
-    item_ty::ItemTyKind,
     Compiler, Context, SymIdent,
 };
 use crate::error::{Error, SpanError, SpanErrorKind};
 
 #[derive(Debug, Clone)]
 pub struct Branch<'tcx> {
-    pub discr: u128,
+    pub discr: ConstVal,
     pub locals: BTreeMap<Local, Item<'tcx>>,
 }
 
 impl<'tcx> Branch<'tcx> {
-    fn new(discr: u128) -> Self {
+    fn new(discr: ConstVal) -> Self {
         Self {
             discr,
             locals: Default::default(),
@@ -53,20 +56,16 @@ impl<'tcx> Branch<'tcx> {
 #[derive(Debug, Clone)]
 pub struct Switch<'tcx> {
     pub locals: Rc<SwitchLocals>,
-    pub discr: Item<'tcx>,
-    targets: usize,
     branches: Vec<Branch<'tcx>>,
     is_otherwise: bool,
     otherwise: Option<BTreeMap<Local, Item<'tcx>>>,
 }
 
 impl<'tcx> Switch<'tcx> {
-    pub fn new(locals: Rc<SwitchLocals>, discr: Item<'tcx>, targets: usize) -> Self {
+    pub(super) fn new(switch_meta: &SwitchMeta) -> Self {
         Self {
-            locals,
-            discr,
-            targets,
-            branches: Vec::with_capacity(targets),
+            locals: switch_meta.locals.clone(),
+            branches: Vec::with_capacity(switch_meta.targets.len()),
             is_otherwise: false,
             otherwise: None,
         }
@@ -76,7 +75,7 @@ impl<'tcx> Switch<'tcx> {
         self.locals.has(local)
     }
 
-    pub fn add_branch(&mut self, discr: Option<u128>) {
+    pub fn add_branch(&mut self, discr: Option<ConstVal>) {
         if let Some(discr) = discr {
             self.branches.push(Branch::new(discr));
             self.is_otherwise = false;
@@ -112,12 +111,7 @@ impl<'tcx> Switch<'tcx> {
         }
     }
 
-    fn branches_len(&self) -> usize {
-        self.branches.len() + self.otherwise.is_some() as usize
-    }
-
     pub fn branches(&self) -> impl DoubleEndedIterator<Item = &Branch<'tcx>> {
-        assert_eq!(self.targets, self.branches_len());
         self.branches.iter().map(|branch| {
             assert_eq!(self.locals.len(), branch.locals.len());
             for local in self.locals.iter() {
@@ -169,12 +163,12 @@ unsafe impl IndexType for BasicBlockWrap {
     }
 }
 
-pub(super) struct SwitchBlocks {
+pub(super) struct SwitchBlocks<'tcx> {
     post_dominators: Dominators<NodeIndex<BasicBlockWrap>>,
-    switch_meta: FxHashMap<BasicBlock, Rc<SwitchMeta>>,
+    switch_meta: FxHashMap<BasicBlock, Rc<SwitchMeta<'tcx>>>,
 }
 
-impl SwitchBlocks {
+impl<'tcx> SwitchBlocks<'tcx> {
     fn make(basic_blocks: &BasicBlocks) -> Self {
         let (root, graph) = create_rev_graph(basic_blocks);
         let post_dominators = simple_fast(&graph, root);
@@ -269,10 +263,13 @@ impl SwitchLocals {
     }
 }
 
+type Targets = Vec<(Option<SmallVec<[u128; 1]>>, BasicBlock)>;
+
 #[derive(Debug)]
-pub(super) struct SwitchMeta {
+pub(super) struct SwitchMeta<'tcx> {
     ignore: bool,
-    targets_count: usize,
+    discr: Rc<SmallVec<[Operand<'tcx>; 1]>>,
+    targets: Targets,
     locals: Rc<SwitchLocals>,
     convergent_block: BasicBlock,
 }
@@ -307,7 +304,85 @@ fn create_rev_graph(
     (root.unwrap(), graph)
 }
 
+type SwitchTargetIter<'a, 'tcx: 'a> =
+    impl Iterator<Item = (Option<u128>, BasicBlock)> + 'a;
+
+trait SwitchTargetsExt {
+    fn all_targets_with_def<'a, 'tcx>(
+        &'a self,
+        basic_blocks: &'a BasicBlocks<'tcx>,
+    ) -> SwitchTargetIter<'a, 'tcx>
+    where
+        'tcx: 'a;
+}
+
+impl SwitchTargetsExt for SwitchTargets {
+    fn all_targets_with_def<'a, 'tcx>(
+        &'a self,
+        basic_blocks: &'a BasicBlocks<'tcx>,
+    ) -> SwitchTargetIter<'a, 'tcx>
+    where
+        'tcx: 'a,
+    {
+        self.iter()
+            .map(|(val, target)| (Some(val), target))
+            .chain(iter::once((None, self.otherwise())))
+            .filter(|(_, target)| !basic_blocks[*target].is_empty_unreachable())
+    }
+}
+
+type TargetIter<'a, 'tcx: 'a> = impl Iterator<Item = (Option<ConstVal>, BasicBlock)> + 'a;
+
 impl<'tcx> Compiler<'tcx> {
+    fn get_discr(
+        &mut self,
+        switch_meta: &SwitchMeta<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<SmallVec<[Port; 1]>, Error> {
+        switch_meta
+            .discr
+            .iter()
+            .map(|discr| {
+                let discr = self.visit_operand(discr, ctx, span)?;
+                Ok(ctx.module.get_discr(&discr))
+            })
+            .collect()
+    }
+
+    fn get_targets<'a>(
+        &mut self,
+        switch_meta: &'a SwitchMeta<'tcx>,
+        discr: &'a [Port],
+        ctx: &'a Context<'tcx>,
+    ) -> Result<TargetIter<'a, 'tcx>, Error> {
+        Ok(switch_meta
+            .targets
+            .iter()
+            .map(move |(val, target)| match val {
+                Some(val) => {
+                    let val = (if val.len() == 1 {
+                        Either::Left(iter::once(val[0]).chain(iter::repeat(0)))
+                    } else {
+                        assert_eq!(val.len(), discr.len());
+
+                        Either::Right(val.iter().copied())
+                    })
+                    .zip(discr)
+                    .fold(
+                        ConstVal::zero(0),
+                        |mut acc, (val, discr)| {
+                            acc.shift(ConstVal::new(val, ctx.module[*discr].width()));
+                            acc
+                        },
+                    );
+
+                    (Some(val), *target)
+                }
+                None => (None, *target),
+            }))
+    }
+
     #[instrument(level = "debug", skip(self, discr, targets, ctx, span))]
     pub fn visit_switch(
         &mut self,
@@ -321,11 +396,17 @@ impl<'tcx> Compiler<'tcx> {
         let basic_blocks = &ctx.mir.basic_blocks;
 
         let has_projections = self.has_projections(discr);
-        let discr = self.visit_operand(discr, ctx, span)?;
+        let discr_item = self.visit_operand(discr, ctx, span)?;
+        if discr_item.is_unsigned() && !has_projections {
+            // handle `match unsigned<N>` block
+            // case 0 responds to Unsigned::Short
+            return Ok(Some(targets.target_for_value(0)));
+        }
 
         let switch_meta = match self.switch_meta(
             switch_block,
             basic_blocks,
+            discr.clone(),
             targets,
             &ctx.locals.switch_locals(),
             ctx,
@@ -336,13 +417,6 @@ impl<'tcx> Compiler<'tcx> {
             }
         };
 
-        if discr.is_unsigned() && !has_projections {
-            // handle `match unsigned<N>` block
-            // case 0 responds to Unsigned::Short
-            return Ok(Some(targets.target_for_value(0)));
-        }
-
-        let targets_count = switch_meta.targets_count;
         let convergent_block = switch_meta.convergent_block;
 
         if !switch_meta.ignore {
@@ -354,29 +428,21 @@ impl<'tcx> Compiler<'tcx> {
             let mux = match ctx.is_visited(switch_block) {
                 Some(mux) => mux,
                 None => {
-                    ctx.push_switch(Switch::new(
-                        switch_meta.locals.clone(),
-                        discr,
-                        targets_count,
-                    ));
+                    let discr = self.get_discr(&switch_meta, ctx, span)?;
+                    let targets = self
+                        .get_targets(&switch_meta, &discr, ctx)?
+                        .collect::<Vec<_>>();
 
-                    for (discr, target) in targets
-                        .iter()
-                        .map(|(discr, target)| (Some(discr), target))
-                        .chain(iter::once((None, targets.otherwise())))
-                    {
-                        if basic_blocks[target].is_empty_unreachable() {
-                            continue;
-                        }
-
+                    ctx.push_switch(Switch::new(&switch_meta));
+                    for (val, target) in targets {
                         if target != convergent_block {
                             let switch = ctx.last_switch().unwrap();
-                            switch.add_branch(discr);
+                            switch.add_branch(val);
 
                             self.visit_blocks(Some(target), Some(convergent_block), ctx)?;
                         } else {
                             let mut switch = ctx.pop_switch().unwrap();
-                            switch.add_branch(discr);
+                            switch.add_branch(val);
                             ctx.push_switch(switch);
                         }
 
@@ -407,40 +473,6 @@ impl<'tcx> Compiler<'tcx> {
 
                     let switch = ctx.pop_switch().unwrap();
 
-                    let (discr, discr_width) = match switch.discr.ty.kind() {
-                        ItemTyKind::Enum(enum_ty) => {
-                            let discr_ty = enum_ty.discr_ty();
-                            let discr = ctx.module.to_bitvec(&switch.discr);
-
-                            (
-                                Item::new(discr_ty, {
-                                    let splitter = SplitterArgs {
-                                        input: discr.port(),
-                                        outputs: iter::once((
-                                            discr_ty.node_ty(),
-                                            SymIdent::Discr.into(),
-                                        )),
-                                        start: None,
-                                        rev: true,
-                                    };
-                                    let splitter = ctx
-                                        .module
-                                        .add_and_get_port::<_, Splitter>(splitter);
-
-                                    let span = self.span_to_string(span, ctx.fn_did);
-                                    ctx.module.add_span(splitter.node, span);
-
-                                    splitter
-                                }),
-                                enum_ty.discr_width(),
-                            )
-                        }
-                        _ => {
-                            (ctx.module.to_bitvec(&switch.discr), switch.discr.ty.width())
-                        }
-                    };
-                    let discr = discr.port();
-
                     let output_ty = Ty::new_tup_from_iter(
                         self.tcx,
                         switch
@@ -458,28 +490,36 @@ impl<'tcx> Compiler<'tcx> {
                     });
 
                     let variants = switch.branches().map(|variant| {
-                        let case = ConstVal::new(variant.discr, discr_width);
                         let item = Item::new(
                             output_ty,
                             Group::new(variant.locals.values().cloned()),
                         );
                         assert_eq!(output_ty.nodes(), item.nodes());
-                        (case, item.iter())
+                        (variant.discr, item.iter())
                     });
 
+                    let discr = if discr.len() == 1 {
+                        discr[0]
+                    } else {
+                        ctx.module.add_and_get_port::<_, Merger>(MergerArgs {
+                            inputs: discr,
+                            rev: false,
+                            sym: SymIdent::Sel.into(),
+                        })
+                    };
+
+                    let mux = ctx.module.add::<_, Mux>(MuxArgs {
+                        outputs: output_ty.iter().map(|ty| (ty, None)),
+                        sel: discr,
+                        variants,
+                        default,
+                    });
                     let node_span = self
                         .span_to_string(span, ctx.fn_did)
                         .map(|span| format!("{span} ({switch_block:?})"));
+                    ctx.module.add_span(mux, node_span);
 
-                    let muxs = Mux::add_multiple_muxs(
-                        &mut ctx.module,
-                        discr,
-                        output_ty.iter(),
-                        variants,
-                        default,
-                        node_span,
-                    );
-                    let mux = ctx.module.combine(muxs.into_iter(), output_ty);
+                    let mux = ctx.module.combine_from_node(mux, output_ty);
 
                     ctx.module
                         .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
@@ -504,10 +544,11 @@ impl<'tcx> Compiler<'tcx> {
         &mut self,
         switch_block: BasicBlock,
         basic_blocks: &BasicBlocks<'tcx>,
+        discr: Operand<'tcx>,
         targets: &SwitchTargets,
         outer: &SwitchLocals,
         ctx: &mut Context<'tcx>,
-    ) -> Result<Option<Rc<SwitchMeta>>, Error> {
+    ) -> Result<Option<Rc<SwitchMeta<'tcx>>>, Error> {
         let switch_blocks = self
             .switch_meta
             .entry(ctx.fn_did)
@@ -529,6 +570,7 @@ impl<'tcx> Compiler<'tcx> {
                 let _enter = span.enter();
                 let meta = self.make_switch_meta(
                     basic_blocks,
+                    discr,
                     targets,
                     convergent_block,
                     outer,
@@ -547,29 +589,41 @@ impl<'tcx> Compiler<'tcx> {
                 .insert(switch_block, Rc::new(meta));
         }
 
-        Ok(self
-            .switch_meta
+        Ok(self.get_switch_meta(switch_block, ctx))
+    }
+
+    fn get_switch_meta(
+        &self,
+        switch_block: BasicBlock,
+        ctx: &Context<'tcx>,
+    ) -> Option<Rc<SwitchMeta<'tcx>>> {
+        self.switch_meta
             .get(&ctx.fn_did)
             .unwrap()
             .switch_meta
             .get(&switch_block)
-            .cloned())
+            .cloned()
     }
 
     fn make_switch_meta(
         &mut self,
         basic_blocks: &BasicBlocks<'tcx>,
+        discr1: Operand<'tcx>,
         targets: &SwitchTargets,
         convergent_block: BasicBlock,
         outer: &SwitchLocals,
         ctx: &mut Context<'tcx>,
-    ) -> Result<SwitchMeta, Error> {
-        let targets = targets.all_targets();
+    ) -> Result<SwitchMeta<'tcx>, Error> {
+        let otherwise1 = targets.otherwise();
+
+        let mut common_discr = None;
+        let mut nested_switches: FxIndexSet<BasicBlock> = Default::default();
 
         let mut search_along_branch = |start: BasicBlock| -> Result<SwitchLocals, Error> {
             let mut locals = SwitchLocals::default();
-            let mut to_visit = VecDeque::default();
+            let is_single_switch = self.is_single_switch(start, basic_blocks);
 
+            let mut to_visit = VecDeque::default();
             to_visit.push_back(start);
             while let Some(block) = to_visit.pop_front() {
                 if block == convergent_block {
@@ -588,65 +642,109 @@ impl<'tcx> Compiler<'tcx> {
                     }
                 }
 
-                let mut is_switch_block = false;
                 let terminator = block_data.terminator();
                 match &terminator.kind {
                     TerminatorKind::Call { destination, .. } => {
                         locals.add(destination.local, outer);
+                        to_visit.extend(terminator.successors());
                     }
-                    TerminatorKind::SwitchInt { targets, .. } => {
+                    TerminatorKind::SwitchInt {
+                        discr: discr2,
+                        targets,
+                    } => {
                         if let Some(switch_meta) = self.switch_meta(
                             block,
                             basic_blocks,
+                            discr2.clone(),
                             targets,
                             // locals of the current branch + outer locals of the current switchInt
                             // block are outer to the next switchInt block
                             &SwitchLocals::from_outer(outer.outer().chain(locals.iter())),
                             ctx,
                         )? {
-                            locals.extend(&switch_meta.locals, outer);
+                            let can_merge_switches = self.can_merge_switches(
+                                &discr1,
+                                otherwise1,
+                                &switch_meta.discr,
+                                targets.otherwise(),
+                                ctx,
+                            );
 
-                            is_switch_block = true;
+                            if is_single_switch && can_merge_switches {
+                                let discr = switch_meta.discr.clone();
+                                if *common_discr.get_or_insert(discr) == switch_meta.discr
+                                {
+                                    nested_switches.insert(start);
+                                }
+                            }
+
+                            locals.extend(&switch_meta.locals, outer);
                             to_visit.push_back(switch_meta.convergent_block);
                         }
                     }
-                    _ => {}
-                }
-
-                if !is_switch_block {
-                    to_visit.extend(block_data.terminator().successors());
+                    _ => {
+                        to_visit.extend(terminator.successors());
+                    }
                 }
             }
 
             Ok(locals)
         };
 
-        let mut targets_count = 0;
-        let mut targets = targets
-            .iter()
-            .filter(|target| {
-                if basic_blocks[**target].is_empty_unreachable() {
-                    false
-                } else {
-                    targets_count += 1;
-                    true
-                }
-            })
-            .copied();
+        let mut targets_iter = targets.all_targets_with_def(basic_blocks);
 
-        let target = targets.next().unwrap();
+        let (_, target) = targets_iter.next().unwrap();
         let mut locals = search_along_branch(target)?;
-        for target in targets {
-            if basic_blocks[target].is_empty_unreachable() {
-                continue;
-            }
-
+        for (_, target) in targets_iter {
             locals.merge(search_along_branch(target)?);
+        }
+
+        let mut new_targets = Vec::with_capacity(targets.all_targets().len());
+        let mut discr = smallvec![discr1];
+
+        if common_discr.is_some() && !nested_switches.is_empty() {
+            let common_discr = common_discr.unwrap();
+            discr.extend(common_discr.iter().cloned());
+
+            for (val1, target1) in targets.all_targets_with_def(basic_blocks) {
+                if nested_switches.contains(&target1) {
+                    let switch_meta = self.get_switch_meta(target1, ctx).unwrap();
+
+                    new_targets.extend(
+                        switch_meta
+                            .targets
+                            .iter()
+                            .filter(|(val2, _)| val2.is_some())
+                            .map(|(val2, target2)| {
+                                let val = if let (Some(val1), Some(val2)) =
+                                    (val1, val2.as_ref())
+                                {
+                                    let mut val1 = smallvec![val1];
+                                    val1.extend(val2.iter().copied());
+                                    Some(val1)
+                                } else {
+                                    None
+                                };
+
+                                (val, *target2)
+                            }),
+                    );
+                } else {
+                    new_targets.push((val1.map(|val| smallvec![val]), target1));
+                }
+            }
+        } else {
+            new_targets.extend(
+                targets
+                    .all_targets_with_def(basic_blocks)
+                    .map(|(val, target)| (val.map(|val| smallvec![val]), target)),
+            );
         }
 
         Ok(SwitchMeta {
             ignore: locals.ignore(),
-            targets_count,
+            discr: Rc::new(discr),
+            targets: new_targets,
             locals: Rc::new(locals),
             convergent_block,
         })
@@ -657,5 +755,48 @@ impl<'tcx> Compiler<'tcx> {
             .place()
             .filter(|place| !place.projection.is_empty())
             .is_some()
+    }
+
+    fn is_single_switch<'a>(
+        &self,
+        target: BasicBlock,
+        basic_blocks: &'a BasicBlocks<'tcx>,
+    ) -> bool {
+        let block = &basic_blocks[target];
+
+        block
+            .statements
+            .iter()
+            .map(|stmt| {
+                stmt.kind.as_assign().and_then(|(_, rvalue)| match rvalue {
+                    Rvalue::Discriminant(discr) => Some(discr),
+                    _ => None,
+                })
+            })
+            .at_most_one()
+            .ok()
+            .is_some()
+            && block.terminator().kind.as_switch().is_some()
+    }
+
+    fn can_merge_switches(
+        &self,
+        discr1: &Operand<'tcx>,
+        otherwise1: BasicBlock,
+        discr2: &[Operand<'tcx>],
+        otherwise2: BasicBlock,
+        ctx: &Context<'tcx>,
+    ) -> bool {
+        if otherwise1 == otherwise2 {
+            let discr1_ty = discr1.place().map(|place| place.ty(ctx.mir, self.tcx).ty);
+
+            discr2.iter().all(|discr2| {
+                let discr2_ty =
+                    discr2.place().map(|place| place.ty(ctx.mir, self.tcx).ty);
+                discr1_ty == discr2_ty
+            })
+        } else {
+            false
+        }
     }
 }

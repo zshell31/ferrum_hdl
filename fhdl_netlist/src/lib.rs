@@ -16,7 +16,7 @@ pub mod netlist;
 pub mod node;
 pub mod node_ty;
 pub mod symbol;
-mod utils;
+pub mod utils;
 pub mod visitor;
 
 pub(crate) type FxIndexMap<K, V> = IndexMap<K, V, BuildHasherDefault<FxHasher>>;

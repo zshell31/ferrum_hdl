@@ -174,7 +174,7 @@ pub struct Compiler<'tcx> {
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
-    switch_meta: FxHashMap<DefId, SwitchBlocks>,
+    switch_meta: FxHashMap<DefId, SwitchBlocks<'tcx>>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     allocated_ty: FxHashMap<ItemTyKind<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,

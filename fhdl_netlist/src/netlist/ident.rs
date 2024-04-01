@@ -240,6 +240,15 @@ impl<I: Copy, T> WithId<I, Option<T>> {
     }
 }
 
+impl<I: Copy, T> WithId<I, &mut T> {
+    pub fn reborrow(&mut self) -> WithId<I, &mut T> {
+        WithId {
+            id: self.id,
+            inner: &mut *self.inner,
+        }
+    }
+}
+
 impl<I, T> Deref for WithId<I, T> {
     type Target = T;
 

@@ -375,6 +375,8 @@ pub trait ModuleExt<'tcx> {
         variant_idx: VariantIdx,
     ) -> Item<'tcx>;
 
+    fn get_discr(&mut self, discr: &Item<'tcx>) -> Port;
+
     fn mk_item_from_ty(
         &mut self,
         ty: ItemTy<'tcx>,
@@ -456,15 +458,12 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                     let item = group.by_idx(0);
                     self.to_bitvec(&item)
                 } else {
-                    let width = item.width();
-
                     let inputs = group
                         .items()
                         .iter()
                         .map(|item| self.to_bitvec(item).port())
                         .collect::<SmallVec<[_; 1]>>();
                     let merger = MergerArgs {
-                        width,
                         inputs,
                         rev: false,
                         sym: None,
@@ -599,13 +598,29 @@ impl<'tcx> ModuleExt<'tcx> for Module {
         };
 
         let merger = MergerArgs {
-            width: enum_ty.width(),
             inputs,
             rev: false,
             sym: None,
         };
 
         Item::new(enum_ty, self.add_and_get_port::<_, Merger>(merger))
+    }
+
+    fn get_discr(&mut self, discr: &Item<'tcx>) -> Port {
+        match discr.ty.kind() {
+            ItemTyKind::Enum(enum_ty) => {
+                let discr_ty = enum_ty.discr_ty();
+                let discr = self.to_bitvec(discr);
+
+                self.add_and_get_port::<_, Splitter>(SplitterArgs {
+                    input: discr.port(),
+                    outputs: iter::once((discr_ty.node_ty(), SymIdent::Discr.into())),
+                    start: None,
+                    rev: true,
+                })
+            }
+            _ => self.to_bitvec(discr).port(),
+        }
     }
 
     fn mk_item_from_ty(

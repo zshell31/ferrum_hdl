@@ -788,12 +788,26 @@ impl<'tcx> Compiler<'tcx> {
                 BlackboxTy::Signed => self
                     .generic_const(ty, 0, generics, span)?
                     .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)))),
+                BlackboxTy::UnsignedInner => None,
             };
 
             return Ok(item_ty);
         }
 
         Ok(None)
+    }
+
+    pub fn is_inner_ty(&self, ty: Ty<'tcx>) -> bool {
+        let def_id = match ty_def_id(ty) {
+            Some(def_id) => def_id,
+            None => return false,
+        };
+        let blackbox_ty = match self.find_blackbox_ty(def_id) {
+            Some(blackbox_ty) => blackbox_ty,
+            None => return false,
+        };
+
+        matches!(blackbox_ty, BlackboxTy::UnsignedInner)
     }
 
     pub fn generic_ty(

@@ -8,6 +8,7 @@ pub mod item_ty;
 pub mod mir;
 mod pins;
 pub mod switch;
+mod switch_tuple;
 mod sym_ident;
 mod trie;
 mod utils;

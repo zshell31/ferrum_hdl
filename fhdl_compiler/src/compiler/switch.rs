@@ -271,7 +271,7 @@ pub(super) struct SwitchMeta<'tcx> {
     discr: Rc<SmallVec<[Operand<'tcx>; 1]>>,
     targets: Targets,
     locals: Rc<SwitchLocals>,
-    convergent_block: BasicBlock,
+    pub(super) convergent_block: BasicBlock,
 }
 
 fn create_rev_graph(
@@ -397,11 +397,6 @@ impl<'tcx> Compiler<'tcx> {
 
         let has_projections = self.has_projections(discr);
         let discr_item = self.visit_operand(discr, ctx, span)?;
-        if discr_item.is_unsigned() && !has_projections {
-            // handle `match unsigned<N>` block
-            // case 0 responds to Unsigned::Short
-            return Ok(Some(targets.target_for_value(0)));
-        }
 
         let switch_meta = match self.switch_meta(
             switch_block,
@@ -416,6 +411,12 @@ impl<'tcx> Compiler<'tcx> {
                 return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
             }
         };
+
+        if discr_item.is_unsigned() && !has_projections {
+            // handle `match unsigned<N>` block
+            // case 0 responds to Unsigned::Short
+            return Ok(Some(targets.target_for_value(0)));
+        }
 
         let convergent_block = switch_meta.convergent_block;
 
@@ -577,7 +578,7 @@ impl<'tcx> Compiler<'tcx> {
                     ctx,
                 )?;
 
-                debug!("{meta:#?}");
+                // debug!("{meta:#?}");
 
                 meta
             };
@@ -592,7 +593,7 @@ impl<'tcx> Compiler<'tcx> {
         Ok(self.get_switch_meta(switch_block, ctx))
     }
 
-    fn get_switch_meta(
+    pub fn get_switch_meta(
         &self,
         switch_block: BasicBlock,
         ctx: &Context<'tcx>,

@@ -195,6 +195,10 @@ impl<'tcx> Compiler<'tcx> {
                 }
             }
 
+            // let switch = self.try_make_switch_tuple(block, &ctx)
+            let switches = self.collect_switch_tuples(&ctx);
+            debug!("paths: {switches:#?}");
+
             let module_id = self.netlist.add_module(ctx.module);
 
             self.evaluated_modules.insert(mono_item, module_id);

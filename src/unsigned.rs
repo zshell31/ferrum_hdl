@@ -23,11 +23,8 @@ use crate::{
     trace::{bool_to_vcd, TraceTy, TraceVars, Traceable, Tracer},
 };
 
-#[allow(non_camel_case_types)]
-#[derive(Debug, Clone)]
-pub struct _priv<T>(pub(crate) T);
-
 #[derive(Debug, Clone, PartialEq)]
+#[blackbox_ty(UnsignedInner)]
 pub(crate) enum U_ {
     Short(u128),
     Long(BigUint),

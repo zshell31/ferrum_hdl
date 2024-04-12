@@ -29,9 +29,7 @@ macro_rules! idx_ty {
         impl ::std::fmt::Debug for $name {
             #[inline]
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                f.debug_tuple(stringify!($name))
-                    .field(&self.to_string())
-                    .finish()
+                ::std::fmt::Display::fmt(self, f)
             }
         }
 

@@ -8,6 +8,7 @@ pub mod item_ty;
 mod locals;
 pub mod mir;
 mod pins;
+mod post_dominator;
 pub mod switch;
 mod switch_tuple;
 mod sym_ident;
@@ -52,7 +53,7 @@ use self::{
     item_ty::{ItemTy, ItemTyKind},
     mir::DefIdOrPromoted,
     pins::PinConstraints,
-    switch::SwitchBlocks,
+    post_dominator::PostDominator,
 };
 use crate::error::{Error, SpanError};
 
@@ -177,11 +178,11 @@ pub struct Compiler<'tcx> {
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
-    switch_meta: FxHashMap<DefId, SwitchBlocks<'tcx>>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     allocated_ty: FxHashMap<ItemTyKind<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
     pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
+    post_dominator: FxHashMap<DefId, PostDominator>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -199,11 +200,11 @@ impl<'tcx> Compiler<'tcx> {
             crates,
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
-            switch_meta: Default::default(),
             item_ty: Default::default(),
             allocated_ty: Default::default(),
             file_names: Default::default(),
             pin_constr: Default::default(),
+            post_dominator: Default::default(),
         }
     }
 

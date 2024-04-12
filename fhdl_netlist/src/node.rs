@@ -98,12 +98,24 @@ pub struct Node {
 }
 
 impl GraphNode for Node {
-    fn incoming(&self) -> List<Edges, IncomingDir> {
-        self.incoming
+    #[inline]
+    fn incoming(&self) -> &List<Edges, IncomingDir> {
+        &self.incoming
     }
 
-    fn outgoing(&self) -> List<Edges, OutgoingDir> {
-        self.outgoing
+    #[inline]
+    fn outgoing(&self) -> &List<Edges, OutgoingDir> {
+        &self.outgoing
+    }
+
+    #[inline]
+    fn incoming_mut(&mut self) -> &mut List<Edges, IncomingDir> {
+        &mut self.incoming
+    }
+
+    #[inline]
+    fn outgoing_mut(&mut self) -> &mut List<Edges, OutgoingDir> {
+        &mut self.outgoing
     }
 }
 

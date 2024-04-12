@@ -51,3 +51,7 @@ where
         (self.size, Some(self.size))
     }
 }
+
+// https://stackoverflow.com/a/61452150
+pub trait Captures<'tcx> {}
+impl<'tcx, T: ?Sized> Captures<'tcx> for T {}

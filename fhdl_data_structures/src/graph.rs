@@ -103,9 +103,13 @@ impl<D: Direction> ListStorage<D> for Edges {
 }
 
 pub trait GraphNode {
-    fn incoming(&self) -> List<Edges, IncomingDir>;
+    fn incoming(&self) -> &List<Edges, IncomingDir>;
 
-    fn outgoing(&self) -> List<Edges, OutgoingDir>;
+    fn outgoing(&self) -> &List<Edges, OutgoingDir>;
+
+    fn incoming_mut(&mut self) -> &mut List<Edges, IncomingDir>;
+
+    fn outgoing_mut(&mut self) -> &mut List<Edges, OutgoingDir>;
 }
 
 #[derive_where(Debug, Default; N: Debug)]
@@ -206,10 +210,10 @@ impl<N: GraphNode> Graph<N> {
     pub fn add_edge(&mut self, port_out: Port, port_in: Port) -> EdgeId {
         let edge_id = self.push_edge(port_out, port_in);
         self.nodes[port_out.node]
-            .outgoing()
+            .outgoing_mut()
             .add(&mut self.edges, edge_id);
         self.nodes[port_in.node]
-            .incoming()
+            .incoming_mut()
             .add(&mut self.edges, edge_id);
 
         edge_id
@@ -221,10 +225,10 @@ impl<N: GraphNode> Graph<N> {
         let port_in = edge.port_in.node;
 
         self.nodes[port_out]
-            .outgoing()
+            .outgoing_mut()
             .remove(&mut self.edges, edge_id);
         self.nodes[port_in]
-            .incoming()
+            .incoming_mut()
             .remove(&mut self.edges, edge_id);
 
         self.edges.swap_remove(&edge_id);
@@ -288,16 +292,16 @@ impl<N: GraphNode> Graph<N> {
 
             // Remove from old_edge.port_out.outgoing
             self.nodes[port_out.node]
-                .outgoing()
+                .outgoing_mut()
                 .remove(&mut self.edges, old_edge_id);
 
             // Add to new_edge.port_out.outgoing
             self.nodes[new_port.node]
-                .outgoing()
+                .outgoing_mut()
                 .add(&mut self.edges, new_edge_id);
 
             // Replace in old_edge.port_in.incoming
-            self.nodes[port_in.node].incoming().replace(
+            self.nodes[port_in.node].incoming_mut().replace(
                 &mut self.edges,
                 old_edge_id,
                 new_edge_id,

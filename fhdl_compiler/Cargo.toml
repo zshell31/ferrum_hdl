@@ -23,6 +23,7 @@ rustc_private = true
 anstream = "0.6.4"
 anstyle = { workspace = true }
 anyhow = { workspace = true }
+auto_enums = { workspace = true }
 bumpalo = { workspace = true, features = ["collections", "allocator_api"] }
 either = { workspace = true }
 ferrum_hdl = { path = "../" }

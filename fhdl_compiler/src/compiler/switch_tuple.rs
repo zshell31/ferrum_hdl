@@ -14,7 +14,6 @@ use rustc_middle::mir::{
     BasicBlock, BasicBlockData, BasicBlocks, Operand, Place, PlaceElem, Rvalue,
     TerminatorKind, START_BLOCK,
 };
-use tracing::debug;
 
 use super::{Compiler, Context};
 
@@ -223,9 +222,10 @@ impl<'tcx> Compiler<'tcx> {
                 if let Some(switch) = self.try_make_switch_tuple(block, ctx) {
                     switches.insert(block, switch);
 
-                    let meta = self.get_switch_meta(block, ctx).unwrap();
-                    to_visit.push_back(meta.convergent_block);
-                    continue;
+                    // let meta = self.get_switch_meta(block, ctx).unwrap();
+                    // to_visit.push_back(meta.convergent_block);
+                    todo!()
+                    // continue;
                 }
             }
 

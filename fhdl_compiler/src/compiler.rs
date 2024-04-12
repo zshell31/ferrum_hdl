@@ -5,6 +5,7 @@ pub mod context;
 pub mod func;
 pub mod item;
 pub mod item_ty;
+mod locals;
 pub mod mir;
 mod pins;
 pub mod switch;

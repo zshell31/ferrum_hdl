@@ -38,8 +38,8 @@ macro_rules! idx_ty {
         impl ::std::fmt::Display for $name {
             #[inline]
             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                if !self.is_empty() {
-                    ::std::fmt::Display::fmt(&self.as_u32(), f)
+                if !$crate::index::IndexType::is_empty(self) {
+                    ::std::fmt::Display::fmt(&$crate::index::IndexType::as_u32(self), f)
                 } else {
                     f.write_str("_")
                 }

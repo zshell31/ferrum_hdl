@@ -24,6 +24,14 @@ impl<I: IndexType, T> IndexStorage<I, T> {
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            raw: FxIndexMap::with_capacity_and_hasher(capacity, Default::default()),
+            last_idx: 0,
+            _idx: PhantomData,
+        }
+    }
+
     pub fn last_idx(&self) -> I {
         I::new(self.last_idx)
     }

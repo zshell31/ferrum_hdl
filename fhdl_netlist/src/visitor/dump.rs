@@ -1,6 +1,8 @@
+use fhdl_data_structures::{cursor::Cursor, index::IndexType};
+
 use crate::{
-    cursor::Cursor,
-    netlist::{IndexType, Module, ModuleId, NetList, WithId},
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
 };
 
 pub struct Dump {

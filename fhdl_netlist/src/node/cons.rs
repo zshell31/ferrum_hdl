@@ -1,12 +1,8 @@
+use fhdl_data_structures::graph::NodeId;
 use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeOutput};
-use crate::{
-    const_val::ConstVal,
-    netlist::{Module, NodeId},
-    node_ty::NodeTy,
-    symbol::Symbol,
-};
+use crate::{const_val::ConstVal, netlist::Module, node_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Const {

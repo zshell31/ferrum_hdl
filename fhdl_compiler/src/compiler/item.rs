@@ -5,9 +5,10 @@ use std::{
 };
 
 use either::Either;
+use fhdl_data_structures::graph::{NodeId, Port};
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{Module, NodeId, Port},
+    netlist::Module,
     node::{Merger, MergerArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
@@ -678,7 +679,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
 
 #[cfg(test)]
 mod tests {
-    use fhdl_netlist::netlist::IndexType;
+    use fhdl_data_structures::index::IndexType;
 
     use super::*;
     use crate::compiler::item_ty::WithTypeInfo;

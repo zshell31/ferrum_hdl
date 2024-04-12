@@ -1,10 +1,10 @@
-use rustc_hash::FxHashMap;
+use fhdl_data_structures::{cursor::Cursor, FxHashMap};
 
 use crate::{
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, WithId},
+    netlist::{Module, ModuleId, NetList},
     node::{IsNode, Node},
     symbol::Symbol,
+    with_id::WithId,
 };
 
 pub struct SetNames {

@@ -1,5 +1,7 @@
 use std::fmt::Debug;
 
+use fhdl_data_structures::graph::NodeId;
+
 use super::{IsNode, MakeNode, NodeOutput};
 #[cfg(test)]
 use crate::netlist::NodeWithInputs;
@@ -16,7 +18,7 @@ pub struct InputArgs {
 }
 
 impl MakeNode<InputArgs> for Input {
-    fn make(module: &mut Module, args: InputArgs) -> crate::netlist::NodeId {
+    fn make(module: &mut Module, args: InputArgs) -> NodeId {
         let InputArgs { ty, sym } = args;
         module.add_node(Input {
             output: [NodeOutput::wire(ty, sym)],

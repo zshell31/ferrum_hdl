@@ -28,6 +28,7 @@ either = { workspace = true }
 ferrum_hdl = { path = "../" }
 fhdl_cli = { path = "../fhdl_cli" }
 fhdl_common = { path = "../fhdl_common" }
+fhdl_data_structures = { path = "../fhdl_data_structures/" }
 fhdl_netlist = { path = "../fhdl_netlist" }
 indexmap = { workspace = true, features = ["serde"] }
 itertools = { workspace = true }

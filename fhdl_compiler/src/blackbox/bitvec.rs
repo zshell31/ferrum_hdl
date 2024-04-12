@@ -1,8 +1,9 @@
 use std::iter::{self};
 
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{Module, Port},
+    netlist::Module,
     node::{Mux, MuxArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
 };

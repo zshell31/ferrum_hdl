@@ -1,17 +1,17 @@
 use std::io::{Result, Write};
 
 use ferrum_hdl::domain::{Polarity, SyncKind};
-use rustc_hash::FxHashSet;
+use fhdl_data_structures::{cursor::Cursor, graph::NodeId, FxHashSet};
 
 use crate::{
     buffer::Buffer,
-    cursor::Cursor,
-    netlist::{Module, NetList, NodeId, WithId},
+    netlist::{Module, NetList},
     node::{
         BinOpInputs, Case, DFFInputs, MuxInputs, NetKind, Node, NodeKind, NodeOutput,
     },
     symbol::Symbol,
     visitor::ParamKind,
+    with_id::WithId,
 };
 
 fn write_param<W: Write>(

@@ -12,6 +12,13 @@ mod zero_extend;
 
 use std::rc::Rc;
 
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{Edges, GraphNode, IncomingDir, NodeId, OutgoingDir, Port},
+    index::IndexType,
+    list::{List, ListItem},
+};
+
 pub(crate) use self::cons::MultiConst;
 pub use self::{
     bin_op::{BinOp, BinOpArgs, BinOpInputs, BinOpNode},
@@ -27,13 +34,10 @@ pub use self::{
     zero_extend::{Extend, ExtendArgs},
 };
 use crate::{
-    cursor::Cursor,
-    netlist::{
-        Edges, IncomingDir, IndexType, List, ListItem, Module, NetList, NodeId,
-        OutgoingDir, Port, WithId,
-    },
+    netlist::{Module, NetList},
     node_ty::NodeTy,
     symbol::Symbol,
+    with_id::WithId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,12 +89,22 @@ impl NodeOutput {
 #[derive(Debug)]
 pub struct Node {
     pub skip: bool,
-    pub(crate) incoming: List<Edges, IncomingDir>,
-    pub(crate) outgoing: List<Edges, OutgoingDir>,
+    incoming: List<Edges, IncomingDir>,
+    outgoing: List<Edges, OutgoingDir>,
     kind: Box<NodeKind>,
     next: NodeId,
     prev: NodeId,
     span: Option<Rc<String>>,
+}
+
+impl GraphNode for Node {
+    fn incoming(&self) -> List<Edges, IncomingDir> {
+        self.incoming
+    }
+
+    fn outgoing(&self) -> List<Edges, OutgoingDir> {
+        self.outgoing
+    }
 }
 
 impl ListItem<NodeId> for Node {

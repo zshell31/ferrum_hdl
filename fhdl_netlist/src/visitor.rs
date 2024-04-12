@@ -16,7 +16,10 @@ use set_names::SetNames;
 use transform::Transform;
 
 use self::dump::Dump;
-use crate::netlist::{Module, ModuleId, NetList, WithId};
+use crate::{
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {

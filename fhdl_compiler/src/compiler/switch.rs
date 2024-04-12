@@ -5,9 +5,9 @@ use std::{
 };
 
 use either::Either;
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::Port,
     node::{Merger, MergerArgs, Mux, MuxArgs},
 };
 use itertools::Itertools;

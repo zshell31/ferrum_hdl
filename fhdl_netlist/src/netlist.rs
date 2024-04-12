@@ -1,20 +1,16 @@
-mod graph;
-mod ident;
-mod index_storage;
-mod list;
 mod module;
 
 use std::{cell::RefCell, ops::Index};
 
-pub(crate) use graph::{Edges, Graph, IncomingDir, OutgoingDir};
-pub use ident::*;
-use index_storage::IndexStorage;
-pub(crate) use list::{List, ListItem, ListStorage};
+use fhdl_data_structures::{
+    graph::NodeId, index::IndexType, index_storage::IndexStorage,
+};
 #[cfg(test)]
 pub(crate) use module::NodeWithInputs;
 pub use module::{Incoming, Module, NodeCursor, Outgoing, PortOrConst};
 
-use crate::cfg::NetListCfg;
+pub use self::module::ModuleId;
+use crate::{cfg::NetListCfg, with_id::WithId};
 
 #[derive(Debug, Default)]
 pub struct NetList {
@@ -59,11 +55,12 @@ impl NetList {
         (0 .. self.modules.len()).map(ModuleId::from_usize)
     }
 
-    #[inline]
     pub fn modules(
         &self,
     ) -> impl DoubleEndedIterator<Item = WithId<ModuleId, &RefCell<Module>>> + '_ {
-        self.modules.iter_with_id()
+        self.modules
+            .iter_with_id()
+            .map(|(id, inner)| WithId::new(id, inner))
     }
 
     #[inline]

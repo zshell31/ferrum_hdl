@@ -1,10 +1,14 @@
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
 use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NodeId, Port, WithId},
+    netlist::{Module, ModuleId},
     symbol::Symbol,
+    with_id::WithId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

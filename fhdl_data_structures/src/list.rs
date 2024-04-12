@@ -6,8 +6,7 @@ use std::{
 use derive_where::derive_where;
 use tracing::debug;
 
-use super::IndexType;
-use crate::cursor::Cursor;
+use crate::{cursor::Cursor, index::IndexType};
 
 pub trait ListItem<I: IndexType, D = ()> {
     fn next(&self) -> I;
@@ -72,11 +71,10 @@ impl<S: ListStorage<D>, D> ListCursor<S, D> {
     }
 }
 
-impl<S: ListStorage<D>, D> Cursor for ListCursor<S, D> {
+impl<S: ListStorage<D>, D> Cursor<S> for ListCursor<S, D> {
     type Item = S::Idx;
-    type Storage = S;
 
-    fn next_(&mut self, storage: &Self::Storage) -> Option<Self::Item> {
+    fn next_(&mut self, storage: &S) -> Option<Self::Item> {
         if !self.next.is_empty() {
             let res = self.next;
             self.next = storage[self.next].next();

@@ -26,8 +26,9 @@ use bumpalo::Bump;
 pub use context::Context;
 use fhdl_cli::CompilerArgs;
 use fhdl_common::{BlackboxKind, NonEmptyStr};
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
-    netlist::{Module, ModuleId, NetList, Port},
+    netlist::{Module, ModuleId, NetList},
     node::{Extend, ExtendArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,

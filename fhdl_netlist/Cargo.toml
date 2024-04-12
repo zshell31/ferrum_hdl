@@ -10,16 +10,16 @@ license.workspace = true
 
 [dependencies]
 clap = { workspace = true }
-derive-where = "1.2.5"
+derive-where = { workspace = true }
 either = { workspace = true }
 indexmap = { workspace = true }
 itertools = { workspace = true }
 fhdl_const_func = { path = "../fhdl_const_func/" }
+fhdl_data_structures = { path = "../fhdl_data_structures/" }
 ferrum_hdl = { path = "../" }
 lasso = { version = "0.7.2", features = ["multi-threaded"] }
 once_cell = { workspace = true }
 pretty_assertions = { workspace = true }
-rustc-hash = { workspace = true }
 serde = { workspace = true }
 smallvec = { workspace = true }
 tracing = { workspace = true }

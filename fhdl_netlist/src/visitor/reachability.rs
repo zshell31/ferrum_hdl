@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
 use either::Either;
-use rustc_hash::FxHashSet;
+use fhdl_data_structures::{cursor::Cursor, graph::Port, FxHashSet};
 
 use crate::{
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, Port, WithId},
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
 };
 
 pub struct Reachability {

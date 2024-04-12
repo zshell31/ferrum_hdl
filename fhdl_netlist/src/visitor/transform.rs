@@ -1,16 +1,20 @@
 use std::iter;
 
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
 use smallvec::SmallVec;
 
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, NodeId, Port, WithId},
+    netlist::{Module, ModuleId, NetList},
     node::{
         BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
         MuxInputs, NodeKind, TyOrData, DFF,
     },
+    with_id::WithId,
 };
 
 const NODES_LIMIT_TO_INLINE: usize = 10;
@@ -390,9 +394,10 @@ mod tests {
 
     use super::*;
     use crate::{
-        netlist::{NodeWithInputs, Symbol},
+        netlist::NodeWithInputs,
         node::{Merger, MergerArgs, Splitter, SplitterArgs},
         node_ty::NodeTy,
+        symbol::Symbol,
         visitor::reachability::Reachability,
     };
 

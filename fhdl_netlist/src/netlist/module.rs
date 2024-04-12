@@ -4,25 +4,28 @@ use std::{
     rc::Rc,
 };
 
-use indexmap::set::Slice;
-use rustc_hash::FxHashMap;
-
-use super::{
-    graph::{IncomingEdges, OutgoingEdges},
-    list::{List, ListCursor, ListStorage},
-    EdgeId, Graph, IndexType, ListItem, ModuleId, NodeId, Port, PortPos, WithId,
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{EdgeId, Graph, IncomingEdges, NodeId, OutgoingEdges, Port},
+    idx_ty,
+    index::IndexType,
+    list::{List, ListCursor, ListItem},
+    FxHashMap, FxIndexSet,
 };
+use indexmap::set::Slice;
+
 use crate::{
     const_val::ConstVal,
-    cursor::Cursor,
     node::{
         Const, ConstArgs, Input, InputArgs, IsNode, MakeNode, ModInst, Node, NodeKind,
         NodeOutput, Pass, PassArgs,
     },
     node_ty::NodeTy,
     symbol::Symbol,
-    FxIndexSet,
+    with_id::{PortPos, WithId},
 };
+
+idx_ty!(ModuleId);
 
 #[derive(Debug)]
 pub struct Module {
@@ -31,15 +34,10 @@ pub struct Module {
     pub skip: bool,
     pub inline: bool,
     span: Option<Rc<String>>,
-    graph: Graph,
-    list: List<Graph>,
+    graph: Graph<Node>,
+    list: List<Graph<Node>>,
     inputs: FxIndexSet<Port>,
     outputs: FxIndexSet<Port>,
-}
-
-impl ListStorage for Graph {
-    type Idx = NodeId;
-    type Item = Node;
 }
 
 impl Index<NodeId> for Module {
@@ -78,9 +76,8 @@ impl IndexMut<Port> for Module {
 #[repr(transparent)]
 pub struct Incoming(IncomingEdges);
 
-impl Cursor for Incoming {
+impl Cursor<Module> for Incoming {
     type Item = Port;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {
@@ -93,9 +90,8 @@ impl Cursor for Incoming {
 #[repr(transparent)]
 pub struct Outgoing(OutgoingEdges);
 
-impl Cursor for Outgoing {
+impl Cursor<Module> for Outgoing {
     type Item = NodeId;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {
@@ -106,7 +102,7 @@ impl Cursor for Outgoing {
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct NodeCursor(ListCursor<Graph>);
+pub struct NodeCursor(ListCursor<Graph<Node>>);
 
 impl NodeCursor {
     #[inline]
@@ -115,9 +111,8 @@ impl NodeCursor {
     }
 }
 
-impl Cursor for NodeCursor {
+impl Cursor<Module> for NodeCursor {
     type Item = NodeId;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {

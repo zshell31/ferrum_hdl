@@ -4,16 +4,17 @@ use std::{
 };
 
 use either::Either;
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
 use itertools::{Chunk, Chunks, IntoChunks, Itertools};
 use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    const_val::ConstVal,
-    cursor::Cursor,
-    netlist::{Module, NodeId, Port, WithId},
-    node_ty::NodeTy,
-    symbol::Symbol,
+    const_val::ConstVal, netlist::Module, node_ty::NodeTy, symbol::Symbol,
+    with_id::WithId,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

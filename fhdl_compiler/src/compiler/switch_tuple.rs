@@ -187,7 +187,9 @@ impl<'tcx> SwitchTuple<'tcx> {
 
     #[inline]
     fn add_tuple_case(&mut self, new_case: TupleCase, new_block: BasicBlock) {
-        self.cases.insert(new_case, new_block);
+        if !self.cases.contains_key(&new_case) {
+            self.cases.insert(new_case, new_block);
+        }
     }
 }
 

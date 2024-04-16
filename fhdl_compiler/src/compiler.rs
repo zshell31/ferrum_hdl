@@ -44,6 +44,7 @@ use rustc_hir::{
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::{
     dep_graph::DepContext,
+    mir::BasicBlock,
     ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
@@ -54,6 +55,7 @@ use self::{
     mir::DefIdOrPromoted,
     pins::PinConstraints,
     post_dominator::PostDominator,
+    switch_tuple::SwitchTupleRef,
 };
 use crate::error::{Error, SpanError};
 
@@ -183,6 +185,7 @@ pub struct Compiler<'tcx> {
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
     pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
     post_dominator: FxHashMap<DefId, PostDominator>,
+    switch_tuples: FxHashMap<(DefId, BasicBlock), Option<SwitchTupleRef<'tcx>>>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -205,6 +208,7 @@ impl<'tcx> Compiler<'tcx> {
             file_names: Default::default(),
             pin_constr: Default::default(),
             post_dominator: Default::default(),
+            switch_tuples: Default::default(),
         }
     }
 

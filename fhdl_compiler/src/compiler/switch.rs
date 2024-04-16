@@ -1,13 +1,13 @@
 use fhdl_netlist::{
     const_val::ConstVal,
-    node::{Switch, SwitchArgs},
+    node::{Switch, SwitchArgs, TupleCase},
 };
 use rustc_middle::{
-    mir::{BasicBlock, Operand, SwitchTargets},
+    mir::{BasicBlock, SwitchTargets},
     ty::Ty,
 };
 use rustc_span::Span;
-use tracing::{debug, error, instrument};
+use tracing::{error, instrument};
 
 use super::{
     item::{Group, Item, ModuleExt},
@@ -22,11 +22,11 @@ pub trait SwitchTargetsExt {
 
     fn otherwise(&self) -> BasicBlock;
 
-    fn value_for_target(&self, idx: usize) -> Self::Value;
+    fn value_for_target(&self, idx: usize, discr_width: u128) -> Self::Value;
 }
 
 impl SwitchTargetsExt for SwitchTargets {
-    type Value = u128;
+    type Value = ConstVal;
 
     fn variants(&self) -> impl Iterator<Item = (usize, BasicBlock)> {
         self.iter().map(|(_, target)| target).enumerate()
@@ -37,23 +37,26 @@ impl SwitchTargetsExt for SwitchTargets {
         self.otherwise()
     }
 
-    fn value_for_target(&self, idx: usize) -> Self::Value {
-        self.iter().nth(idx).unwrap().0
+    fn value_for_target(&self, idx: usize, discr_width: u128) -> Self::Value {
+        ConstVal::new(self.iter().nth(idx).unwrap().0, discr_width)
     }
 }
 
 impl<'tcx> Compiler<'tcx> {
     #[instrument(level = "debug", skip(self, discr, targets, ctx, span))]
-    pub fn visit_switch<Targets: SwitchTargetsExt<Value = u128>>(
+    pub fn visit_switch<Targets>(
         &mut self,
         switch_block: BasicBlock,
-        discr: &Operand<'tcx>,
+        discr: &Item<'tcx>,
         targets: &Targets,
         ctx: &mut Context<'tcx>,
         span: Span,
-    ) -> Result<Option<BasicBlock>, Error> {
+    ) -> Result<Option<BasicBlock>, Error>
+    where
+        Targets: SwitchTargetsExt,
+        Targets::Value: Into<TupleCase>,
+    {
         let mir = ctx.mir;
-        let discr = self.visit_operand(discr, ctx, span)?;
 
         let convergent_block =
             self.find_convergent_block(switch_block, ctx)
@@ -78,12 +81,10 @@ impl<'tcx> Compiler<'tcx> {
                 ctx.locals.leave_branch();
             }
 
-            ctx.locals.collect_branch_locals(span)?;
-            debug!("ctx.locals: {:#?}", ctx.locals);
+            ctx.locals.collect_branch_locals()?;
 
             if !ctx.locals.branch_locals().is_empty() {
-                let discr = ctx.module.get_discr(&discr);
-                let discr_width = ctx.module[discr].width();
+                let discr = ctx.module.get_discr(discr);
 
                 let output_ty = Ty::new_tup_from_iter(
                     self.tcx,
@@ -101,15 +102,16 @@ impl<'tcx> Compiler<'tcx> {
                 });
 
                 let variants = ctx.locals.variants().map(|(target_idx, locals)| {
-                    let discr_val = targets.value_for_target(target_idx);
+                    let val = targets.value_for_target(target_idx, discr.width());
                     let item = Item::new(output_ty, Group::new(locals));
                     assert_eq!(output_ty.nodes(), item.nodes());
-                    (ConstVal::new(discr_val, discr_width), item.iter())
+
+                    (val, item.iter())
                 });
 
                 let mux = ctx.module.add::<_, Switch>(SwitchArgs {
                     outputs: output_ty.iter().map(|ty| (ty, None)),
-                    sel: discr,
+                    sel: discr.port(),
                     variants,
                     default,
                 });

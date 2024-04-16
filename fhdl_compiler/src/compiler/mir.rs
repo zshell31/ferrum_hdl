@@ -196,8 +196,8 @@ impl<'tcx> Compiler<'tcx> {
             }
 
             // let switch = self.try_make_switch_tuple(block, &ctx)
-            let switches = self.collect_switch_tuples(&ctx);
-            debug!("paths: {switches:#?}");
+            // let switches = self.collect_switch_tuples(&ctx);
+            // debug!("paths: {switches:#?}");
 
             let module_id = self.netlist.add_module(ctx.module);
 
@@ -537,7 +537,17 @@ impl<'tcx> Compiler<'tcx> {
                 if self.discr_has_inner_ty(block_data, ctx) {
                     return Ok(Some(targets.target_for_value(0)));
                 }
-                self.visit_switch(block, discr, targets, ctx, span)?
+
+                if let Some(switch_tuple) = self.is_switch_tuple(block, ctx, span)? {
+                    debug!("switch_tuple: {switch_tuple:#?}");
+                    let discr_tuple = switch_tuple.discr_tuple();
+                    let discr_tuple = self.visit_rhs_place(&discr_tuple, ctx, span)?;
+
+                    self.visit_switch(block, &discr_tuple, &*switch_tuple, ctx, span)?
+                } else {
+                    let discr = self.visit_operand(discr, ctx, span)?;
+                    self.visit_switch(block, &discr, targets, ctx, span)?
+                }
             }
             _ => {
                 error!(
@@ -740,7 +750,7 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     pub fn visit_rhs_place(
-        &mut self,
+        &self,
         place: &Place<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,

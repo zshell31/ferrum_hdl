@@ -2,11 +2,10 @@ use either::Either;
 use fhdl_data_structures::{cursor::Cursor, idx_ty, tree::Tree};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
 use rustc_middle::mir::Local;
-use rustc_span::Span;
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::{item::Item, utils::Captures};
-use crate::error::{Error, SpanError, SpanErrorKind};
+use crate::error::Error;
 
 idx_ty!(LocalScopeId);
 
@@ -181,7 +180,7 @@ impl<'tcx> Locals<'tcx> {
         }
     }
 
-    pub fn collect_branch_locals(&mut self, span: Span) -> Result<(), Error> {
+    pub fn collect_branch_locals(&mut self) -> Result<(), Error> {
         if !self.has_branches() {
             return Ok(());
         }
@@ -216,11 +215,6 @@ impl<'tcx> Locals<'tcx> {
                     .filter(|(_, count)| *count == branches)
                     .map(|(local, _)| local),
             );
-
-            if locals.is_empty() {
-                error!("switchInt does not have common inner locals");
-                return Err(SpanError::new(SpanErrorKind::NotSynthSwitch, span).into());
-            }
         }
         locals.extend(outer);
         locals.sort_unstable();

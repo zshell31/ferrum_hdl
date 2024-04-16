@@ -1,21 +1,18 @@
-use std::{
-    cmp::Ordering,
-    collections::VecDeque,
-    fmt::{self, Debug, Display},
-    iter,
-};
+use std::{fmt::Debug, rc::Rc};
 
-use itertools::Itertools;
-use rustc_data_structures::{
-    fx::{FxIndexMap, FxIndexSet},
-    graph::WithSuccessors,
+use fhdl_netlist::{
+    const_val::ConstVal,
+    node::{Case, TupleCase},
 };
-use rustc_middle::mir::{
-    BasicBlock, BasicBlockData, BasicBlocks, Operand, Place, PlaceElem, Rvalue,
-    TerminatorKind, START_BLOCK,
+use rustc_data_structures::fx::FxIndexMap;
+use rustc_middle::{
+    mir::{BasicBlock, BasicBlocks, Local, Operand, Place, PlaceElem, TerminatorKind},
+    ty::{List, TyKind},
 };
+use rustc_span::Span;
 
-use super::{Compiler, Context};
+use super::{item_ty::ItemTy, switch::SwitchTargetsExt, Compiler, Context};
+use crate::error::Error;
 
 pub trait BasicBlocksExt {
     fn is_switch(&self, block: BasicBlock) -> bool;
@@ -28,231 +25,138 @@ impl<'tcx> BasicBlocksExt for BasicBlocks<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Case {
-    Val(u128),
-    Default,
-}
-
-impl From<Option<u128>> for Case {
-    fn from(val: Option<u128>) -> Self {
-        match val {
-            Some(val) => Self::Val(val),
-            None => Self::Default,
-        }
-    }
-}
-
-impl Debug for Case {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Val(val) => Display::fmt(val, f),
-            Self::Default => f.write_str("_"),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct TupleCase {
-    tuple: Vec<Case>,
-    group: u8,
-    non_default: u8,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Inclusion {
-    Eq,
-    Include,
-    IncludedBy,
-    DontIntersect,
-}
-
-impl TupleCase {
-    fn new(len: usize) -> Self {
-        Self {
-            tuple: iter::repeat(Case::Default).take(len).collect(),
-            group: 0,
-            non_default: 0,
-        }
-    }
-
-    fn include(&self, other: &Self) -> Inclusion {
-        let mut inclusion = Inclusion::Eq;
-
-        for (this, other) in self.tuple.iter().zip(other.tuple.iter()) {
-            inclusion = match (this, other) {
-                (Case::Val(this), Case::Val(other)) => {
-                    if this != other {
-                        return Inclusion::DontIntersect;
-                    } else {
-                        inclusion
-                    }
-                }
-                (Case::Default, Case::Val(_)) => Inclusion::Include,
-                (Case::Val(_), Case::Default) => Inclusion::IncludedBy,
-                (Case::Default, Case::Default) => inclusion,
-            };
-        }
-
-        inclusion
-    }
-}
-
-impl Debug for TupleCase {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("[ ")?;
-        let mut first = true;
-        for case in &self.tuple {
-            if !first {
-                f.write_str(", ")?;
-            } else {
-                first = false;
-            }
-
-            Debug::fmt(case, f)?;
-        }
-        f.write_str(" ]")?;
-        // write!(f, " ] ({}, {})", self.non_default, self.group)?;
-        f.write_str(" ]")?;
-
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 pub struct SwitchTuple<'tcx> {
-    discr: FxIndexSet<Place<'tcx>>,
+    discr_tuple: Local,
+    discr_tuple_ty: ItemTy<'tcx>,
     cases: FxIndexMap<TupleCase, BasicBlock>,
     otherwise: BasicBlock,
 }
 
+pub type SwitchTupleRef<'tcx> = Rc<SwitchTuple<'tcx>>;
+
 impl<'tcx> SwitchTuple<'tcx> {
-    fn new(otherwise: BasicBlock) -> Self {
+    fn new(
+        discr_tuple: Local,
+        discr_tuple_ty: ItemTy<'tcx>,
+        otherwise: BasicBlock,
+    ) -> Self {
         Self {
-            discr: Default::default(),
+            discr_tuple,
+            discr_tuple_ty,
             cases: Default::default(),
             otherwise,
         }
     }
 
-    fn sort_discr(&mut self) {
-        // Try to sort places by local and fields (if there are)
-        self.discr.sort_unstable_by(|a, b| -> Ordering {
-            a.local
-                .cmp(&b.local)
-                .then_with(|| a.projection.len().cmp(&b.projection.len()))
-                .then_with(|| {
-                    for (a_proj, b_proj) in a.projection.iter().zip(b.projection.iter()) {
-                        return match (a_proj, b_proj) {
-                            (PlaceElem::Field(a_idx, _), PlaceElem::Field(b_idx, _)) => {
-                                let cmp = a_idx.cmp(&b_idx);
-                                if cmp == Ordering::Equal {
-                                    continue;
-                                } else {
-                                    cmp
-                                }
-                            }
-                            (PlaceElem::Field(_, _), _) => Ordering::Greater,
-                            (_, PlaceElem::Field(_, _)) => Ordering::Less,
-                            (_, _) => continue,
-                        };
-                    }
-
-                    Ordering::Equal
-                })
-        });
-    }
-
-    fn init_case(&self) -> TupleCase {
-        TupleCase::new(self.discr.len())
-    }
-
     fn push_val(&self, cases: &mut TupleCase, discr: &Place<'tcx>, val2: u128) -> bool {
-        let idx = self.discr.get_index_of(discr).unwrap();
-        match cases.tuple[idx] {
+        let idx = match discr.projection[0] {
+            PlaceElem::Field(idx, _) => idx.as_usize(),
+            _ => panic!("expected tuple"),
+        };
+        let ty = self.discr_tuple_ty.struct_ty().by_idx(idx);
+        let val2 = ConstVal::new(val2, ty.width());
+
+        match cases.0[idx] {
             Case::Val(val1) => {
                 if val1 != val2 {
                     return false;
                 }
             }
-            Case::Default => {
-                cases.tuple[idx] = Case::Val(val2);
-                cases.non_default += 1;
+            Case::Default(_) => {
+                cases.0[idx] = Case::Val(val2);
             }
         }
 
         true
     }
 
-    #[inline]
     fn add_tuple_case(&mut self, new_case: TupleCase, new_block: BasicBlock) {
-        if !self.cases.contains_key(&new_case) {
+        let mut add = true;
+        self.cases.retain(|case, block| {
+            if new_case.include(case) && *block == new_block {
+                false
+            } else {
+                if case.include(&new_case) && *block == new_block {
+                    add = false;
+                }
+                true
+            }
+        });
+
+        if add {
             self.cases.insert(new_case, new_block);
+        }
+    }
+
+    #[inline]
+    pub fn discr_tuple(&self) -> Place<'tcx> {
+        Place {
+            local: self.discr_tuple,
+            projection: List::empty(),
         }
     }
 }
 
-#[derive(Debug, Default)]
-pub struct SwitchTuples<'tcx> {
-    blocks: FxIndexMap<BasicBlock, SwitchTuple<'tcx>>,
-}
+impl<'tcx> SwitchTargetsExt for SwitchTuple<'tcx> {
+    type Value = TupleCase;
 
-impl<'tcx> SwitchTuples<'tcx> {
-    fn insert(&mut self, block: BasicBlock, switch: SwitchTuple<'tcx>) {
-        self.blocks.insert(block, switch);
+    fn variants(&self) -> impl Iterator<Item = (usize, BasicBlock)> {
+        self.cases.values().copied().enumerate()
+    }
+
+    fn otherwise(&self) -> BasicBlock {
+        self.otherwise
+    }
+
+    fn value_for_target(&self, idx: usize, _: u128) -> Self::Value {
+        self.cases.keys()[idx].clone()
     }
 }
 
 impl<'tcx> Compiler<'tcx> {
-    pub fn collect_switch_tuples(&self, ctx: &Context<'tcx>) -> SwitchTuples<'tcx> {
-        let mut switches = SwitchTuples::default();
-
-        let mut to_visit = VecDeque::default();
-        to_visit.push_back(START_BLOCK);
-
-        let blocks = &ctx.mir.basic_blocks;
-        while let Some(block) = to_visit.pop_front() {
-            let bbs = &blocks[block];
-            if let TerminatorKind::SwitchInt { targets, .. } = &bbs.terminator().kind {
-                if self.discr_has_inner_ty(bbs, ctx) {
-                    to_visit.push_back(targets.target_for_value(0));
-                    continue;
-                }
-
-                if let Some(switch) = self.try_make_switch_tuple(block, ctx) {
-                    switches.insert(block, switch);
-
-                    // let meta = self.get_switch_meta(block, ctx).unwrap();
-                    // to_visit.push_back(meta.convergent_block);
-                    todo!()
-                    // continue;
-                }
-            }
-
-            to_visit.extend(blocks.successors(block));
+    pub fn is_switch_tuple(
+        &mut self,
+        block: BasicBlock,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Option<SwitchTupleRef<'tcx>>, Error> {
+        let key = (ctx.fn_did, block);
+        #[allow(clippy::map_entry)]
+        if !self.switch_tuples.contains_key(&key) {
+            let switch_tuple = self.try_make_switch_tuple(block, ctx, span)?;
+            self.switch_tuples.insert(key, switch_tuple.map(Rc::new));
         }
 
-        switches
+        Ok(self.switch_tuples.get(&key).unwrap().clone())
     }
 
     fn try_make_switch_tuple(
-        &self,
+        &mut self,
         block: BasicBlock,
-        ctx: &Context<'tcx>,
-    ) -> Option<SwitchTuple<'tcx>> {
-        let otherwise = self.find_otherwise(block, ctx)?;
-        let mut switch = SwitchTuple::new(otherwise);
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Option<SwitchTuple<'tcx>>, Error> {
+        let otherwise = match self.find_otherwise(block, ctx) {
+            Some(otherwise) => otherwise,
+            None => {
+                return Ok(None);
+            }
+        };
 
-        self.collect_discr(&mut switch, block, ctx);
-        if switch.discr.len() == 1 {
-            return None;
+        let mut discr_tuple = None;
+        if !self.collect_discr(&mut discr_tuple, block, ctx) || discr_tuple.is_none() {
+            return Ok(None);
         }
+        let discr_tuple = discr_tuple.unwrap();
+        let discr_tuple_ty = ctx.mir.local_decls[discr_tuple].ty;
+        let discr_tuple_ty = self.resolve_ty(discr_tuple_ty, ctx.generic_args, span)?;
+        let mut switch = SwitchTuple::new(discr_tuple, discr_tuple_ty, otherwise);
 
-        switch.sort_discr();
-        let case = switch.init_case();
+        let case = self.init_default_case(discr_tuple_ty);
         self.collect_tuples(&mut switch, case, block, ctx);
 
-        Some(switch)
+        Ok(Some(switch))
     }
 
     fn find_otherwise(
@@ -276,12 +180,22 @@ impl<'tcx> Compiler<'tcx> {
         }
     }
 
+    fn init_default_case(&mut self, discr_tuple_ty: ItemTy<'tcx>) -> TupleCase {
+        let defaults = discr_tuple_ty
+            .struct_ty()
+            .tys()
+            .map(|ty| Case::Default(ty.width()))
+            .collect();
+
+        TupleCase(defaults)
+    }
+
     fn collect_discr(
         &self,
-        switch: &mut SwitchTuple<'tcx>,
+        discr_tuple: &mut Option<Local>,
         block: BasicBlock,
         ctx: &Context<'tcx>,
-    ) {
+    ) -> bool {
         let blocks = &ctx.mir.basic_blocks;
         let bbs = &blocks[block];
 
@@ -292,17 +206,30 @@ impl<'tcx> Compiler<'tcx> {
         {
             if self.discr_has_inner_ty(bbs, ctx) {
                 let target = targets.target_for_value(0);
-                return self.collect_discr(switch, target, ctx);
+                return self.collect_discr(discr_tuple, target, ctx);
             }
 
-            switch.discr.insert(*discr);
+            match ctx.mir.local_decls[discr.local].ty.kind() {
+                TyKind::Tuple(_) if !discr.projection.is_empty() => {
+                    if *discr_tuple.get_or_insert(discr.local) != discr.local {
+                        return false;
+                    }
+                }
+                _ => {
+                    return false;
+                }
+            }
 
             for &target in targets.all_targets() {
-                if blocks.is_switch(target) {
-                    self.collect_discr(switch, target, ctx);
+                if blocks.is_switch(target)
+                    && !self.collect_discr(discr_tuple, target, ctx)
+                {
+                    return false;
                 }
             }
         }
+
+        true
     }
 
     fn collect_tuples(
@@ -329,12 +256,6 @@ impl<'tcx> Compiler<'tcx> {
                 );
             }
 
-            // let otherwise = self.find_otherwise(block, ctx);
-            // if otherwise != Some(switch.otherwise) {
-            //     switch.add_tuple_case(case, block);
-            //     return;
-            // }
-
             for (val, target) in targets.iter() {
                 let mut cases = case.clone();
                 if switch.push_val(&mut cases, discr, val) {
@@ -349,31 +270,5 @@ impl<'tcx> Compiler<'tcx> {
         } else {
             switch.add_tuple_case(case, block);
         }
-    }
-
-    pub fn discr_has_inner_ty(
-        &self,
-        bbs: &BasicBlockData<'tcx>,
-        ctx: &Context<'tcx>,
-    ) -> bool {
-        let discr = match bbs
-            .statements
-            .iter()
-            .filter_map(|stmt| {
-                stmt.kind.as_assign().and_then(|(_, rvalue)| match rvalue {
-                    Rvalue::Discriminant(discr) => Some(*discr),
-                    _ => None,
-                })
-            })
-            .exactly_one()
-        {
-            Ok(discr) => discr,
-            _ => {
-                return false;
-            }
-        };
-
-        let discr_ty = discr.ty(ctx.mir, self.tcx).ty;
-        self.is_inner_ty(discr_ty)
     }
 }

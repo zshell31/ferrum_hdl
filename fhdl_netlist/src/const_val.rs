@@ -1,6 +1,7 @@
 use std::{
     cmp,
     fmt::{self, Debug, Display},
+    hash::{Hash, Hasher},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
@@ -20,6 +21,7 @@ impl Display for ConstVal {
 }
 
 impl Debug for ConstVal {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self, f)
     }
@@ -132,6 +134,12 @@ impl PartialEq for ConstVal {
 }
 
 impl Eq for ConstVal {}
+
+impl Hash for ConstVal {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.val().hash(state);
+    }
+}
 
 impl Ord for ConstVal {
     fn cmp(&self, other: &Self) -> cmp::Ordering {

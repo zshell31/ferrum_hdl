@@ -18,6 +18,7 @@ pub struct Context<'tcx> {
     pub locals: Locals<'tcx>,
     pub mir: &'tcx Body<'tcx>,
     pub fn_did: DefId,
+    pub in_switch_tuple: bool,
     consts: FxHashMap<MirConst<'tcx>, Item<'tcx>>,
 }
 
@@ -34,6 +35,7 @@ impl<'tcx> Context<'tcx> {
             locals: Default::default(),
             mir,
             fn_did,
+            in_switch_tuple: false,
             consts: Default::default(),
         }
     }

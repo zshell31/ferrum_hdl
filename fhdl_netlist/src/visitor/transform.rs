@@ -298,7 +298,7 @@ impl Transform {
                 let mux = node.with(mux);
 
                 let chunk = {
-                    let SwitchInputs { sel, cases } = mux.inputs(&module);
+                    let SwitchInputs { sel, cases, .. } = mux.inputs(&module);
 
                     let mut cases_ref = cases.into_iter();
                     let chunk = if cases_len == 1 {

@@ -30,7 +30,7 @@ pub use self::{
     mod_inst::{ModInst, ModInstArgs},
     pass::{Pass, PassArgs},
     splitter::{Indices, Splitter, SplitterArgs},
-    switch::{Case, Switch, SwitchArgs, SwitchInputs},
+    switch::{Case, Switch, SwitchArgs, SwitchInputs, TupleCase},
     zero_extend::{Extend, ExtendArgs},
 };
 use crate::{

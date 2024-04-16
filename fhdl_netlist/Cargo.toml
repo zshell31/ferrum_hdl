@@ -21,6 +21,6 @@ lasso = { version = "0.7.2", features = ["multi-threaded"] }
 once_cell = { workspace = true }
 pretty_assertions = { workspace = true }
 serde = { workspace = true }
-smallvec = { workspace = true }
+smallvec = { workspace = true, features = ["union"] }
 tracing = { workspace = true }
 

@@ -82,6 +82,20 @@ impl ConstVal {
             rhs,
         )
     }
+
+    pub fn slice(&self, start: u128, width: u128) -> ConstVal {
+        if start == 0 && width == self.width {
+            return *self;
+        }
+
+        let width = cmp::min(self.width - start, width);
+        if width == 0 {
+            ConstVal::zero(width)
+        } else {
+            let val = self.val();
+            ConstVal::new(val >> start, width)
+        }
+    }
 }
 
 fn bin_op(val: u128, lhs: ConstVal, rhs: ConstVal) -> ConstVal {

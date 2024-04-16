@@ -428,13 +428,32 @@ impl<'n, W: Write> Verilog<'n, W> {
                 b.push_tab();
 
                 for (case, inputs) in cases.into_iter() {
+                    b.write_tab()?;
                     match case {
                         Case::Val(case) => {
-                            b.write_tab()?;
-                            b.write_fmt(format_args!("{case}: "))?;
+                            if case.len() == 1 {
+                                match case[0] {
+                                    Case::Val(case) => {
+                                        b.write_fmt(format_args!("{case}: "))?;
+                                    }
+                                    Case::Default(_) => {
+                                        b.write_str("default: ")?;
+                                    }
+                                }
+                            } else {
+                                b.write_char('{')?;
+                                b.intersperse(",", case.iter(), |b, case| match case {
+                                    Case::Val(case) => {
+                                        b.write_fmt(format_args!("{case}"))
+                                    }
+                                    Case::Default(width) => {
+                                        b.write_fmt(format_args!("{width}'d?"))
+                                    }
+                                })?;
+                                b.write_str("}: ")?;
+                            }
                         }
-                        Case::Default => {
-                            b.write_tab()?;
+                        Case::Default(_) => {
                             b.write_str("default: ")?;
                         }
                     }

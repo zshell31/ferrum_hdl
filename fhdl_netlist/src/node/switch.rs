@@ -1,15 +1,11 @@
-use std::{
-    fmt::Debug,
-    iter::{self, Empty},
-};
+use std::{fmt::Debug, iter::Empty};
 
-use either::Either;
 use fhdl_data_structures::{
     cursor::Cursor,
     graph::{NodeId, Port},
 };
 use itertools::{Chunk, Chunks, IntoChunks, Itertools};
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
@@ -17,9 +13,89 @@ use crate::{
     with_id::WithId,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Case<T> {
+    Val(T),
+    Default(u128),
+}
+
+pub type ConstCase = Case<ConstVal>;
+
+impl<T> Case<T> {
+    #[inline]
+    pub fn is_default(&self) -> bool {
+        matches!(self, Case::Default(_))
+    }
+
+    #[inline]
+    pub fn default(width: u128) -> Self {
+        Self::Default(width)
+    }
+}
+
+impl Case<ConstVal> {
+    pub fn val(self) -> ConstVal {
+        match self {
+            Self::Val(val) => val,
+            Self::Default(_) => ConstVal::default(),
+        }
+    }
+
+    #[inline]
+    pub fn width(&self) -> u128 {
+        match self {
+            Self::Val(val) => val.width(),
+            Self::Default(width) => *width,
+        }
+    }
+
+    pub fn is_match(&self, sel: ConstVal) -> bool {
+        match self {
+            Self::Val(val) => *val == sel,
+            Self::Default(width) => *width == sel.width(),
+        }
+    }
+}
+
+pub type TupleCase = Case<SmallVec<[ConstCase; 1]>>;
+
+impl TupleCase {
+    pub fn new(cases: impl IntoIterator<Item = ConstCase>) -> Self {
+        Self::Val(cases.into_iter().collect())
+    }
+
+    pub fn width(&self) -> u128 {
+        match self {
+            Self::Val(cases) => cases.iter().map(|case| case.width()).sum(),
+            Self::Default(width) => *width,
+        }
+    }
+
+    pub fn is_match(&self, sel: ConstVal) -> bool {
+        match self {
+            Self::Val(vals) => {
+                let mut start = 0;
+                vals.iter().rev().all(|val| {
+                    let width = val.width();
+                    let is_match = val.is_match(sel.slice(start, width));
+                    start += width;
+                    is_match
+                })
+            }
+            Self::Default(width) => *width == sel.width(),
+        }
+    }
+}
+
+impl From<ConstVal> for TupleCase {
+    fn from(val: ConstVal) -> Self {
+        TupleCase::Val(smallvec![Case::Val(val)])
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Switch {
-    pub cases: SmallVec<[ConstVal; 2]>,
+    pub cases: SmallVec<[TupleCase; 2]>,
     pub inputs: u32,
     pub outputs: SmallVec<[NodeOutput; 1]>,
     pub default: Option<u32>,
@@ -40,11 +116,12 @@ pub struct SwitchArgs<V, O, D = Empty<Port>> {
     pub default: Option<D>,
 }
 
-impl<V, I, O, D> MakeNode<SwitchArgs<V, O, D>> for Switch
+impl<C, V, I, O, D> MakeNode<SwitchArgs<V, O, D>> for Switch
 where
+    C: Into<TupleCase>,
     I: IntoIterator<Item = Port>, // inputs for the each variant
     D: IntoIterator<Item = Port>, // inputs for the default variant
-    V: IntoIterator<Item = (ConstVal, I)>, // variants
+    V: IntoIterator<Item = (C, I)>, // variants
     O: IntoIterator<Item = (NodeTy, Option<Symbol>)>, // outputs
 {
     fn make(module: &mut Module, args: SwitchArgs<V, O, D>) -> NodeId {
@@ -72,6 +149,7 @@ where
         let variants = args.variants.into_iter();
         let mut cases = SmallVec::with_capacity(variants.size_hint().0);
         for (case, inputs) in variants {
+            let case = case.into();
             assert_eq!(case.width(), sel_width);
             cases.push(case);
 
@@ -94,7 +172,7 @@ where
 
         let mut default = None;
         if let Some(inputs) = args.default {
-            cases.push(ConstVal::default());
+            cases.push(TupleCase::default(sel_width));
 
             let mut idx = 0;
             for input in inputs {
@@ -143,26 +221,6 @@ impl IsNode for Switch {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Case {
-    Val(ConstVal),
-    Default,
-}
-
-impl Case {
-    pub fn val(self) -> ConstVal {
-        match self {
-            Self::Val(val) => val,
-            Self::Default => ConstVal::default(),
-        }
-    }
-
-    #[inline]
-    pub fn is_default(&self) -> bool {
-        matches!(self, Case::Default)
-    }
-}
-
 pub struct Cases<C, P: Iterator> {
     cases: C,
     chunks: IntoChunks<P>,
@@ -205,7 +263,7 @@ where
 }
 
 pub type PortAlias<'n> = impl Iterator<Item = Port> + 'n;
-pub type CaseAlias<'n> = impl Iterator<Item = Case> + Clone + 'n;
+pub type CaseAlias<'n> = impl Iterator<Item = &'n TupleCase> + Clone + 'n;
 
 pub struct SwitchInputs<'n> {
     pub sel: Port,
@@ -214,24 +272,7 @@ pub struct SwitchInputs<'n> {
 
 impl<'n> WithId<NodeId, &'n Switch> {
     pub fn inputs(self, module: &'n Module) -> SwitchInputs<'n> {
-        let cases = if self.has_default() {
-            Either::Left(self.cases.iter().map(|case| {
-                if !case.is_zero_sized() {
-                    Case::Val(*case)
-                } else {
-                    Case::Default
-                }
-            }))
-        } else {
-            let len = self.cases.len();
-            Either::Right(
-                self.cases[.. len - 1]
-                    .iter()
-                    .map(|val| Case::Val(*val))
-                    .chain(iter::once(Case::Default)),
-            )
-        };
-
+        let cases = self.cases.iter();
         let mut inputs = module.incoming(self.id).into_iter_(module);
         let sel = inputs.next().unwrap();
         let chunks = inputs.chunks(self.outputs.len());

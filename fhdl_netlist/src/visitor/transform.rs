@@ -11,8 +11,8 @@ use crate::{
     const_val::ConstVal,
     netlist::{Module, ModuleId, NetList},
     node::{
-        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
-        NodeKind, SwitchInputs, TyOrData, DFF,
+        BinOp, BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst, NodeKind,
+        SwitchInputs, TyOrData, DFF,
     },
     with_id::WithId,
 };
@@ -306,15 +306,8 @@ impl Transform {
                     } else {
                         module.to_const(sel).and_then(|sel| {
                             for (case, chunk) in cases_ref {
-                                match case {
-                                    Case::Val(case) => {
-                                        if case == sel {
-                                            return Some(chunk);
-                                        }
-                                    }
-                                    Case::Default => {
-                                        return Some(chunk);
-                                    }
+                                if case.is_match(sel) {
+                                    return Some(chunk);
                                 }
                             }
 

@@ -26,6 +26,14 @@ impl<W: Write> Buffer<W> {
         self.inner.write_all(s.as_bytes())
     }
 
+    pub fn write_n_str(&mut self, n: usize, s: &str) -> Result<()> {
+        for _ in 0 .. n {
+            self.write_str(s)?;
+        }
+
+        Ok(())
+    }
+
     pub fn write_fmt(&mut self, args: Arguments<'_>) -> Result<()> {
         self.inner.write_fmt(args)
     }

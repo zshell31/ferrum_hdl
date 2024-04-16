@@ -7,7 +7,7 @@ use crate::{
     buffer::Buffer,
     netlist::{Module, NetList},
     node::{
-        BinOpInputs, Case, DFFInputs, MuxInputs, NetKind, Node, NodeKind, NodeOutput,
+        BinOpInputs, Case, DFFInputs, NetKind, Node, NodeKind, NodeOutput, SwitchInputs,
     },
     symbol::Symbol,
     visitor::ParamKind,
@@ -408,9 +408,9 @@ impl<'n, W: Write> Verilog<'n, W> {
                     ))?;
                 }
             }
-            NodeKind::Mux(mux) => {
+            NodeKind::Switch(mux) => {
                 let mux = node.with(mux);
-                let MuxInputs { sel, cases } = mux.inputs(module);
+                let SwitchInputs { sel, cases } = mux.inputs(module);
 
                 let outputs = &mux.outputs;
                 let single_assign =

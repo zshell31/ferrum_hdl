@@ -1,6 +1,6 @@
 use fhdl_netlist::{
     const_val::ConstVal,
-    node::{Mux, MuxArgs},
+    node::{Switch, SwitchArgs},
 };
 use rustc_middle::{
     mir::{BasicBlock, Operand, SwitchTargets},
@@ -107,7 +107,7 @@ impl<'tcx> Compiler<'tcx> {
                     (ConstVal::new(discr_val, discr_width), item.iter())
                 });
 
-                let mux = ctx.module.add::<_, Mux>(MuxArgs {
+                let mux = ctx.module.add::<_, Switch>(SwitchArgs {
                     outputs: output_ty.iter().map(|ty| (ty, None)),
                     sel: discr,
                     variants,

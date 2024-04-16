@@ -18,14 +18,14 @@ use crate::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mux {
+pub struct Switch {
     pub cases: SmallVec<[ConstVal; 2]>,
     pub inputs: u32,
     pub outputs: SmallVec<[NodeOutput; 1]>,
     pub default: Option<u32>,
 }
 
-impl Mux {
+impl Switch {
     #[inline]
     pub fn has_default(&self) -> bool {
         self.default.is_some()
@@ -33,21 +33,21 @@ impl Mux {
 }
 
 #[derive(Debug)]
-pub struct MuxArgs<V, O, D = Empty<Port>> {
+pub struct SwitchArgs<V, O, D = Empty<Port>> {
     pub outputs: O,
     pub sel: Port,
     pub variants: V,
     pub default: Option<D>,
 }
 
-impl<V, I, O, D> MakeNode<MuxArgs<V, O, D>> for Mux
+impl<V, I, O, D> MakeNode<SwitchArgs<V, O, D>> for Switch
 where
     I: IntoIterator<Item = Port>, // inputs for the each variant
     D: IntoIterator<Item = Port>, // inputs for the default variant
     V: IntoIterator<Item = (ConstVal, I)>, // variants
     O: IntoIterator<Item = (NodeTy, Option<Symbol>)>, // outputs
 {
-    fn make(module: &mut Module, args: MuxArgs<V, O, D>) -> NodeId {
+    fn make(module: &mut Module, args: SwitchArgs<V, O, D>) -> NodeId {
         let sel_width = module[args.sel].width();
         assert!(sel_width != 0);
 
@@ -58,7 +58,7 @@ where
             .collect::<SmallVec<_>>();
         let outputs_len = outputs.len();
 
-        let node_id = module.add_node(Mux {
+        let node_id = module.add_node(Switch {
             cases: SmallVec::new(),
             inputs: 0,
             outputs,
@@ -116,7 +116,7 @@ where
 
         assert!(!cases.is_empty());
 
-        if let NodeKind::Mux(mux) = module[node_id].kind_mut() {
+        if let NodeKind::Switch(mux) = module[node_id].kind_mut() {
             mux.cases = cases;
             mux.inputs = inputs_len;
             mux.default = default;
@@ -126,7 +126,7 @@ where
     }
 }
 
-impl IsNode for Mux {
+impl IsNode for Switch {
     #[inline]
     fn in_count(&self) -> usize {
         self.inputs as usize
@@ -207,13 +207,13 @@ where
 pub type PortAlias<'n> = impl Iterator<Item = Port> + 'n;
 pub type CaseAlias<'n> = impl Iterator<Item = Case> + Clone + 'n;
 
-pub struct MuxInputs<'n> {
+pub struct SwitchInputs<'n> {
     pub sel: Port,
     pub cases: Cases<CaseAlias<'n>, PortAlias<'n>>,
 }
 
-impl<'n> WithId<NodeId, &'n Mux> {
-    pub fn inputs(self, module: &'n Module) -> MuxInputs<'n> {
+impl<'n> WithId<NodeId, &'n Switch> {
+    pub fn inputs(self, module: &'n Module) -> SwitchInputs<'n> {
         let cases = if self.has_default() {
             Either::Left(self.cases.iter().map(|case| {
                 if !case.is_zero_sized() {
@@ -236,7 +236,7 @@ impl<'n> WithId<NodeId, &'n Mux> {
         let sel = inputs.next().unwrap();
         let chunks = inputs.chunks(self.outputs.len());
 
-        MuxInputs {
+        SwitchInputs {
             sel,
             cases: Cases { cases, chunks },
         }

@@ -5,9 +5,9 @@ mod dff;
 mod input;
 mod merger;
 mod mod_inst;
-mod mux;
 mod pass;
 mod splitter;
+mod switch;
 mod zero_extend;
 
 use std::rc::Rc;
@@ -28,9 +28,9 @@ pub use self::{
     input::{Input, InputArgs},
     merger::{Merger, MergerArgs},
     mod_inst::{ModInst, ModInstArgs},
-    mux::{Case, Mux, MuxArgs, MuxInputs},
     pass::{Pass, PassArgs},
     splitter::{Indices, Splitter, SplitterArgs},
+    switch::{Case, Switch, SwitchArgs, SwitchInputs},
     zero_extend::{Extend, ExtendArgs},
 };
 use crate::{
@@ -217,7 +217,7 @@ impl Node {
     }
 
     pub fn is_mux(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Mux(_))
+        matches!(&*self.kind, NodeKind::Switch(_))
     }
 
     pub fn is_mod_inst(&self) -> bool {
@@ -252,9 +252,9 @@ impl Node {
         }
     }
 
-    pub fn mux(&self) -> Option<&Mux> {
+    pub fn mux(&self) -> Option<&Switch> {
         match &*self.kind {
-            NodeKind::Mux(mux) => Some(mux),
+            NodeKind::Switch(mux) => Some(mux),
             _ => None,
         }
     }
@@ -516,7 +516,7 @@ define_nodes!(
     Merger => Merger,
     ModInst => ModInst,
     MultiConst => MultiConst,
-    Mux => Mux,
+    Switch => Switch,
     Pass => Pass,
     Splitter => Splitter,
     Extend => Extend,

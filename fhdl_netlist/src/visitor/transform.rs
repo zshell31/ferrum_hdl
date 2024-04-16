@@ -12,7 +12,7 @@ use crate::{
     netlist::{Module, ModuleId, NetList},
     node::{
         BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
-        MuxInputs, NodeKind, TyOrData, DFF,
+        NodeKind, SwitchInputs, TyOrData, DFF,
     },
     with_id::WithId,
 };
@@ -293,12 +293,12 @@ impl Transform {
                 }
             }
 
-            NodeKind::Mux(mux) => {
+            NodeKind::Switch(mux) => {
                 let cases_len = mux.cases.len();
                 let mux = node.with(mux);
 
                 let chunk = {
-                    let MuxInputs { sel, cases } = mux.inputs(&module);
+                    let SwitchInputs { sel, cases } = mux.inputs(&module);
 
                     let mut cases_ref = cases.into_iter();
                     let chunk = if cases_len == 1 {

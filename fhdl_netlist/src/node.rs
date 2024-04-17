@@ -258,6 +258,20 @@ impl Node {
             _ => None,
         }
     }
+
+    pub fn cons(&self) -> Option<&Const> {
+        match &*self.kind {
+            NodeKind::Const(cons) => Some(cons),
+            _ => None,
+        }
+    }
+
+    pub fn multi_cons(&self) -> Option<&MultiConst> {
+        match &*self.kind {
+            NodeKind::MultiConst(multi_const) => Some(multi_const),
+            _ => None,
+        }
+    }
 }
 
 pub trait MakeNode<Args> {

@@ -16,6 +16,12 @@ pub struct ConstArgs {
     pub sym: Option<Symbol>,
 }
 
+impl ConstArgs {
+    pub fn value(&self) -> ConstVal {
+        ConstVal::new(self.value, self.ty.width())
+    }
+}
+
 impl Const {
     pub fn new(args: ConstArgs) -> Self {
         let ConstArgs { ty, value, sym } = args;

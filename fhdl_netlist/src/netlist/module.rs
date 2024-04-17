@@ -1,5 +1,4 @@
 use std::{
-    iter,
     ops::{Index, IndexMut},
     rc::Rc,
 };
@@ -145,12 +144,6 @@ impl NodeWithInputs {
 
         NodeWithInputs::new(kind, module.incoming(node_id).into_iter_(module))
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PortOrConst {
-    Port(Port),
-    Const(ConstVal),
 }
 
 impl Module {
@@ -488,34 +481,6 @@ impl Module {
         }
     }
 
-    pub fn to_port_or_const(&self, port: Port) -> PortOrConst {
-        match self.to_const(port) {
-            Some(val) => PortOrConst::Const(val),
-            None => PortOrConst::Port(port),
-        }
-    }
-
-    pub fn reconnect_or_replace(&mut self, node_id: NodeId, input: PortOrConst) {
-        let node = &self[node_id];
-        assert_eq!(node.out_count(), 1);
-        match input {
-            PortOrConst::Port(input) => {
-                self.reconnect_all_outgoing(node_id, iter::once(input));
-            }
-            PortOrConst::Const(value) => {
-                let out = &node.outputs()[0];
-                let ty = out.ty;
-                let sym = out.sym;
-
-                self.replace::<_, Const>(node_id, ConstArgs {
-                    ty,
-                    sym,
-                    value: value.val(),
-                });
-            }
-        }
-    }
-
     pub fn node_has_const_inputs(&self, node_id: NodeId) -> bool {
         self.incoming(node_id)
             .into_iter_(self)
@@ -533,8 +498,10 @@ impl Module {
         new_ports: impl IntoIterator<Item = Port>,
     ) {
         for (idx, new_port) in new_ports.into_iter().enumerate() {
-            let old_port = Port::new(node_id, idx as u32);
-            self.reconnect_all_outgoing_(old_port, new_port);
+            if node_id != new_port.node {
+                let old_port = Port::new(node_id, idx as u32);
+                self.reconnect_all_outgoing_(old_port, new_port);
+            }
         }
     }
 

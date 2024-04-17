@@ -29,15 +29,15 @@ pub enum ParamKind {
 
 impl NetList {
     pub fn transform(&mut self) {
-        Transform::new().run(self);
+        Transform::new(self).run();
     }
 
     pub fn reachability(&mut self) {
-        Reachability::new().run(self);
+        Reachability::new(self).run();
     }
 
     pub fn set_names(&mut self) {
-        SetNames::new().run(self);
+        SetNames::new(self).run();
     }
 
     pub fn synth_verilog_into_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
@@ -51,16 +51,16 @@ impl NetList {
     }
 
     pub fn dump(&self, skip: bool) {
-        Dump::new(skip).run(self)
+        Dump::new(self, skip).run()
     }
 
     pub fn dump_by_mod_id(&self, mod_id: ModuleId, skip: bool) {
         let module = self.module(mod_id).map(|module| module.borrow());
-        Dump::new(skip).visit_module(self, module.as_deref());
+        Dump::new(self, skip).visit_module(module.as_deref());
     }
 
     pub fn dump_mod(&self, module: WithId<ModuleId, &Module>, skip: bool) {
-        Dump::new(skip).visit_module(self, module);
+        Dump::new(self, skip).visit_module(module);
     }
 
     pub fn run_visitors(&mut self) {

@@ -7,7 +7,7 @@ use fhdl_data_structures::{
 };
 #[cfg(test)]
 pub(crate) use module::NodeWithInputs;
-pub use module::{Incoming, Module, NodeCursor, Outgoing, PortOrConst};
+pub use module::{Incoming, Module, NodeCursor, Outgoing};
 
 pub use self::module::ModuleId;
 use crate::{cfg::NetListCfg, with_id::WithId};

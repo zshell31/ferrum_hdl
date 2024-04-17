@@ -137,6 +137,7 @@ impl Eq for ConstVal {}
 
 impl Hash for ConstVal {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.width().hash(state);
         self.val().hash(state);
     }
 }

@@ -19,4 +19,7 @@ pub struct NetListCfg {
     /// Do not embed nested multiplexers
     #[arg(long)]
     pub no_embed_muxs: bool,
+    /// Do not eliminate constants
+    #[arg(long)]
+    pub no_eliminate_const: bool,
 }

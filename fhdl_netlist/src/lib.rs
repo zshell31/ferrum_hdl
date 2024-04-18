@@ -1,23 +1,15 @@
-#![feature(negative_impls)]
+#![deny(unused_must_use)]
 #![feature(iter_intersperse)]
-#![feature(rustc_private)]
 #![feature(type_alias_impl_trait)]
+#![feature(pattern)]
 
-pub mod arena;
-pub mod backend;
 pub mod buffer;
-pub mod bvm;
+pub mod cfg;
 pub mod const_val;
-pub mod encoding;
-pub mod group;
-pub mod net_list;
+pub mod netlist;
 pub mod node;
-pub mod params;
-pub mod resolver;
-pub mod sig_ty;
+pub mod node_ty;
 pub mod symbol;
+pub mod utils;
 pub mod visitor;
-
-extern crate rustc_data_structures;
-extern crate rustc_macros;
-extern crate rustc_serialize;
+pub mod with_id;

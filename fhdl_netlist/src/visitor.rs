@@ -1,18 +1,25 @@
-mod assert;
+mod codegen;
 mod dump;
-mod inject_nodes;
 mod reachability;
 mod set_names;
-mod transform;
+pub(crate) mod transform;
 
-use dump::Dump;
-use inject_nodes::InjectNodes;
+use std::{
+    fs::File,
+    io::{self, BufWriter, Write},
+    path::Path,
+};
+
+use codegen::Verilog;
 use reachability::Reachability;
 use set_names::SetNames;
 use transform::Transform;
 
-use self::assert::Assert;
-use crate::net_list::{ModuleId, NetList, NodeId};
+use self::dump::Dump;
+use crate::{
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParamKind {
@@ -20,23 +27,7 @@ pub enum ParamKind {
     Output,
 }
 
-pub trait Visitor {
-    fn visit_modules(&mut self);
-
-    fn visit_module(&mut self, module_id: ModuleId);
-
-    fn visit_node(&mut self, node_id: NodeId);
-}
-
 impl NetList {
-    pub fn assert(&self) {
-        Assert::new(self).run()
-    }
-
-    pub fn assert_mod(&self, module_id: ModuleId) {
-        Assert::new(self).visit_module(module_id);
-    }
-
     pub fn transform(&mut self) {
         Transform::new(self).run();
     }
@@ -49,15 +40,32 @@ impl NetList {
         SetNames::new(self).run();
     }
 
-    pub fn inject_nodes(&mut self) {
-        InjectNodes::new(self).run();
+    pub fn synth_verilog_into_file<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let file = BufWriter::new(File::create(path)?);
+        self.synth_verilog(file)
+    }
+
+    #[inline]
+    pub fn synth_verilog<W: Write>(&self, writer: W) -> io::Result<()> {
+        Verilog::new(self, writer).synth()
     }
 
     pub fn dump(&self, skip: bool) {
         Dump::new(self, skip).run()
     }
 
-    pub fn dump_mod(&self, mod_id: ModuleId, skip: bool) {
-        Dump::new(self, skip).visit_module(mod_id);
+    pub fn dump_by_mod_id(&self, mod_id: ModuleId, skip: bool) {
+        let module = self.module(mod_id).map(|module| module.borrow());
+        Dump::new(self, skip).visit_module(module.as_deref());
+    }
+
+    pub fn dump_mod(&self, module: WithId<ModuleId, &Module>, skip: bool) {
+        Dump::new(self, skip).visit_module(module);
+    }
+
+    pub fn run_visitors(&mut self) {
+        self.transform();
+        self.reachability();
+        self.set_names();
     }
 }

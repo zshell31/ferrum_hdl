@@ -1,111 +1,136 @@
+use std::iter::{self};
+
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
-    group::ItemId,
-    net_list::{NodeId, NodeOutId},
-    node::Splitter,
-    sig_ty::{NodeTy, SignalTy},
-    symbol::Symbol,
+    const_val::ConstVal,
+    netlist::Module,
+    node::{Splitter, SplitterArgs, Switch, SwitchArgs},
+    node_ty::NodeTy,
 };
-use rustc_hir::Expr;
+use rustc_span::Span;
 
-use super::EvalExpr;
-use crate::{error::Error, eval_context::EvalContext, generator::Generator, utils};
+use super::{args, EvalExpr};
+use crate::{
+    compiler::{
+        item::{Item, ModuleExt},
+        item_ty::{ItemTy, ItemTyKind},
+        Compiler, Context, SymIdent,
+    },
+    error::{Error, SpanError, SpanErrorKind},
+};
 
-pub fn bit_vec_trans<'tcx>(
-    generator: &mut Generator<'tcx>,
-    source: ItemId,
-    ctx: &EvalContext<'tcx>,
-    trans: impl FnOnce(
-        &mut Generator<'tcx>,
-        &EvalContext<'tcx>,
-        NodeOutId,
-    ) -> Result<(NodeId, SignalTy), Error>,
-) -> Result<ItemId, Error> {
-    let bit_vec = generator.to_bitvec(ctx.module_id, source);
-
-    let (trans, sig_ty) = trans(generator, ctx, bit_vec)?;
-    let trans = generator.netlist[trans].only_one_out().node_out_id();
-
-    let from = generator.from_bitvec(ctx.module_id, trans, sig_ty);
-
-    Ok(from)
+pub struct Slice {
+    pub only_one: bool,
 }
 
-pub struct BitVecShrink;
-
-impl<'tcx> EvalExpr<'tcx> for BitVecShrink {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for Slice {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        output_ty: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec, idx);
 
-        let rec = generator.eval_expr(rec, ctx)?;
+        let item = match rec.ty.kind() {
+            ItemTyKind::Node(NodeTy::Unsigned(count)) if *count != 0 => {
+                let (node_ty, count) = if self.only_one {
+                    (NodeTy::Bit, *count)
+                } else {
+                    let slice_len = ctx.fn_generic_const(compiler, 0, span)?.unwrap();
+                    let count = *count + 1 - slice_len;
+                    (NodeTy::Unsigned(slice_len), count)
+                };
 
-        let ty = generator.node_type(expr.hir_id, ctx);
-        let width = generator.find_sig_ty(ty, ctx, expr.span)?.width();
+                let rec = ctx.module.to_bitvec(rec).port();
+                make_mux(&mut ctx.module, idx, count, output_ty, |module, case| {
+                    iter::once(slice(module, rec, case, node_ty))
+                })
+            }
+            ItemTyKind::Array(array_ty) => {
+                let group = rec.group();
 
-        let rec = generator.to_bitvec(ctx.module_id, rec);
+                let (count, slice_len) = if self.only_one {
+                    (array_ty.count(), 1)
+                } else {
+                    let slice_len = ctx.fn_generic_const(compiler, 0, span)?.unwrap();
+                    assert_eq!(output_ty.array_ty().count(), slice_len);
 
-        Ok(generator
-            .netlist
-            .add_and_get_out(
-                ctx.module_id,
-                Splitter::new(rec, [(NodeTy::BitVec(width), None)], None, false),
-            )
-            .into())
+                    (array_ty.count() + 1 - slice_len, slice_len)
+                };
+
+                make_mux(&mut ctx.module, idx, count, output_ty, |_, case| {
+                    let item = if self.only_one {
+                        group.by_idx(case as usize)
+                    } else {
+                        Item::new(
+                            output_ty,
+                            group.slice(case as usize, slice_len as usize),
+                        )
+                    };
+
+                    item.iter()
+                })
+            }
+            _ => {
+                return Err(Error::from(SpanError::new(
+                    SpanErrorKind::NotSynthExpr,
+                    span,
+                )));
+            }
+        };
+
+        Ok(item)
     }
 }
 
-pub struct BitVecSlice;
-
-impl<'tcx> EvalExpr<'tcx> for BitVecSlice {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
-
-        let rec = generator.eval_expr(rec, ctx)?.node_out_id();
-
-        let generics = generator.method_call_generics(expr, ctx)?;
-
-        let start = generics.as_const_opt(1).unwrap();
-        let width = generics.as_const_opt(2).unwrap();
-
-        let sym = generator.netlist[rec]
-            .sym
-            .map(|sym| Symbol::new_from_args(format_args!("{}_slice", sym)));
-
-        Ok(generator
-            .netlist
-            .add_and_get_out(
-                ctx.module_id,
-                Splitter::new(rec, [(NodeTy::BitVec(width), sym)], Some(start), false),
-            )
-            .into())
-    }
+fn slice(module: &mut Module, value: Port, idx: u128, node_ty: NodeTy) -> Port {
+    module.add_and_get_port::<_, Splitter>(SplitterArgs {
+        input: value,
+        outputs: iter::once((
+            node_ty,
+            if node_ty.width() == 1 {
+                SymIdent::Bit.into()
+            } else {
+                SymIdent::Slice.into()
+            },
+        )),
+        start: Some(idx),
+        rev: false,
+    })
 }
 
-pub struct BitVecUnpack;
+fn make_mux<'tcx, I>(
+    module: &mut Module,
+    idx: &Item<'tcx>,
+    count: u128,
+    output_ty: ItemTy<'tcx>,
+    mk_variant: impl Fn(&mut Module, u128) -> I,
+) -> Item<'tcx>
+where
+    I: Iterator<Item = Port>,
+{
+    let sel = module.to_bitvec(idx).port();
+    let sel_width = idx.width();
 
-impl<'tcx> EvalExpr<'tcx> for BitVecUnpack {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
+    let variants = (0 .. count)
+        .map(|case| {
+            let variant = mk_variant(module, case);
 
-        let rec = generator.eval_expr(rec, ctx)?.node_out_id();
+            (ConstVal::new(case, sel_width), variant)
+        })
+        .collect::<Vec<_>>();
 
-        let ty = generator.node_type(expr.hir_id, ctx);
-        let sig_ty = generator.find_sig_ty(ty, ctx, expr.span)?;
+    let mux = module.add::<_, Switch>(SwitchArgs::<_, _> {
+        outputs: output_ty.iter().map(|ty| (ty, None)),
+        sel,
+        variants,
+        default: None,
+    });
+    let mux = module.combine_from_node(mux, output_ty);
+    module.assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 
-        Ok(generator.from_bitvec(ctx.module_id, rec, sig_ty))
-    }
+    mux
 }

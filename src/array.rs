@@ -1,14 +1,20 @@
-use fhdl_macros::blackbox;
+use std::io;
+
+use fhdl_macros::{blackbox, synth};
+use smallvec::SmallVec;
+use vcd::IdCode;
 
 use crate::{
-    bitpack::{BitPack, BitSize, IsPacked},
-    bitvec::BitVec,
+    bitpack::{BitPack, BitSize, BitVec, IsPacked},
+    bundle::{Bundle, Unbundle},
     cast::{Cast, CastFrom},
+    const_functions::idx_range_len,
     const_helpers::{Assert, ConstConstr, IsTrue},
     domain::ClockDomain,
+    eval::{Eval, EvalCtx},
     index::{idx_constr, Idx},
-    signal::{Bundle, Signal, SignalValue, Unbundle},
-    simulation::{SimCtx, Simulate},
+    signal::{Signal, SignalValue},
+    trace::{TraceVars, Traceable, Tracer},
 };
 
 pub type Array<const N: usize, T> = [T; N];
@@ -43,129 +49,141 @@ where
         let mask: <T as BitPack>::Packed = ((1_usize << width) - 1_usize).cast();
         let mut offset = (N - 1) * width;
 
-        let vec = (0 .. N)
-            .map(|_| {
-                let slice = (bitvec.clone() >> offset).cast::<<T as BitPack>::Packed>()
-                    & mask.clone();
-                offset = offset.saturating_sub(width);
-                T::unpack(slice)
-            })
-            .collect::<Vec<_>>();
-
-        match <[T; N]>::try_from(vec) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        }
-    }
-}
-
-fn transform_array<const N: usize, T, U>(a: [T; N], f: impl Fn(T) -> U) -> [U; N] {
-    let v = a.into_iter().map(f).collect::<Vec<_>>();
-
-    match <[U; N]>::try_from(v) {
-        Ok(res) => res,
-        Err(_) => unreachable!(),
+        array_from_iter((0 .. N).map(|_| {
+            let slice = (bitvec.clone() >> offset).cast::<<T as BitPack>::Packed>()
+                & mask.clone();
+            offset = offset.saturating_sub(width);
+            T::unpack(slice)
+        }))
     }
 }
 
 impl<const N: usize, T, U> CastFrom<[U; N]> for [T; N]
 where
+    U: Clone,
     T: CastFrom<U>,
+    ConstConstr<{ idx_constr(N) }>:,
 {
+    #[synth(inline)]
     fn cast_from(from: [U; N]) -> [T; N] {
-        transform_array(from, CastFrom::cast_from)
+        from.map_(|from| T::cast_from(from))
     }
 }
 
-pub trait ArrayExt<const N: usize, T> {
-    fn at<const M: usize>(&self) -> T
-    where
-        Assert<{ M < N }>: IsTrue,
-        T: Clone;
-
-    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
-    where
-        Assert<{ M > 0 }>: IsTrue,
-        Assert<{ S + M - 1 < N }>: IsTrue,
-        for<'a> [T; M]: TryFrom<&'a [T]>;
-
-    #[blackbox(ArrayIndex)]
+pub trait ArrayExt<const N: usize, T>: Sized {
+    #[blackbox(Index)]
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone;
 
-    #[blackbox(ArrayReverse)]
-    fn reverse(self) -> Self
+    #[blackbox(Slice)]
+    fn slice<const M: usize>(&self, idx: Idx<{ idx_range_len(N, M) }>) -> [T; M]
     where
+        ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
         T: Clone;
 
-    fn map<U>(self, f: impl Fn(T) -> U) -> [U; N];
-
-    #[blackbox(ArrayMake)]
-    fn make(f: impl FnMut(Idx<N>) -> T) -> [T; N]
+    #[synth(inline)]
+    fn reverse(self) -> [T; N]
     where
+        T: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[T; N]>::chain_idx((), |idx, _| ((), self.idx(idx.rev()))).1
+    }
+
+    #[synth(inline)]
+    fn map_<U>(self, f: impl Fn(T) -> U) -> [U; N]
+    where
+        T: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[U; N]>::chain_idx((), |idx, _| ((), f(self.idx(idx)))).1
+    }
+
+    #[synth(inline)]
+    fn map_idx<U>(self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
+    where
+        T: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[U; N]>::chain_idx((), |idx, _| ((), f(idx.clone(), self.idx(idx)))).1
+    }
+
+    #[synth(inline)]
+    fn repeat(val: T) -> [T; N]
+    where
+        T: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        Self::make(move || val.clone())
+    }
+
+    #[synth(inline)]
+    fn make(f: impl Fn() -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[T; N]>::chain_idx((), |_, _| ((), f())).1
+    }
+
+    #[synth(inline)]
+    fn make_idx(f: impl Fn(Idx<N>) -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        <[T; N]>::chain_idx((), |idx, _| ((), f(idx))).1
+    }
+
+    #[synth(inline)]
+    fn chain<U>(init: U, f: impl Fn(U) -> (U, T)) -> (U, [T; N])
+    where
+        U: Clone,
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        Self::chain_idx(init, |_, prev| f(prev))
+    }
+
+    #[blackbox(ArrayChain)]
+    fn chain_idx<U>(init: U, f: impl Fn(Idx<N>, U) -> (U, T)) -> (U, [T; N])
+    where
+        U: Clone,
         ConstConstr<{ idx_constr(N) }>:;
 }
 
 impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
-    fn at<const M: usize>(&self) -> T
-    where
-        Assert<{ M < N }>: IsTrue,
-        T: Clone,
-    {
-        self[M].clone()
-    }
-
-    fn slice<const S: usize, const M: usize>(&self) -> [T; M]
-    where
-        Assert<{ M > 0 }>: IsTrue,
-        Assert<{ S + M - 1 < N }>: IsTrue,
-        for<'a> [T; M]: TryFrom<&'a [T]>,
-    {
-        match <[T; M]>::try_from(&self[S .. (S + M)]) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        }
-    }
-
     fn idx(&self, idx: Idx<N>) -> T
     where
         ConstConstr<{ idx_constr(N) }>:,
-        Assert<{ idx_constr(N) <= usize::BITS as usize }>: IsTrue,
         T: Clone,
     {
         let idx = idx.val().cast::<usize>();
         self[idx].clone()
     }
 
-    fn reverse(self) -> Self
+    fn slice<const M: usize>(&self, idx: Idx<{ idx_range_len(N, M) }>) -> [T; M]
     where
+        ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
         T: Clone,
     {
-        let mut values = self.clone();
-        for i in 0 .. N {
-            values[N - i - 1] = self[i].clone();
-        }
-        values
+        let idx = idx.val().cast::<usize>();
+
+        array_from_iter::<T, M>(self[idx .. (idx + M)].iter().cloned())
     }
 
-    #[blackbox(ArrayMap)]
-    fn map<U>(self, f: impl Fn(T) -> U) -> [U; N] {
-        self.map(f)
-    }
-
-    fn make(mut f: impl FnMut(Idx<N>) -> T) -> [T; N]
+    fn chain_idx<U>(init: U, f: impl Fn(Idx<N>, U) -> (U, T)) -> (U, [T; N])
     where
+        U: Clone,
         ConstConstr<{ idx_constr(N) }>:,
     {
-        let values = (0 .. N).map(|idx| f(idx.into())).collect::<Vec<_>>();
+        let mut prev = init;
+        let a = array_from_iter((0 .. N).map(|idx| {
+            let (new_prev, item) = f(unsafe { Idx::from_usize(idx) }, prev.clone());
+            prev = new_prev;
+            item
+        }));
 
-        match <[T; N]>::try_from(values) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        }
+        (prev, a)
     }
 }
 
@@ -173,14 +191,7 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Unbundle for Signal<D, [T; 
     type Unbundled = [Signal<D, T>; N];
 
     fn unbundle(self) -> Self::Unbundled {
-        let signals = (0 .. N)
-            .map(|ind| self.clone().map(move |s| s[ind].clone()))
-            .collect::<Vec<_>>();
-
-        match <[Signal<D, T>; N]>::try_from(signals) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
-        }
+        array_from_iter((0 .. N).map(|ind| self.clone().map(move |s| s[ind].clone())))
     }
 }
 
@@ -189,29 +200,48 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Bundle for [Signal<D, T>; N
 
     fn bundle(mut self) -> Self::Bundled {
         Signal::new(move |ctx| {
-            let values = self
-                .iter_mut()
-                .map(|signal| signal.next(ctx))
-                .collect::<Vec<_>>();
-
-            match <[T; N]>::try_from(values) {
-                Ok(res) => res,
-                Err(_) => unreachable!(),
-            }
+            array_from_iter(self.iter_mut().map(|signal| signal.next(ctx)))
         })
     }
 }
 
-impl<const N: usize, D: ClockDomain, T: SignalValue> Simulate for [Signal<D, T>; N] {
+impl<const N: usize, D: ClockDomain, T: SignalValue> Eval<D> for [Signal<D, T>; N] {
     type Value = [T; N];
 
-    fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
-        let values = (0 .. N).map(|ind| self[ind].next(ctx)).collect::<Vec<_>>();
+    fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
+        array_from_iter((0 .. N).map(|ind| self[ind].next(ctx)))
+    }
+}
 
-        match <[_; N]>::try_from(values) {
-            Ok(res) => res,
-            Err(_) => unreachable!(),
+fn array_from_iter<T, const N: usize>(it: impl Iterator<Item = T>) -> Array<N, T> {
+    let v = it.into_iter().collect::<SmallVec<[T; N]>>();
+    assert_eq!(v.len(), N);
+
+    match v.into_inner() {
+        Ok(a) => a,
+        Err(_) => unreachable!(),
+    }
+}
+
+impl<const N: usize, T: Traceable> Traceable for Array<N, T>
+where
+    Assert<{ N > 0 }>: IsTrue,
+{
+    fn add_vars(vars: &mut TraceVars) {
+        for idx in 0 .. N {
+            vars.push_idx(idx);
+            T::add_vars(vars);
+            vars.pop();
         }
+    }
+
+    fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+        self.iter().try_for_each(|item| {
+            item.trace(id, tracer)?;
+            io::Result::Ok(())
+        })?;
+
+        Ok(())
     }
 }
 
@@ -220,30 +250,25 @@ mod tests {
     use super::*;
     use crate::{
         bit::{Bit, H, L},
-        bitvec::BitVec,
-        domain::TestSystem4,
+        domain::{Clock, TD4},
         signal::SignalIterExt,
     };
 
     #[test]
-    fn at() {
-        assert_eq!([3, 2, 1, 0].at::<3>(), 0);
-    }
-
-    #[test]
     fn slice() {
-        assert_eq!([3, 2, 1, 0].slice::<1, 2>(), [2, 1]);
+        assert_eq!([3, 2, 1, 0].slice::<2>(1.cast()), [2, 1]);
     }
 
     #[test]
     fn unbundle() {
+        let clk = Clock::<TD4>::new();
         let s = [[H, H, L], [L, H, L], [H, L, H], [L, L, H]]
             .into_iter()
-            .into_signal::<TestSystem4>();
+            .into_signal::<TD4>();
 
         let res = s.unbundle();
 
-        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.eval(&clk).take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],
@@ -253,15 +278,16 @@ mod tests {
 
     #[test]
     fn bundle() {
+        let clk = Clock::<TD4>::new();
         let s = [
-            [H, L, H, L].into_signal::<TestSystem4>(),
-            [H, H, L, L].into_signal::<TestSystem4>(),
-            [L, L, H, H].into_signal::<TestSystem4>(),
+            [H, L, H, L].into_signal::<TD4>(),
+            [H, H, L, L].into_signal::<TD4>(),
+            [L, L, H, H].into_signal::<TD4>(),
         ];
 
         let res = s.bundle();
 
-        assert_eq!(res.simulate().take(4).collect::<Vec<_>>(), [
+        assert_eq!(res.eval(&clk).take(4).collect::<Vec<_>>(), [
             [H, H, L],
             [L, H, L],
             [H, L, H],

@@ -1,4 +1,3 @@
-- Вместо Vec<BitVecMask> завести более компактное представление
 - ConstVal использовать длинную арифметику
 - Добавить преобразование нод для случая:
 ```
@@ -42,33 +41,12 @@ module top_module
 endmodule
 
 ```
-- Не учитывать parent generic args в method_call_generics
 - Тесты
-- Привязать fhdl lib к nightly тулчейну без указания версии
-- Доделать cli для fhdl compiler
 - Доработать sim watch
 - Добавить возможность записи в vcd
-- Конвертация нет листа в формат, используемый для TuringComplete
-- Добавить "сброс" нетлиста в виде программы для отдельной симуляции
-- Бенчмарки для генерации/симуляции
-- `unsafe { with_arena() }` избавиться от unsafe
-- for loop support
 - README / Documentation
 - Определиться с типом для ширины сигналов (сейчас используется u128, но это много)
-- tracing
-- expr complexity for nodes
 
-- cannot synthesize `Idx::default`
-- don't import modules if compiling an intermediate non-primary crate
-- synthesize generic function with assoc function/const/types, for example:
-```rust
-fn into_signal<D: ClockDomain, T: SignalValue + Default>() -> Signal<D, T> {
-  Signal::lift(T::default())
-}
-```
-- optimize Group/SignalTy for memory usage
 - NetList transform:
   - extend -> splitter
-  - case: trim 0000 & ????
   - merger -> splitter
-- Array reverse

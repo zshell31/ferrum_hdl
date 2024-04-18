@@ -1,27 +1,30 @@
 pub mod array;
-pub mod bit;
+pub mod bin_op;
 pub mod bitpack;
 pub mod bitvec;
-pub mod bundle;
 pub mod cast;
-pub mod index;
-pub mod lit;
 pub mod signal;
-pub mod std;
+pub mod un_op;
 
-use fhdl_blackbox::BlackboxKind;
-use fhdl_netlist::{group::ItemId, node::BinOp};
-use rustc_hir::{def_id::DefId, Expr};
+use fhdl_common::BlackboxKind;
+use fhdl_netlist::node::BinOp;
+use rustc_hir::def_id::DefId;
+use rustc_span::Span;
 
-use crate::{error::Error, eval_context::EvalContext, generator::Generator};
+use crate::{
+    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
+    error::Error,
+};
 
 pub trait EvalExpr<'tcx> {
-    fn eval_expr(
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error>;
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        output_ty: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error>;
 }
 
 #[derive(Debug)]
@@ -32,18 +35,20 @@ pub struct Blackbox {
 
 macro_rules! eval_expr {
     (
-        $( $blackbox_kind:ident => $eval:expr ),+
+        $( $blackbox_kind:ident => $eval:expr ),+ $(,)?
     ) => {
         impl<'tcx> Blackbox {
-            pub fn eval_expr(
+            pub fn eval(
                 &self,
-                generator: &mut Generator<'tcx>,
-                expr: &'tcx Expr<'tcx>,
-                ctx: &mut EvalContext<'tcx>
-            ) -> Result<ItemId, Error> {
+                compiler: &mut Compiler<'tcx>,
+                args: &[Item<'tcx>],
+                output_ty: ItemTy<'tcx>,
+                ctx: &mut Context<'tcx>,
+                span: Span,
+            ) -> Result<Item<'tcx>, Error> {
                 match self.kind {
                     $(
-                        BlackboxKind::$blackbox_kind => $eval.eval_expr(generator, expr, ctx),
+                        BlackboxKind::$blackbox_kind => $eval.eval(compiler,  args, output_ty, ctx, span),
                     )+
                 }
             }
@@ -51,43 +56,72 @@ macro_rules! eval_expr {
     };
 }
 
+macro_rules! args {
+    ($args:ident as $( $arg:ident ),+) => {
+        let [$($arg,)+ ..] = $args else { panic!("not enough arguments"); };
+    };
+}
+
+use args;
+
+struct PassReceiver;
+
+impl<'tcx> EvalExpr<'tcx> for PassReceiver {
+    fn eval(
+        &self,
+        _: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        _: &mut Context<'tcx>,
+        _: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec);
+
+        Ok(rec.clone())
+    }
+}
+
 eval_expr!(
-    ArrayReverse => array::Reverse,
-    ArrayMap => array::Map,
-    ArrayIndex => array::Index,
-    ArrayMake => array::Make,
+    ArrayChain => array::Chain,
 
-    BitL => bit::BitVal(false),
-    BitH => bit::BitVal(true),
+    BitPackPack => bitpack::Pack,
+    BitPackUnpack => bitpack::Unpack,
 
-    BitPackPack => bitpack::BitPackPack,
-    BitPackRepack => bitpack::BitPackRepack,
-    BitPackMsb => bitpack::BitPackMsb,
+    Bundle => PassReceiver,
+    Unbundle => PassReceiver,
 
-    BitVecShrink => bitvec::BitVecShrink,
-    BitVecSlice => bitvec::BitVecSlice,
-    BitVecUnpack => bitvec::BitVecUnpack,
+    OpEq => bin_op::BinOp(BinOp::Eq),
+    OpNe => bin_op::BinOp(BinOp::Ne),
+    OpLt => bin_op::BinOp(BinOp::Lt),
+    OpLe => bin_op::BinOp(BinOp::Le),
+    OpGt => bin_op::BinOp(BinOp::Gt),
+    OpGe => bin_op::BinOp(BinOp::Ge),
+    OpBitAnd => bin_op::BinOp(BinOp::BitAnd),
+    OpBitOr => bin_op::BinOp(BinOp::BitOr),
+    OpBitXor => bin_op::BinOp(BinOp::BitXor),
+    OpAnd => bin_op::BinOp(BinOp::And),
+    OpOr => bin_op::BinOp(BinOp::Or),
+    OpAdd => bin_op::BinOp(BinOp::Add),
+    OpSub => bin_op::BinOp(BinOp::Sub),
+    OpMul => bin_op::BinOp(BinOp::Mul),
+    OpDiv => bin_op::BinOp(BinOp::Div),
+    OpRem => bin_op::BinOp(BinOp::Rem),
+    OpShl => bin_op::BinOp(BinOp::Sll),
+    OpShr => bin_op::BinOp(BinOp::Slr),
+    OpNot => un_op::BitNot,
 
-    Bundle => bundle::Bundle,
-    Unbundle => bundle::Unbundle,
+    CastFrom => cast::CastFrom,
 
-    CastFrom => cast::Conversion { from: true },
-    Cast => cast::Conversion { from: true },
+    Index => bitvec::Slice { only_one: true },
+    Slice => bitvec::Slice { only_one: false },
 
-    SignalAndThen => signal::SignalAndThen,
-    SignalApply2 => signal::SignalApply2,
-    SignalAnd => signal::SignalOp { op: BinOp::And },
-    SignalEq => signal::SignalOp { op: BinOp::Eq },
-    SignalLift => signal::SignalLift,
-    SignalMap => signal::SignalMap,
-    SignalOr => signal::SignalOp { op: BinOp::Or },
-    SignalReg => signal::SignalReg { has_en: false },
-    SignalRegEn => signal::SignalReg { has_en: true },
-    SignalValue => signal::SignalValue,
-    SignalWatch => signal::SignalWatch,
+    SignalAndThen => signal::AndThen,
+    SignalApply2 => signal::Apply2,
+    SignalMap => signal::Map,
+    SignalDff => signal::SignalDff { comb: false },
+    SignalDffComb => signal::SignalDff { comb: true },
+    SignalValue => PassReceiver,
+    IntoSignal => PassReceiver,
 
-    UnsignedIndex => index::UnsignedIndex,
-
-    StdClone => std::StdClone
-
+    StdClone => PassReceiver,
 );

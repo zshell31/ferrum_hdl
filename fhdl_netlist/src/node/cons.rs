@@ -1,131 +1,141 @@
-use rustc_macros::{Decodable, Encodable};
+use fhdl_data_structures::graph::NodeId;
 use smallvec::SmallVec;
 
-use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    encoding::Wrap,
-    net_list::NodeOutIdx,
-    resolver::{Resolve, Resolver},
-    sig_ty::{NodeTy, Width},
-    symbol::Symbol,
-};
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{const_val::ConstVal, netlist::Module, node_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Const {
-    value: Width,
-    output: NodeOutput,
+    pub value: u128,
+    pub output: [NodeOutput; 1],
+}
+
+pub struct ConstArgs {
+    pub ty: NodeTy,
+    pub value: u128,
+    pub sym: Option<Symbol>,
+}
+
+impl ConstArgs {
+    pub fn value(&self) -> ConstVal {
+        ConstVal::new(self.value, self.ty.width())
+    }
 }
 
 impl Const {
-    pub fn new(ty: NodeTy, value: Width, sym: Option<Symbol>) -> Self {
+    pub fn new(args: ConstArgs) -> Self {
+        let ConstArgs { ty, value, sym } = args;
+
         Self {
             value,
-            output: NodeOutput::wire(ty, sym),
+            output: [NodeOutput::wire(ty, sym)],
         }
     }
 
-    pub fn value(&self) -> &Width {
-        &self.value
+    fn from_multi_const(value: u128, output: [NodeOutput; 1]) -> Self {
+        Self { value, output }
     }
 
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
-}
-
-impl<R: Resolver> Resolve<R> for Const {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            value: self.value.resolve(resolver)?,
-            output: self.output.resolve(resolver)?,
-        })
+    pub fn value(&self) -> ConstVal {
+        ConstVal::new(self.value, self.output[0].width())
     }
 }
 
-impl From<Const> for NodeKind {
-    fn from(node: Const) -> Self {
-        Self::Const(node)
+impl MakeNode<ConstArgs> for Const {
+    fn make(module: &mut Module, args: ConstArgs) -> NodeId {
+        module.add_node(Self::new(args))
     }
 }
 
 impl IsNode for Const {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &[]
+    #[inline]
+    fn in_count(&self) -> usize {
+        0
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut []
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
 }
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MultiConst {
-    values: Wrap<SmallVec<[u128; 1]>>,
-    outputs: Wrap<SmallVec<[NodeOutput; 1]>>,
+    pub values: SmallVec<[u128; 1]>,
+    pub outputs: SmallVec<[NodeOutput; 1]>,
 }
 
 impl MultiConst {
-    pub fn new(
-        values: impl IntoIterator<Item = u128>,
-        outputs: impl IntoIterator<Item = NodeOutput>,
-    ) -> Self {
-        Self {
-            values: values.into_iter().collect(),
-            outputs: outputs.into_iter().collect(),
+    pub fn value(&self, idx: usize) -> ConstVal {
+        let value = self.values[idx];
+        let output = &self.outputs[idx];
+
+        ConstVal::new(value, output.width())
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = ConstVal> + '_ {
+        (0 .. self.out_count()).map(|idx| self.value(idx))
+    }
+}
+
+impl MultiConst {
+    fn new<O>(args: O) -> Self
+    where
+        O: IntoIterator<Item = ConstArgs>,
+    {
+        let args = args.into_iter();
+        let size = args.size_hint().0;
+        let mut values = SmallVec::with_capacity(size);
+        let mut outputs = SmallVec::with_capacity(size);
+
+        for arg in args {
+            values.push(arg.value);
+            outputs.push(NodeOutput::wire(arg.ty, arg.sym));
         }
+
+        MultiConst { values, outputs }
     }
 
-    pub fn values(&self) -> &[u128] {
-        &self.values
-    }
-
-    pub fn outputs(&self) -> &[NodeOutput] {
-        &self.outputs
+    pub fn val_outputs(&self) -> impl Iterator<Item = (u128, &NodeOutput)> + '_ {
+        self.values.iter().copied().zip(self.outputs.iter())
     }
 }
 
-impl<R: Resolver> Resolve<R> for MultiConst {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            values: self.values.resolve(resolver)?,
-            outputs: self.outputs.resolve(resolver)?,
-        })
-    }
-}
-
-impl From<MultiConst> for NodeKind {
-    fn from(node: MultiConst) -> Self {
-        Self::MultiConst(node)
+impl<O> MakeNode<O> for MultiConst
+where
+    O: IntoIterator<Item = ConstArgs>,
+{
+    fn make(module: &mut Module, args: O) -> NodeId {
+        let node = MultiConst::new(args);
+        if node.values.len() == 1 {
+            module.add_node(Const::from_multi_const(
+                node.values[0],
+                node.outputs.into_inner().unwrap(),
+            ))
+        } else {
+            module.add_node(node)
+        }
     }
 }
 
 impl IsNode for MultiConst {
-    type Inputs = [NodeOutIdx];
-    type Outputs = [NodeOutput];
-
-    fn inputs(&self) -> &Self::Inputs {
-        &[]
-    }
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut []
+    #[inline]
+    fn in_count(&self) -> usize {
+        0
     }
 
-    fn outputs(&self) -> &Self::Outputs {
-        self.outputs.as_slice()
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        &self.outputs
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs.as_mut_slice()
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.outputs
     }
 }

@@ -1,138 +1,115 @@
-use rustc_macros::{Decodable, Encodable};
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
+use smallvec::SmallVec;
 
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
+use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
+    netlist::{Module, ModuleId},
     symbol::Symbol,
+    with_id::WithId,
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModInst {
-    name: Option<Symbol>,
-    module_id: ModuleId,
-    inputs: Vec<NodeOutIdx>,
-    outputs: Vec<NodeOutput>,
+    pub mod_id: ModuleId,
+    pub name: Option<Symbol>,
+    pub inputs: u32,
+    pub outputs: SmallVec<[NodeOutput; 1]>,
+    pub inline: bool,
 }
 
-impl ModInst {
-    pub fn new(
-        name: Option<Symbol>,
-        module_id: ModuleId,
-        inputs: impl IntoIterator<Item = NodeOutId>,
-        outputs: impl IntoIterator<Item = (NodeTy, Option<Symbol>)>,
-    ) -> Self {
-        Self {
-            name,
-            module_id,
-            inputs: inputs.into_iter().map(Into::into).collect(),
-            outputs: outputs
-                .into_iter()
-                .map(|(ty, sym)| NodeOutput::wire(ty, sym))
-                .collect(),
+pub struct ModInstArgs<'m, I, O> {
+    pub module: WithId<ModuleId, &'m Module>,
+    pub inputs: I,
+    pub outputs: O,
+}
+
+impl<'m, I, O> MakeNode<ModInstArgs<'m, I, O>> for ModInst
+where
+    I: IntoIterator<Item = Port>,
+    O: IntoIterator<Item = Option<Symbol>>,
+{
+    fn make(module: &mut Module, args: ModInstArgs<I, O>) -> NodeId {
+        let mod_inputs = args.module.mod_inputs();
+        let mod_outputs = args.module.mod_outputs();
+
+        let arg_outputs = args.outputs.into_iter();
+        let mut outputs = SmallVec::with_capacity(arg_outputs.size_hint().0);
+        for sym in arg_outputs {
+            let mod_output = args.module[mod_outputs[outputs.len()]];
+
+            let ty = mod_output.ty;
+            let sym = sym.or(mod_output.sym);
+            outputs.push(NodeOutput::wire(ty, sym));
         }
-    }
+        assert_eq!(outputs.len(), mod_outputs.len());
 
-    pub fn name(&self) -> Option<Symbol> {
-        self.name
-    }
+        let node_id = module.add_node(ModInst {
+            mod_id: args.module.id,
+            name: None,
+            inputs: 0,
+            outputs,
+            inline: false,
+        });
 
-    pub fn set_name(&mut self, name: Option<Symbol>) {
-        self.name = name;
-    }
+        let mut inputs = 0;
+        for input in args.inputs {
+            let ty = module[input].ty;
+            let mod_in = args.module[mod_inputs[inputs as usize]];
+            // TODO: how to handle signed types
+            assert_eq!(ty.width(), mod_in.ty.width());
 
-    pub fn module_id(&self) -> ModuleId {
-        self.module_id
-    }
+            module.add_edge(input, Port::new(node_id, inputs));
+            inputs += 1;
+        }
+        assert_eq!(inputs as usize, mod_inputs.len());
 
-    pub fn outputs(&self) -> &[NodeOutput] {
-        &self.outputs
-    }
+        if let NodeKind::ModInst(mod_inst) = module[node_id].kind_mut() {
+            mod_inst.inputs = inputs;
+        }
 
-    pub fn outputs_mut(&mut self) -> &mut [NodeOutput] {
-        &mut self.outputs
-    }
-
-    pub fn inputs_len(&self) -> usize {
-        self.inputs.len()
-    }
-
-    pub fn inputs_is_empty(&self) -> bool {
-        self.inputs.is_empty()
-    }
-
-    pub fn outputs_len(&self) -> usize {
-        self.outputs.len()
-    }
-
-    pub fn outputs_is_empty(&self) -> bool {
-        self.outputs.is_empty()
-    }
-}
-
-impl WithId<ModuleId, &'_ ModInst> {
-    pub fn inputs(&self) -> impl Iterator<Item = NodeOutId> + '_ {
-        let module_id = self.id();
-        self.inputs
-            .iter()
-            .map(move |input| NodeOutId::make(module_id, *input))
-    }
-}
-
-impl<R: Resolver> Resolve<R> for ModInst {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            name: self.name,
-            module_id: resolver.resolve_module_id(self.module_id)?,
-            inputs: self.inputs.clone(),
-            outputs: self.outputs.resolve(resolver)?,
-        })
-    }
-}
-
-impl From<ModInst> for NodeKind {
-    fn from(node: ModInst) -> Self {
-        Self::ModInst(node)
+        node_id
     }
 }
 
 impl IsNode for ModInst {
-    type Inputs = [NodeOutIdx];
-    type Outputs = [NodeOutput];
-
-    fn inputs(&self) -> &Self::Inputs {
-        self.inputs.as_slice()
+    #[inline]
+    fn in_count(&self) -> usize {
+        self.inputs as usize
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        self.inputs.as_mut_slice()
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        &self.outputs
     }
 
-    fn outputs(&self) -> &Self::Outputs {
-        self.outputs.as_slice()
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.outputs
+    }
+}
+
+impl ModInst {
+    #[inline]
+    pub fn has_ports(&self) -> bool {
+        self.has_inputs() && self.has_outputs()
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        self.outputs.as_mut_slice()
+    #[inline]
+    pub fn has_inputs(&self) -> bool {
+        self.in_count() != 0
     }
 
-    fn assert(&self, target: ModuleId, net_list: &NetList) {
-        let module_id = self.module_id;
-        let module = &net_list[module_id];
-        let node = WithId::<ModuleId, _>::new(target, self);
+    #[inline]
+    pub fn has_outputs(&self) -> bool {
+        self.out_count() != 0
+    }
+}
 
-        assert_eq!(self.inputs.len(), module.inputs_len());
-        for (input, mod_input) in node.inputs().zip(module.inputs()) {
-            assert_width!(
-                net_list[input].width(),
-                net_list[mod_input].only_one_out().width()
-            );
-        }
-
-        assert_eq!(self.outputs.len(), module.outputs_len());
-        for (output, mod_output) in self.outputs().iter().zip(module.outputs()) {
-            assert_width!(output.width(), net_list[mod_output].width());
-        }
+impl WithId<NodeId, &'_ ModInst> {
+    pub fn inputs<'m>(&self, module: &'m Module) -> impl Iterator<Item = Port> + 'm {
+        module.incoming(self.id).into_iter_(module)
     }
 }

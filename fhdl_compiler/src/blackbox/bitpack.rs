@@ -1,76 +1,45 @@
-use fhdl_netlist::{
-    group::ItemId,
-    node::Splitter,
-    sig_ty::{NodeTy, SignalTy},
-};
-use rustc_hir::Expr;
+use rustc_span::Span;
 
-use super::{bitvec, EvalExpr};
+use super::{args, EvalExpr};
 use crate::{
-    error::Error, eval_context::EvalContext, generator::Generator, scopes::SymIdent,
-    utils,
+    compiler::{
+        item::{Item, ModuleExt},
+        item_ty::ItemTy,
+        Compiler, Context,
+    },
+    error::Error,
 };
 
-pub struct BitPackPack;
+pub struct Pack;
 
-impl<'tcx> EvalExpr<'tcx> for BitPackPack {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for Pack {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
-        let rec = generator.eval_expr(rec, ctx)?;
+        _: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        _: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec);
 
-        Ok(generator.to_bitvec(ctx.module_id, rec).into())
+        Ok(ctx.module.to_bitvec(rec))
     }
 }
 
-pub struct BitPackRepack;
+pub struct Unpack;
 
-impl<'tcx> EvalExpr<'tcx> for BitPackRepack {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for Unpack {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
+        _: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        output_ty: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        _: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec);
 
-        let rec = generator.eval_expr(rec, ctx)?;
-        let to = generator.to_bitvec(ctx.module_id, rec);
-
-        let ty = generator.node_type(expr.hir_id, ctx);
-        let sig_ty = generator.find_sig_ty(ty, ctx, expr.span)?;
-
-        Ok(generator.from_bitvec(ctx.module_id, to, sig_ty))
-    }
-}
-
-pub struct BitPackMsb;
-
-impl<'tcx> EvalExpr<'tcx> for BitPackMsb {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
-
-        let rec = generator.eval_expr(rec, ctx)?;
-
-        bitvec::bit_vec_trans(generator, rec, ctx, |generator, ctx, bit_vec| {
-            let ty = NodeTy::Bit;
-
-            Ok((
-                generator.netlist.add(
-                    ctx.module_id,
-                    Splitter::new(bit_vec, [(ty, SymIdent::Msb)], None, true),
-                ),
-                SignalTy::new(ty.into()),
-            ))
-        })
+        Ok(ctx.module.from_bitvec(rec, output_ty))
     }
 }

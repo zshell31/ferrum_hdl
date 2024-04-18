@@ -1,55 +1,26 @@
 use std::{borrow::Cow, iter};
 
-use darling::{
-    ast::{Data, Fields, Style},
-    FromAttributes, FromDeriveInput, FromField, FromGenerics, FromVariant,
-};
+use darling::{ast::Style, FromDeriveInput};
 use either::Either;
-use fhdl_const_func::clog2_len;
+use fhdl_const_func::{clog2, clog2_len};
 use proc_macro2::{Span, TokenStream};
 use quote::quote;
-use syn::{GenericParam, Generics, Ident, Index, Type};
+use syn::{GenericParam, Generics, Ident, Index};
 
-use crate::utils::{self, Bounds, TEither};
+use crate::utils::{self, AdtData, Bounds, Field, TEither};
 
+#[derive(Debug, FromDeriveInput)]
+#[darling(attributes(bitpack))]
 pub struct BitPackDerive {
     ident: Ident,
     generics: Generics,
-    data: Data<BitPackVariant, BitPackField>,
-    attrs: Bounds,
+    data: AdtData,
+    #[darling(default, multiple)]
+    bound: Bounds,
+    bits: Option<usize>,
 }
 
-impl FromDeriveInput for BitPackDerive {
-    fn from_derive_input(input: &syn::DeriveInput) -> darling::Result<Self> {
-        let attrs = input
-            .attrs
-            .iter()
-            .filter_map(|attr| {
-                let ident = attr.path();
-                if ident.is_ident("bitpack") {
-                    Some(attr.clone())
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        Ok(Self {
-            ident: input.ident.clone(),
-            generics: Generics::from_generics(&input.generics)?,
-            data: Data::try_from(&input.data)?,
-            attrs: Bounds::from_attributes(&attrs)?,
-        })
-    }
-}
-
-#[derive(FromField)]
-pub struct BitPackField {
-    ident: Option<Ident>,
-    ty: Type,
-}
-
-impl BitPackField {
+impl Field {
     fn field_name(&self, idx: usize) -> Cow<'_, Ident> {
         self.ident.as_ref().map(Cow::Borrowed).unwrap_or_else(|| {
             Cow::Owned(Ident::new(&format!("_var_{idx}"), Span::call_site()))
@@ -67,33 +38,72 @@ impl BitPackField {
     }
 }
 
-#[derive(FromVariant)]
-pub struct BitPackVariant {
-    ident: Ident,
-    fields: Fields<BitPackField>,
-}
-
 impl BitPackDerive {
-    pub fn into_tokens(self) -> TokenStream {
-        let impl_bit_size = self.impl_bit_size();
-        let impl_bit_pack = self.impl_bit_pack();
+    pub fn into_tokens(self) -> Result<TokenStream, darling::Error> {
+        let discr_width = self.discr_width()?;
+        let impl_bit_size = self.impl_bit_size(discr_width);
+        let impl_bit_pack = self.impl_bit_pack(discr_width);
 
-        quote! {
+        Ok(quote! {
             #impl_bit_size
 
             #impl_bit_pack
+        })
+    }
+
+    fn discr_width(&self) -> Result<usize, darling::Error> {
+        match &self.data {
+            AdtData::Enum(variants) => {
+                let max_discr =
+                    variants
+                        .iter()
+                        .fold(0, |max_discr, variant| match variant.discr() {
+                            Some(discr) => {
+                                if max_discr <= discr {
+                                    discr
+                                } else {
+                                    max_discr
+                                }
+                            }
+                            None => max_discr,
+                        });
+
+                let bits = if max_discr == 0 {
+                    clog2_len(variants.len())
+                } else {
+                    clog2(max_discr)
+                };
+
+                match self.bits {
+                    Some(spec_bits) => {
+                        if spec_bits < bits {
+                            Err(darling::Error::custom(format!("Specified bit size '{spec_bits}' is less than calculated bit size '{bits}'")))
+                        } else {
+                            Ok(spec_bits)
+                        }
+                    }
+                    None => Ok(bits),
+                }
+            }
+            AdtData::Struct(_) => {
+                if self.bits.is_some() {
+                    Err(darling::Error::custom(
+                        "Bit size should be specified only for enums",
+                    ))
+                } else {
+                    Ok(0)
+                }
+            }
         }
     }
 
-    pub fn impl_bit_size(&self) -> TokenStream {
+    pub fn impl_bit_size(&self, discr_width: usize) -> TokenStream {
         let ident = &self.ident;
         let bit_size = match &self.data {
-            Data::Enum(variants) => {
+            AdtData::Enum(variants) => {
                 if variants.is_empty() {
                     quote! { 0 }
                 } else {
-                    let discr_width = clog2_len(variants.len());
-
                     let bits = variants
                         .iter()
                         .map(|variant| {
@@ -147,7 +157,7 @@ impl BitPackDerive {
                     }
                 }
             }
-            Data::Struct(fields) => {
+            AdtData::Struct(fields) => {
                 if fields.is_empty() {
                     quote! { 0 }
                 } else {
@@ -167,26 +177,15 @@ impl BitPackDerive {
         let (impl_generics, ty_generics, predicates) =
             utils::split_generics_for_impl(&self.generics);
 
-        let predicates = predicates.chain(
-            self.generics
-                .type_params()
-                .filter(|type_param| !self.attrs.contains_ty_param(type_param))
-                .map(|type_param| {
-                    let ident = &type_param.ident;
+        let predicates =
+            self.bound
+                .extend_predicates(predicates, &self.generics, true, |tparam| {
+                    let ident = &tparam.ident;
 
                     TEither::TS(quote! {
                         #ident: ::ferrum_hdl::bitpack::BitSize
                     })
-                }),
-        );
-
-        let predicates = predicates.chain(
-            self.attrs
-                .0
-                .iter()
-                .filter(|bound| !Bounds::is_array_constr(bound))
-                .map(TEither::AsIs),
-        );
+                });
 
         let where_clause = utils::into_where_clause(predicates);
 
@@ -201,11 +200,11 @@ impl BitPackDerive {
         }
     }
 
-    pub fn impl_bit_pack(&self) -> TokenStream {
+    pub fn impl_bit_pack(&self, discr_width: usize) -> TokenStream {
         let ident = &self.ident;
 
         fn make_names<'f>(
-            fields: impl IntoIterator<Item = &'f BitPackField> + 'f,
+            fields: impl IntoIterator<Item = &'f Field> + 'f,
         ) -> impl Iterator<Item = Cow<'f, Ident>> + 'f {
             fields
                 .into_iter()
@@ -214,15 +213,15 @@ impl BitPackDerive {
         }
 
         let pack = match &self.data {
-            Data::Enum(variants) => {
-                let discr_width = clog2_len(variants.len());
-
-                let branches = variants.iter().enumerate().map(|(idx, variant)| {
+            AdtData::Enum(variants) => {
+                let mut idx = 0;
+                let branches = variants.iter().map(|variant| {
                     let variant_ident = &variant.ident;
 
+                    let branch = variant.branch(&mut idx);
                     let discr_expr = quote! {
                         bitvec = bitvec << #discr_width;
-                        bitvec = bitvec | Self::Packed::cast_from(#idx);
+                        bitvec = bitvec | Self::Packed::cast_from(#branch);
                     };
 
                     let offset_expr = quote! {
@@ -248,7 +247,7 @@ impl BitPackDerive {
                     match variant.fields.style {
                         Style::Unit => {
                             quote! {
-                                Self::#variant_ident() => {
+                                Self::#variant_ident => {
                                     #offset_expr
                                     #discr_expr;
                                     #final_expr;
@@ -259,7 +258,7 @@ impl BitPackDerive {
                         }
                         Style::Tuple => {
                             quote! {
-                                Self::#variant_ident( #(#names),* ) => {
+                                Self::#variant_ident( #(#names,)* ) => {
                                     #offset_expr
                                     #discr_expr;
                                     #(#exprs)*;
@@ -270,7 +269,7 @@ impl BitPackDerive {
                         }
                         Style::Struct => {
                             quote! {
-                                Self::#variant_ident{ #(#names),* } => {
+                                Self::#variant_ident{ #(#names,)* } => {
                                     #offset_expr
                                     #discr_expr;
                                     #(#exprs)*;
@@ -284,11 +283,11 @@ impl BitPackDerive {
 
                 quote! {
                     let bitvec = match self {
-                        #(#branches),*
+                        #(#branches,)*
                     };
                 }
             }
-            Data::Struct(fields) => {
+            AdtData::Struct(fields) => {
                 let exprs = fields.iter().enumerate().map(|(idx, field)| {
                     let ty = &field.ty;
                     let field = field.field(idx);
@@ -305,7 +304,7 @@ impl BitPackDerive {
         };
 
         fn make_exprs<'f>(
-            fields: impl IntoIterator<Item = &'f BitPackField> + 'f,
+            fields: impl IntoIterator<Item = &'f Field> + 'f,
         ) -> impl Iterator<Item = TokenStream> + 'f {
             fields.into_iter().enumerate().map(|(idx, field)| {
                 let ty = &field.ty;
@@ -319,37 +318,39 @@ impl BitPackDerive {
         }
 
         let unpack = match &self.data {
-            Data::Enum(variants) => {
-                let discr_width = clog2_len(variants.len());
+            AdtData::Enum(variants) => {
                 let variant_expr = quote! {
                     let mut offset = <Self as BitSize>::BITS - #discr_width;
                     let variant: usize = usize::cast_from((packed.clone() >> offset).cast::<BitVec<#discr_width>>());
                 };
 
-                let branches = variants.iter().enumerate().map(|(idx, variant)| {
+                let mut idx = 0;
+                let branches = variants.iter().map(|variant| {
                     let ident = &variant.ident;
                     let names = make_names(variant.fields.iter());
                     let exprs = make_exprs(variant.fields.iter());
 
+                    let branch = variant.branch(&mut idx);
+
                     match variant.fields.style {
                         Style::Unit => {
                             quote! {
-                                #idx => Self::#ident()
+                                #branch => Self::#ident
                             }
                         }
                         Style::Tuple => {
                             quote! {
-                                #idx => {
+                                #branch => {
                                     #(#exprs)*
-                                    Self::#ident( #(#names),* )
+                                    Self::#ident( #(#names,)* )
                                 }
                             }
                         }
                         Style::Struct => {
                             quote! {
-                                #idx => {
+                                #branch => {
                                     #(#exprs)*
-                                    Self::#ident{ #(#names),* }
+                                    Self::#ident{ #(#names,)* }
                                 }
                             }
                         }
@@ -359,14 +360,14 @@ impl BitPackDerive {
                 quote! {
                     #variant_expr
                     match variant {
-                        #(#branches),*
+                        #(#branches,)*
                         _ => {
                             panic!("invalid discriminant {variant}");
                         }
                     }
                 }
             }
-            Data::Struct(fields) => {
+            AdtData::Struct(fields) => {
                 let offset_expr = quote! {
                     let mut offset = <Self as BitSize>::BITS;
                 };
@@ -376,8 +377,8 @@ impl BitPackDerive {
 
                 let res = match fields.style {
                     Style::Unit => quote! { #ident },
-                    Style::Tuple => quote! { #ident( #(#names),* ) },
-                    Style::Struct => quote! { #ident{ #(#names),* } },
+                    Style::Tuple => quote! { #ident( #(#names,)* ) },
+                    Style::Struct => quote! { #ident{ #(#names,)* } },
                 };
 
                 quote! {
@@ -396,23 +397,16 @@ impl BitPackDerive {
         let (impl_generics, ty_generics, predicates) =
             utils::split_generics_for_impl(&self.generics);
 
-        let predicates = predicates.chain(
-            self.generics
-                .type_params()
-                .filter(|type_param| !self.attrs.contains_ty_param(type_param))
-                .map(|type_param| {
-                    let ident = &type_param.ident;
+        let predicates = self.bound.extend_predicates(predicates, &self.generics, false, |tparam| {
+            let ident = &tparam.ident;
 
-                    TEither::TS(quote! {
-                        #ident: ::ferrum_hdl::bitpack::BitSize
-                            + ::ferrum_hdl::bitpack::BitPack<
-                                Packed = ::ferrum_hdl::bitvec::BitVec<{ < #ident as ::ferrum_hdl::bitpack::BitSize >::BITS }>
-                            >
-                    })
-                }),
-        );
-
-        let predicates = predicates.chain(self.attrs.0.iter().map(TEither::AsIs));
+            TEither::TS(quote! {
+                #ident: ::ferrum_hdl::bitpack::BitSize
+                    + ::ferrum_hdl::bitpack::BitPack<
+                        Packed = ::ferrum_hdl::bitpack::BitVec<{ < #ident as ::ferrum_hdl::bitpack::BitSize >::BITS }>
+                    >
+            })
+        });
 
         let predicates = if !add_array_constr {
             Either::Left(predicates)
@@ -430,7 +424,7 @@ impl BitPackDerive {
             impl #impl_generics ::ferrum_hdl::bitpack::BitPack for #ident #ty_generics
             #where_clause
             {
-                type Packed = ::ferrum_hdl::bitvec::BitVec<{ <#ident #ty_generics as ::ferrum_hdl::bitpack::BitSize>::BITS }>;
+                type Packed = ::ferrum_hdl::bitpack::BitVec<{ <#ident #ty_generics as ::ferrum_hdl::bitpack::BitSize>::BITS }>;
 
                 fn pack(self) -> Self::Packed {
                     use ::ferrum_hdl::bitpack::{BitSize, IsPacked};
@@ -444,8 +438,7 @@ impl BitPackDerive {
                 }
 
                 fn unpack(mut packed: Self::Packed) -> Self {
-                    use ::ferrum_hdl::bitpack::{BitPack, BitSize, IsPacked};
-                    use ::ferrum_hdl::bitvec::BitVec;
+                    use ::ferrum_hdl::bitpack::{BitPack, BitSize, IsPacked, BitVec};
                     use ::ferrum_hdl::cast::{Cast, CastFrom};
 
                     #unpack

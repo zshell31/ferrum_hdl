@@ -1,165 +1,184 @@
-use rustc_macros::{Decodable, Encodable};
-use smallvec::SmallVec;
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
-use crate::{
-    encoding::Wrap,
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
-    symbol::Symbol,
+use ferrum_hdl::domain::{Polarity, SyncKind};
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
 };
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+use super::{IsNode, MakeNode, NodeKind, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DFF {
-    inputs: Wrap<SmallVec<[NodeOutIdx; 5]>>,
-    en_idx: u8,
-    data_idx: u8,
-    output: NodeOutput,
+    pub rst_kind: SyncKind,
+    pub rst_pol: Polarity,
+    pub has_rst: bool,
+    pub has_en: bool,
+    pub has_data: bool,
+    pub inputs: u8,
+    pub output: [NodeOutput; 1],
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct DFFInputs {
-    pub clk: NodeOutId,
-    pub rst: NodeOutId,
-    pub en: Option<NodeOutId>,
-    pub rst_val: NodeOutId,
-    pub data: NodeOutId,
+pub enum TyOrData {
+    Ty(NodeTy),
+    Data(Port),
+}
+
+#[derive(Debug)]
+pub struct DFFArgs {
+    pub clk: Port,
+    pub rst: Option<Port>,
+    pub rst_kind: SyncKind,
+    pub rst_pol: Polarity,
+    pub en: Option<Port>,
+    pub init: Port,
+    pub data: TyOrData,
+    pub sym: Option<Symbol>,
+}
+
+impl DFFArgs {
+    fn assert(&self, module: &Module) {
+        let init = &module[self.init];
+        let ty = match self.data {
+            TyOrData::Ty(ty) => ty,
+            TyOrData::Data(data) => module[data].ty,
+        };
+        assert_eq!(init.ty, ty);
+    }
 }
 
 impl DFF {
-    pub fn new(
-        ty: NodeTy,
-        clk: NodeOutId,
-        rst: NodeOutId,
-        en: Option<NodeOutId>,
-        rst_val: NodeOutId,
-        data: Option<NodeOutId>,
-        sym: impl Into<Option<Symbol>>,
-    ) -> Self {
-        let mut inputs: SmallVec<_> =
-            [clk, rst, rst_val].into_iter().map(Into::into).collect();
-        let mut en_idx = 0;
+    pub fn set_data(module: &mut Module, node_id: NodeId, data: Port) {
+        let data_ty = module[data].ty;
+
+        let dff = match module[node_id].dff_mut() {
+            Some(dff) => dff,
+            None => panic!("Expected DFF node at {node_id:?}"),
+        };
+
+        assert!(!dff.has_data);
+        assert_eq!(dff.output[0].ty, data_ty);
+
+        let port = dff.inputs;
+        dff.inputs += 1;
+        dff.has_data = true;
+
+        module.add_edge(data, Port::new(node_id, port as u32));
+    }
+}
+
+impl MakeNode<DFFArgs> for DFF {
+    fn make(module: &mut Module, args: DFFArgs) -> NodeId {
+        args.assert(module);
+
+        let DFFArgs {
+            clk,
+            rst,
+            rst_kind,
+            rst_pol,
+            en,
+            init,
+            data,
+            sym,
+        } = args;
+
+        let (ty, has_data) = match data {
+            TyOrData::Ty(ty) => (ty, false),
+            TyOrData::Data(data) => (module[data].ty, true),
+        };
+
+        let node_id = module.add_node(DFF {
+            rst_kind,
+            rst_pol,
+            has_rst: rst.is_some(),
+            has_en: en.is_some(),
+            has_data,
+            inputs: 0,
+            output: [NodeOutput::reg(ty, sym)],
+        });
+
+        let mut port = 0;
+
+        module.add_edge(clk, Port::new(node_id, port));
+        port += 1;
+
+        if let Some(rst) = rst {
+            module.add_edge(rst, Port::new(node_id, port));
+            port += 1;
+        }
+
         if let Some(en) = en {
-            en_idx = inputs.len() as u8;
-            inputs.push(en.into());
-        }
-        let mut data_idx = 0;
-        if let Some(data) = data {
-            data_idx = inputs.len() as u8;
-            inputs.push(data.into());
+            module.add_edge(en, Port::new(node_id, port));
+            port += 1;
         }
 
-        Self {
-            inputs: inputs.into(),
-            en_idx,
-            data_idx,
-            output: NodeOutput::reg(ty, sym.into(), 2),
+        module.add_edge(init, Port::new(node_id, port));
+        port += 1;
+
+        if let TyOrData::Data(data) = data {
+            module.add_edge(data, Port::new(node_id, port));
+            port += 1;
         }
-    }
 
-    pub(crate) fn set_data(&mut self, data: NodeOutId) -> usize {
-        let data_idx = self.inputs.len();
-        self.data_idx = data_idx as u8;
-        self.inputs.push(data.into());
-        data_idx
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
-
-    fn clk(&self) -> NodeOutIdx {
-        self.inputs[0]
-    }
-
-    fn rst(&self) -> NodeOutIdx {
-        self.inputs[1]
-    }
-
-    fn rst_val(&self) -> NodeOutIdx {
-        self.inputs[2]
-    }
-
-    fn en(&self) -> Option<NodeOutIdx> {
-        if self.en_idx != 0 {
-            Some(self.inputs[self.en_idx as usize])
-        } else {
-            None
+        if let NodeKind::DFF(dff) = module[node_id].kind_mut() {
+            dff.inputs = port as u8;
         }
-    }
 
-    fn data(&self) -> Option<NodeOutIdx> {
-        if self.data_idx != 0 {
-            Some(self.inputs[self.data_idx as usize])
-        } else {
-            None
-        }
-    }
-}
-
-impl<R: Resolver> Resolve<R> for DFF {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            inputs: self.inputs.clone(),
-            en_idx: self.en_idx,
-            data_idx: self.data_idx,
-            output: self.output.resolve(resolver)?,
-        })
-    }
-}
-
-impl WithId<ModuleId, &'_ DFF> {
-    pub fn inputs(&self) -> DFFInputs {
-        let module_id = self.id();
-
-        DFFInputs {
-            clk: NodeOutId::make(module_id, self.clk()),
-            rst: NodeOutId::make(module_id, self.rst()),
-            en: self.en().map(|en| NodeOutId::make(module_id, en)),
-            rst_val: NodeOutId::make(module_id, self.rst_val()),
-            data: NodeOutId::make(
-                module_id,
-                self.data().expect("no data input specified"),
-            ),
-        }
-    }
-}
-
-impl From<DFF> for NodeKind {
-    fn from(node: DFF) -> Self {
-        Self::DFF(node)
+        node_id
     }
 }
 
 impl IsNode for DFF {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
+    #[inline]
+    fn in_count(&self) -> usize {
+        assert!(self.has_data);
+        self.inputs as usize
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
+    #[inline]
+    fn out_count(&self) -> usize {
+        1
     }
 
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let inputs = node.inputs();
+#[derive(Debug)]
+pub struct DFFInputs {
+    pub clk: Port,
+    pub rst: Option<Port>,
+    pub en: Option<Port>,
+    pub init: Port,
+    pub data: Port,
+}
 
-        let data = &net_list[inputs.data];
-        assert_width!(self.output.width(), data.width());
+impl WithId<NodeId, &'_ DFF> {
+    pub fn inputs(&self, module: &Module) -> DFFInputs {
+        assert!(self.has_data);
+        let mut incoming = module.incoming(self.id);
 
-        let rst_val = &net_list[inputs.rst_val];
-        assert_width!(self.output.width(), rst_val.width());
+        DFFInputs {
+            clk: incoming.next_(module).unwrap(),
+            rst: if self.has_rst {
+                Some(incoming.next_(module).unwrap())
+            } else {
+                None
+            },
+            en: if self.has_en {
+                Some(incoming.next_(module).unwrap())
+            } else {
+                None
+            },
+            init: incoming.next_(module).unwrap(),
+            data: incoming.next_(module).unwrap(),
+        }
     }
 }

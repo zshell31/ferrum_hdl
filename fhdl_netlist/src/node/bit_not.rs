@@ -1,76 +1,69 @@
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
-use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
-    symbol::Symbol,
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitNot {
-    input: NodeOutIdx,
-    output: NodeOutput,
+    pub input: Port,
+    pub output: [NodeOutput; 1],
 }
 
-impl BitNot {
-    pub fn new(ty: NodeTy, input: NodeOutId, sym: Option<Symbol>) -> Self {
-        Self {
-            input: input.into(),
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+#[derive(Debug)]
+pub struct BitNotArgs {
+    pub ty: NodeTy,
+    pub input: Port,
+    pub sym: Option<Symbol>,
 }
 
-impl WithId<ModuleId, &'_ BitNot> {
-    pub fn input(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.input)
+impl BitNotArgs {
+    fn assert(&self, module: &Module) {
+        let input = &module[self.input];
+
+        assert_eq!(input.width(), self.ty.width());
     }
 }
 
-impl<R: Resolver> Resolve<R> for BitNot {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            input: self.input,
-            output: self.output.resolve(resolver)?,
-        })
-    }
-}
+impl MakeNode<BitNotArgs> for BitNot {
+    fn make(module: &mut Module, args: BitNotArgs) -> NodeId {
+        args.assert(module);
 
-impl From<BitNot> for NodeKind {
-    fn from(node: BitNot) -> Self {
-        Self::BitNot(node)
+        let BitNotArgs { ty, input, sym } = args;
+
+        let node_id = module.add_node(BitNot {
+            input,
+            output: [NodeOutput::wire(ty, sym)],
+        });
+
+        module.add_edge(input, Port::new(node_id, 0));
+
+        node_id
     }
 }
 
 impl IsNode for BitNot {
-    type Inputs = NodeOutIdx;
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.input
+    #[inline]
+    fn in_count(&self) -> usize {
+        1
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.input
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let input = &net_list[node.input()];
-        assert_width!(self.output.width(), input.width());
+impl WithId<NodeId, &'_ BitNot> {
+    pub fn input(&self, module: &Module) -> Port {
+        let mut incoming = module.incoming(self.id);
+        incoming.next_(module).unwrap()
     }
 }

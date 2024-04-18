@@ -1,85 +1,64 @@
-use rustc_macros::{Decodable, Encodable};
-
-use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
-    symbol::Symbol,
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
-pub struct ZeroExtend {
-    input: NodeOutIdx,
-    output: NodeOutput,
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Extend {
+    pub output: [NodeOutput; 1],
+    pub is_sign: bool,
 }
 
-impl ZeroExtend {
-    pub fn new(ty: NodeTy, input: NodeOutId, sym: impl Into<Option<Symbol>>) -> Self {
-        Self {
-            input: input.into(),
-            output: NodeOutput::wire(ty, sym.into()),
+#[derive(Debug)]
+pub struct ExtendArgs {
+    pub ty: NodeTy,
+    pub input: Port,
+    pub sym: Option<Symbol>,
+    pub is_sign: bool,
+}
+
+impl MakeNode<ExtendArgs> for Extend {
+    fn make(module: &mut Module, args: ExtendArgs) -> NodeId {
+        let width_in = module[args.input].width();
+        let width_out = args.ty.width();
+        if width_in > width_out {
+            panic!("Extend: output width {width_out} < input width {width_in}",);
         }
-    }
 
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
-}
+        let node_id = module.add_node(Extend {
+            output: [NodeOutput::wire(args.ty, args.sym)],
+            is_sign: args.is_sign,
+        });
 
-impl WithId<ModuleId, &'_ ZeroExtend> {
-    pub fn input(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.input)
-    }
-}
+        module.add_edge(args.input, Port::new(node_id, 0));
 
-impl<R: Resolver> Resolve<R> for ZeroExtend {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            input: self.input,
-            output: self.output.resolve(resolver)?,
-        })
+        node_id
     }
 }
 
-impl From<ZeroExtend> for NodeKind {
-    fn from(node: ZeroExtend) -> Self {
-        Self::ZeroExtend(node)
-    }
-}
-
-impl IsNode for ZeroExtend {
-    type Inputs = NodeOutIdx;
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.input
+impl IsNode for Extend {
+    #[inline]
+    fn in_count(&self) -> usize {
+        1
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.input
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
+}
 
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        if let (Some(input_width), Some(output_width)) = (
-            net_list[node.input()].width().opt_value(),
-            self.output.width().opt_value(),
-        ) {
-            if input_width > output_width {
-                panic!(
-                    "ZeroExtend: output width {} < input width {}",
-                    output_width, input_width
-                );
-            }
-        }
+impl WithId<NodeId, &'_ Extend> {
+    pub fn input(&self, module: &Module) -> Port {
+        let mut incoming = module.incoming(self.id);
+        incoming.next_(module).unwrap()
     }
 }

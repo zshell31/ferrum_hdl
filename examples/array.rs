@@ -1,20 +1,10 @@
 #![feature(generic_const_exprs)]
 #![allow(incomplete_features)]
-use ferrum_hdl::{
-    array::Array, cast::Cast, domain::ClockDomain, signal::Signal, unsigned::Unsigned,
-};
+use ferrum_hdl::prelude::*;
 
-pub struct TestSystem;
-
-impl ClockDomain for TestSystem {
-    const FREQ: usize = 4;
-}
-
-pub fn top_module(
-    signals: Signal<TestSystem, Array<4, Unsigned<4>>>,
-) -> Signal<TestSystem, Array<4, Unsigned<4>>> {
+pub fn top_module(signals: Signal<TD8, Array<4, U<4>>>) -> Signal<TD8, Array<4, U<4>>> {
     signals.map(|signals| {
-        let [start, .., end] = signals.cast::<[Unsigned<4>; 4]>();
+        let [start, .., end] = signals.cast::<[U<4>; 4]>();
 
         [
             start.clone(),

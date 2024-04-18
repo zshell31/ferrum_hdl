@@ -1,233 +1,130 @@
-use fhdl_blackbox::BlackboxKind;
-use fhdl_netlist::{
-    group::ItemId,
-    node::{BinOp, DFF},
-    symbol::Symbol,
-};
-use rustc_hir::Expr;
+use ferrum_hdl::domain::{Polarity, SyncKind};
+use fhdl_netlist::node::{DFFArgs, TyOrData, DFF};
 use rustc_span::Span;
 
-use super::EvalExpr;
+use super::{args, EvalExpr};
 use crate::{
+    compiler::{
+        item::{Group, Item, ItemKind, ModuleExt},
+        item_ty::ItemTy,
+        Compiler, Context, SymIdent,
+    },
     error::{Error, SpanError, SpanErrorKind},
-    eval_context::EvalContext,
-    generator::Generator,
-    scopes::SymIdent,
-    utils,
 };
 
-pub struct SignalReg {
-    pub has_en: bool,
+pub struct SignalDff {
+    pub comb: bool,
 }
 
-impl SignalReg {
-    fn make_err(&self, span: Span) -> Error {
-        SpanError::new(
-            SpanErrorKind::NotSynthBlackboxExpr(if !self.has_en {
-                BlackboxKind::SignalReg
-            } else {
-                BlackboxKind::SignalRegEn
-            }),
-            span,
-        )
-        .into()
-    }
-}
-
-impl<'tcx> EvalExpr<'tcx> for SignalReg {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for SignalDff {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        let args = utils::expected_call(expr)?.args;
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        output_ty: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as clk, rst, en, init, comb, rst_kind, rst_pol);
 
-        let ty = generator.node_type(expr.hir_id, ctx);
-        let value_ty =
-            utils::subst_type(ty, 1).ok_or_else(|| self.make_err(expr.span))?;
-        let sig_ty = generator.find_sig_ty(value_ty, ctx, expr.span)?;
-        let node_ty = sig_ty.to_bitvec();
+        let clk = clk.port();
+        let rst = ctx.module.to_bitvec(rst).port();
+        let en = ctx.module.to_bitvec(en).port();
+        let init = ctx.module.to_bitvec(init).port();
 
-        let (clk, rst, en, rst_val, comb) = match self.has_en {
-            true => (&args[0], &args[1], Some(&args[2]), &args[3], &args[4]),
-            false => (&args[0], &args[1], None, &args[2], &args[3]),
+        let (dff_ty, comb_ty) = if self.comb {
+            let struct_ty = output_ty.struct_ty();
+            (struct_ty.by_idx(0), struct_ty.by_idx(1))
+        } else {
+            (output_ty, output_ty)
         };
 
-        let clk = generator.eval_expr(clk, ctx)?.node_out_id();
+        let rst_kind = ctx
+            .module
+            .to_const_val(rst_kind)
+            .and_then(SyncKind::from_val)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::InvalidResetKind, span))?;
 
-        let rst = generator.eval_expr(rst, ctx)?;
-        let rst = generator.to_bitvec(ctx.module_id, rst);
+        let rst_pol = ctx
+            .module
+            .to_const_val(rst_pol)
+            .and_then(Polarity::from_val)
+            .ok_or_else(|| SpanError::new(SpanErrorKind::InvalidResetPolarity, span))?;
 
-        let rst_val = generator.eval_expr(rst_val, ctx)?;
-        let rst_val = generator.to_bitvec(ctx.module_id, rst_val);
+        let dff = ctx.module.add_and_get_port::<_, DFF>(DFFArgs {
+            clk,
+            rst: Some(rst),
+            rst_kind,
+            rst_pol,
+            en: Some(en),
+            init,
+            data: TyOrData::Ty(dff_ty.to_bitvec()),
+            sym: SymIdent::Reg.into(),
+        });
+        let dff_out = ctx.module.from_bitvec(dff, dff_ty);
 
-        let en = en
-            .map(|en| {
-                generator
-                    .eval_expr(en, ctx)
-                    .map(|item_id| item_id.node_out_id())
-            })
-            .transpose()?;
+        let comb = compiler.instantiate_closure(comb, &[dff_out.clone()], ctx, span)?;
+        assert_eq!(comb.ty, comb_ty);
+        ctx.module.assign_names_to_item("comb", &comb, false);
 
-        let closure_id =
-            generator.eval_closure(comb, Symbol::new("SignalReg"), true, ctx)?;
+        let comb_out = ctx.module.to_bitvec(&comb).port();
+        DFF::set_data(&mut ctx.module, dff.node, comb_out);
 
-        let dff = generator.netlist.add(
-            ctx.module_id,
-            DFF::new(
-                node_ty,
-                clk,
-                rst,
-                en,
-                rst_val,
-                None,
-                if en.is_none() {
-                    SymIdent::Dff
-                } else {
-                    SymIdent::DffEn
-                },
-            ),
-        );
-
-        let dff_out = generator.netlist[dff].only_one_out().node_out_id();
-        let dff_out = generator.from_bitvec(ctx.module_id, dff_out, sig_ty);
-
-        let comb = generator.instantiate_closure(closure_id, [dff_out], sig_ty, ctx)?;
-        let comb_out = generator.to_bitvec(ctx.module_id, comb);
-
-        generator.netlist.set_dff_data(dff, comb_out);
-
-        Ok(dff_out)
+        Ok(if self.comb {
+            Item::new(output_ty, ItemKind::Group(Group::new([dff_out, comb])))
+        } else {
+            dff_out
+        })
     }
 }
 
-pub struct SignalLift;
+pub struct Map;
 
-impl<'tcx> EvalExpr<'tcx> for SignalLift {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for Map {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as arg);
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec, comb);
 
-        generator.eval_expr(arg, ctx)
+        compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
 }
 
-pub struct SignalMap;
+pub struct AndThen;
 
-impl<'tcx> EvalExpr<'tcx> for SignalMap {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for AndThen {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec, comb);
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as rec, comb);
 
-        let output_ty = generator.node_type(expr.hir_id, ctx);
-        let output_ty = generator.find_sig_ty(output_ty, ctx, expr.span)?;
-
-        let rec = generator.eval_expr(rec, ctx)?;
-
-        let closure_id =
-            generator.eval_closure(comb, Symbol::new("SignalMap"), true, ctx)?;
-        generator.instantiate_closure(closure_id, [rec], output_ty, ctx)
+        compiler.instantiate_closure(comb, &[rec.clone()], ctx, span)
     }
 }
 
-pub struct SignalAndThen;
+pub struct Apply2;
 
-impl<'tcx> EvalExpr<'tcx> for SignalAndThen {
-    fn eval_expr(
+impl<'tcx> EvalExpr<'tcx> for Apply2 {
+    fn eval(
         &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec, comb);
+        compiler: &mut Compiler<'tcx>,
+        args: &[Item<'tcx>],
+        _: ItemTy<'tcx>,
+        ctx: &mut Context<'tcx>,
+        span: Span,
+    ) -> Result<Item<'tcx>, Error> {
+        args!(args as arg1, arg2, comb);
 
-        let output_ty = generator.node_type(expr.hir_id, ctx);
-        let output_ty = generator.find_sig_ty(output_ty, ctx, expr.span)?;
-
-        let rec = generator.eval_expr(rec, ctx)?;
-
-        let closure_id =
-            generator.eval_closure(comb, Symbol::new("SignalAndThen"), true, ctx)?;
-        generator.instantiate_closure(closure_id, [rec], output_ty, ctx)
-    }
-}
-
-pub struct SignalApply2;
-
-impl<'tcx> EvalExpr<'tcx> for SignalApply2 {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as arg1, arg2, comb);
-
-        let output_ty = generator.node_type(expr.hir_id, ctx);
-        let output_ty = generator.find_sig_ty(output_ty, ctx, expr.span)?;
-
-        let arg1 = generator.eval_expr(arg1, ctx)?;
-        let arg2 = generator.eval_expr(arg2, ctx)?;
-
-        let closure_id =
-            generator.eval_closure(comb, Symbol::new("SignalApply2"), true, ctx)?;
-        generator.instantiate_closure(closure_id, [arg1, arg2], output_ty, ctx)
-    }
-}
-
-pub struct SignalValue;
-
-impl<'tcx> EvalExpr<'tcx> for SignalValue {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
-
-        generator.eval_expr(rec, ctx)
-    }
-}
-
-pub struct SignalWatch;
-
-impl<'tcx> EvalExpr<'tcx> for SignalWatch {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as rec);
-
-        generator.eval_expr(rec, ctx)
-    }
-}
-
-pub struct SignalOp {
-    pub op: BinOp,
-}
-
-impl<'tcx> EvalExpr<'tcx> for SignalOp {
-    fn eval_expr(
-        &self,
-        generator: &mut Generator<'tcx>,
-        expr: &'tcx Expr<'tcx>,
-        ctx: &mut EvalContext<'tcx>,
-    ) -> Result<ItemId, Error> {
-        utils::args!(expr as lhs, rhs);
-        let ty = generator.node_type(expr.hir_id, ctx);
-
-        generator.bin_op(ty, self.op, lhs, rhs, ctx, expr.span)
+        compiler.instantiate_closure(comb, &[arg1.clone(), arg2.clone()], ctx, span)
     }
 }

@@ -1,35 +1,45 @@
 use std::fmt::{self, Display};
 
-use rustc_macros::{Decodable, Encodable};
-
-use super::{assert_width, IsNode, NodeKind, NodeOutput};
-use crate::{
-    net_list::{ModuleId, NetList, NodeOutId, NodeOutIdx, WithId},
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
-    symbol::Symbol,
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
 };
 
-#[derive(Debug, Clone, Copy, Encodable, Decodable)]
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
-    Add,
-    And,
     BitAnd,
     BitOr,
     BitXor,
+    Add,
+    Sub,
     Div,
+    Mul,
+    Rem,
+    Sll,
+    Slr,
+    Sra,
     Eq,
+    Ne,
     Ge,
     Gt,
     Le,
     Lt,
-    Mul,
-    Ne,
+    And,
     Or,
-    Rem,
-    Shl,
-    Shr,
-    Sub,
+}
+
+impl BinOp {
+    pub fn should_convert_operands(&self) -> bool {
+        use BinOp::*;
+
+        matches!(
+            self,
+            BitAnd | BitOr | BitXor | Add | Sub | Mul | Div | Rem | Sll | Slr | Sra
+        )
+    }
 }
 
 impl Display for BinOp {
@@ -50,96 +60,35 @@ impl Display for BinOp {
             Self::Ne => "!=",
             Self::Or => "||",
             Self::Rem => "%",
-            Self::Shl => "<<",
-            Self::Shr => ">>",
+            Self::Sll => "<<",
+            Self::Slr => ">>",
+            Self::Sra => ">>>",
             Self::Sub => "-",
         })
     }
 }
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BinOpNode {
-    bin_op: BinOp,
-    inputs: (NodeOutIdx, NodeOutIdx),
-    output: NodeOutput,
+    pub bin_op: BinOp,
+    pub output: [NodeOutput; 1],
 }
 
-impl BinOpNode {
-    pub fn new(
-        ty: NodeTy,
-        bin_op: BinOp,
-        input1: NodeOutId,
-        input2: NodeOutId,
-        sym: Option<Symbol>,
-    ) -> Self {
-        Self {
-            bin_op,
-            inputs: (input1.into(), input2.into()),
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn bin_op(&self) -> BinOp {
-        self.bin_op
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+#[derive(Debug)]
+pub struct BinOpArgs {
+    pub ty: NodeTy,
+    pub bin_op: BinOp,
+    pub lhs: Port,
+    pub rhs: Port,
+    pub sym: Option<Symbol>,
 }
 
-impl WithId<ModuleId, &'_ BinOpNode> {
-    pub fn left(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.inputs.0)
-    }
+impl BinOpArgs {
+    fn assert(&self, module: &Module) {
+        let lhs = &module[self.lhs];
+        let rhs = &module[self.rhs];
 
-    pub fn right(&self) -> NodeOutId {
-        NodeOutId::make(self.id(), self.inputs.1)
-    }
-}
-
-impl<R: Resolver> Resolve<R> for BinOpNode {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            bin_op: self.bin_op,
-            inputs: self.inputs,
-            output: self.output.resolve(resolver)?,
-        })
-    }
-}
-
-impl From<BinOpNode> for NodeKind {
-    fn from(node: BinOpNode) -> Self {
-        Self::BinOp(node)
-    }
-}
-
-impl IsNode for BinOpNode {
-    type Inputs = (NodeOutIdx, NodeOutIdx);
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &self.inputs
-    }
-
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut self.inputs
-    }
-
-    fn outputs(&self) -> &Self::Outputs {
-        &self.output
-    }
-
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
-        &mut self.output
-    }
-
-    fn assert(&self, module_id: ModuleId, net_list: &NetList) {
-        let node = WithId::<ModuleId, _>::new(module_id, self);
-        let lhs = &net_list[node.left()];
-        let rhs = &net_list[node.right()];
-
-        match self.bin_op() {
+        match self.bin_op {
             BinOp::Add
             | BinOp::And
             | BinOp::BitAnd
@@ -149,15 +98,70 @@ impl IsNode for BinOpNode {
             | BinOp::Div
             | BinOp::Mul
             | BinOp::Or
-            | BinOp::Rem
-            | BinOp::Shl
-            | BinOp::Shr => {
-                assert_width!(self.output.width(), lhs.width());
-                assert_width!(self.output.width(), rhs.width());
+            | BinOp::Rem => {
+                assert_eq!(self.ty.width(), lhs.width());
+                assert_eq!(self.ty.width(), rhs.width());
             }
             BinOp::Eq | BinOp::Ge | BinOp::Gt | BinOp::Le | BinOp::Lt | BinOp::Ne => {
-                assert_width!(lhs.width(), rhs.width());
+                assert_eq!(lhs.width(), rhs.width());
             }
+            BinOp::Sll | BinOp::Slr | BinOp::Sra => {}
+        }
+    }
+}
+
+impl MakeNode<BinOpArgs> for BinOpNode {
+    fn make(module: &mut Module, args: BinOpArgs) -> NodeId {
+        args.assert(module);
+
+        let BinOpArgs {
+            bin_op,
+            lhs,
+            rhs,
+            ty,
+            sym,
+        } = args;
+
+        let node_id = module.add_node(BinOpNode {
+            bin_op,
+            output: [NodeOutput::wire(ty, sym)],
+        });
+        module.add_edge(lhs, Port::new(node_id, 0));
+        module.add_edge(rhs, Port::new(node_id, 1));
+
+        node_id
+    }
+}
+
+impl IsNode for BinOpNode {
+    #[inline]
+    fn in_count(&self) -> usize {
+        2
+    }
+
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
+        &self.output
+    }
+
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
+        &mut self.output
+    }
+}
+
+pub struct BinOpInputs {
+    pub lhs: Port,
+    pub rhs: Port,
+}
+
+impl WithId<NodeId, &'_ BinOpNode> {
+    pub fn inputs(&self, module: &Module) -> BinOpInputs {
+        let mut incoming = module.incoming(self.id);
+
+        BinOpInputs {
+            lhs: incoming.next_(module).unwrap(),
+            rhs: incoming.next_(module).unwrap(),
         }
     }
 }

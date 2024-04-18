@@ -37,10 +37,11 @@ impl ImplTupleTraits {
         let impl_signal_value = self.impl_signal_value();
         let impl_unbundle = self.impl_unbundle();
         let impl_bundle = self.impl_bundle();
-        let impl_simulate = self.impl_simulate();
+        let impl_eval = self.impl_eval();
         let impl_cast_from = self.impl_cast_from();
         let impl_bit_size = self.impl_bit_size();
         let impl_bit_pack = self.impl_bit_pack();
+        let impl_traceable = self.impl_traceable();
 
         quote! {
             #impl_signal_value
@@ -49,13 +50,15 @@ impl ImplTupleTraits {
 
             #impl_bundle
 
-            #impl_simulate
+            #impl_eval
 
             #impl_cast_from
 
             #impl_bit_size
 
             #impl_bit_pack
+
+            #impl_traceable
         }
     }
 
@@ -107,15 +110,15 @@ impl ImplTupleTraits {
         }
     }
 
-    fn impl_simulate(&self) -> TokenStream {
+    fn impl_eval(&self) -> TokenStream {
         let t = &self.tparams;
         let n = &self.indexes;
 
         quote! {
-            impl<D: ClockDomain, #( #t: SignalValue, )*> Simulate for ( #( Signal<D, #t>, )* ) {
+            impl<D: ClockDomain, #( #t: SignalValue, )*> Eval<D> for ( #( Signal<D, #t>, )* ) {
                 type Value = ( #( #t, )* );
 
-                fn next(&mut self, ctx: &mut SimCtx) -> Self::Value {
+                fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
                     (
                         #(
                             self.#n.next(ctx),
@@ -134,6 +137,7 @@ impl ImplTupleTraits {
 
         quote! {
             impl< #( #u, #t: CastFrom<#u>, )* > CastFrom< ( #(#u,)* ) > for ( #(#t,)* ) {
+                #[fhdl_macros::synth(inline)]
                 fn cast_from(from: ( #( #u, )* ) ) -> ( #( #t, )* ) {
                     (
                         #(
@@ -213,6 +217,45 @@ impl ImplTupleTraits {
                         #(#names,)*
                     )
                 }
+            }
+        }
+    }
+
+    fn impl_traceable(&self) -> TokenStream {
+        let t = &self.tparams;
+        let n = &self.indexes;
+
+        let vars = n.iter().zip(t).map(|(idx, t)| {
+            quote! {
+                vars.push_idx(#idx);
+                #t::add_vars(vars);
+                vars.pop();
+            }
+        });
+
+        let traces = n.iter().map(|idx| {
+            quote! {
+                self.#idx.trace(id, tracer)?;
+            }
+        });
+
+        quote! {
+            impl< #( #t, )* > Traceable for ( #( #t, )* )
+            where
+                #(
+                    #t: Traceable,
+                )*
+            {
+                fn add_vars(vars: &mut TraceVars) {
+                    #( #vars )*
+                }
+
+                fn trace(&self, id: &mut IdCode, tracer: &mut Tracer) -> io::Result<()> {
+                    #( #traces )*
+
+                    Ok(())
+                }
+
             }
         }
     }

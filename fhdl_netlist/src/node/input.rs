@@ -1,63 +1,63 @@
 use std::fmt::Debug;
 
-use rustc_macros::{Decodable, Encodable};
+use fhdl_data_structures::graph::NodeId;
 
-use super::{IsNode, NodeKind, NodeOutput};
-use crate::{
-    net_list::NodeOutIdx,
-    resolver::{Resolve, Resolver},
-    sig_ty::NodeTy,
-    symbol::Symbol,
-};
+use super::{IsNode, MakeNode, NodeOutput};
+#[cfg(test)]
+use crate::netlist::NodeWithInputs;
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol};
 
-#[derive(Debug, Clone, Encodable, Decodable)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Input {
-    output: NodeOutput,
+    pub output: [NodeOutput; 1],
 }
 
-impl Input {
-    pub fn new(ty: NodeTy, sym: Option<Symbol>) -> Self {
-        Self {
-            output: NodeOutput::wire(ty, sym),
-        }
-    }
-
-    pub fn output(&self) -> &NodeOutput {
-        &self.output
-    }
+pub struct InputArgs {
+    pub ty: NodeTy,
+    pub sym: Option<Symbol>,
 }
 
-impl<R: Resolver> Resolve<R> for Input {
-    fn resolve(&self, resolver: &mut R) -> Result<Self, <R as Resolver>::Error> {
-        Ok(Self {
-            output: self.output.resolve(resolver)?,
+impl MakeNode<InputArgs> for Input {
+    fn make(module: &mut Module, args: InputArgs) -> NodeId {
+        let InputArgs { ty, sym } = args;
+        module.add_node(Input {
+            output: [NodeOutput::wire(ty, sym)],
         })
     }
 }
 
-impl From<Input> for NodeKind {
-    fn from(node: Input) -> Self {
-        Self::Input(node)
+#[cfg(test)]
+impl NodeWithInputs {
+    pub fn input(ty: NodeTy, sym: Option<impl AsRef<str>>, skip: bool) -> Self {
+        use std::iter;
+
+        Self::new(
+            Input {
+                output: [NodeOutput::wire(ty, sym.map(Symbol::intern)).set_skip(skip)],
+            },
+            iter::empty(),
+        )
     }
 }
 
 impl IsNode for Input {
-    type Inputs = [NodeOutIdx];
-    type Outputs = NodeOutput;
-
-    fn inputs(&self) -> &Self::Inputs {
-        &[]
+    #[inline]
+    fn in_count(&self) -> usize {
+        0
     }
 
-    fn inputs_mut(&mut self) -> &mut Self::Inputs {
-        &mut []
+    #[inline]
+    fn out_count(&self) -> usize {
+        1
     }
 
-    fn outputs(&self) -> &Self::Outputs {
+    #[inline]
+    fn outputs(&self) -> &[NodeOutput] {
         &self.output
     }
 
-    fn outputs_mut(&mut self) -> &mut Self::Outputs {
+    #[inline]
+    fn outputs_mut(&mut self) -> &mut [NodeOutput] {
         &mut self.output
     }
 }

@@ -1,12 +1,12 @@
 use std::fmt::{self, Display};
 
-use super::{IsNode, MakeNode, NodeOutput};
-use crate::{
+use fhdl_data_structures::{
     cursor::Cursor,
-    netlist::{Module, NodeId, Port, WithId},
-    node_ty::NodeTy,
-    symbol::Symbol,
+    graph::{NodeId, Port},
 };
+
+use super::{IsNode, MakeNode, NodeOutput};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {

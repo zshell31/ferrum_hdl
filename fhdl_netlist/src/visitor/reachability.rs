@@ -1,36 +1,38 @@
 use std::collections::VecDeque;
 
 use either::Either;
-use rustc_hash::FxHashSet;
+use fhdl_data_structures::{cursor::Cursor, graph::Port, FxHashSet};
 
 use crate::{
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, Port, WithId},
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
 };
 
-pub struct Reachability {
+pub struct Reachability<'n> {
+    netlist: &'n NetList,
     ports: Vec<Port>,
     modules: VecDeque<ModuleId>,
     handled: FxHashSet<ModuleId>,
 }
 
-impl Reachability {
-    pub fn new() -> Self {
+impl<'n> Reachability<'n> {
+    pub fn new(netlist: &'n NetList) -> Self {
         Self {
+            netlist,
             ports: Default::default(),
             modules: Default::default(),
             handled: Default::default(),
         }
     }
 
-    pub fn run(mut self, netlist: &NetList) {
-        if let Some(top) = netlist.top {
+    pub fn run(mut self) {
+        if let Some(top) = self.netlist.top {
             self.modules.push_back(top);
         }
 
         while let Some(module_id) = self.modules.pop_front() {
             if !self.handled.contains(&module_id) {
-                let mut module = netlist[module_id].borrow_mut();
+                let mut module = self.netlist[module_id].borrow_mut();
                 self.visit_module(&mut module);
 
                 self.handled.insert(module_id);

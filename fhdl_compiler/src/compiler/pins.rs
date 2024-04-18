@@ -5,7 +5,7 @@ use std::{
 };
 
 use fhdl_common::{Constraint, Pin, Vendor};
-use fhdl_netlist::netlist::{Module, PortPos};
+use fhdl_netlist::{netlist::Module, with_id::PortPos};
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap};
 use rustc_middle::mir::{Body, Local, VarDebugInfoContents};
 

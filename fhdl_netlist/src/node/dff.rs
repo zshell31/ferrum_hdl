@@ -1,12 +1,11 @@
 use ferrum_hdl::domain::{Polarity, SyncKind};
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
 
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
-use crate::{
-    cursor::Cursor,
-    netlist::{Module, NodeId, Port, WithId},
-    node_ty::NodeTy,
-    symbol::Symbol,
-};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DFF {

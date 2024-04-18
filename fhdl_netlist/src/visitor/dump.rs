@@ -1,34 +1,33 @@
+use fhdl_data_structures::{cursor::Cursor, index::IndexType};
+
 use crate::{
-    cursor::Cursor,
-    netlist::{IndexType, Module, ModuleId, NetList, WithId},
+    netlist::{Module, ModuleId, NetList},
+    with_id::WithId,
 };
 
-pub struct Dump {
+pub struct Dump<'n> {
+    netlist: &'n NetList,
     skip: bool,
 }
 
-impl Dump {
-    pub fn new(skip: bool) -> Self {
-        Self { skip }
+impl<'n> Dump<'n> {
+    pub fn new(netlist: &'n NetList, skip: bool) -> Self {
+        Self { netlist, skip }
     }
 
-    pub fn run(&mut self, netlist: &NetList) {
-        for module in netlist.modules().rev() {
+    pub fn run(&mut self) {
+        for module in self.netlist.modules().rev() {
             let module = module.borrow();
             if self.skip && module.skip {
                 continue;
             }
-            self.visit_module(netlist, module.as_deref());
+            self.visit_module(module.as_deref());
         }
 
         println!("\n");
     }
 
-    pub(super) fn visit_module(
-        &mut self,
-        netlist: &NetList,
-        module: WithId<ModuleId, &Module>,
-    ) {
+    pub(super) fn visit_module(&mut self, module: WithId<ModuleId, &Module>) {
         module.dump();
 
         let tab: &'static str = "        ";
@@ -43,7 +42,7 @@ impl Dump {
 
             let prefix = format!("{:>4}    ", node_id.as_u32());
 
-            node.dump(netlist, *module, &prefix, tab);
+            node.dump(self.netlist, *module, &prefix, tab);
 
             println!("\n{}links:", tab);
             for port in node.out_ports() {

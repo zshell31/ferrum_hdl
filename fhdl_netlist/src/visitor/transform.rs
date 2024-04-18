@@ -1,35 +1,46 @@
 use std::iter;
 
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+    FxHashMap,
+};
 use smallvec::SmallVec;
 
 use crate::{
     cfg::InlineMod,
     const_val::ConstVal,
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, NodeId, Port, WithId},
+    netlist::{Module, ModuleId, NetList},
     node::{
-        BinOp, BinOpInputs, Case, Const, ConstArgs, DFFArgs, DFFInputs, MultiConst,
-        MuxInputs, NodeKind, TyOrData, DFF,
+        BinOp, BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, IsNode, MultiConst,
+        NodeKind, SwitchInputs, TyOrData, DFF,
     },
+    with_id::WithId,
 };
 
 const NODES_LIMIT_TO_INLINE: usize = 10;
 
-pub struct Transform {}
+pub struct Transform<'n> {
+    netlist: &'n NetList,
+    cons: FxHashMap<(ModuleId, ConstVal), Port>,
+}
 
-impl Transform {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    pub fn run(mut self, netlist: &NetList) {
-        if let Some(top) = netlist.top {
-            self.visit_module(netlist, top);
+impl<'n> Transform<'n> {
+    pub fn new(netlist: &'n NetList) -> Self {
+        Self {
+            netlist,
+            cons: Default::default(),
         }
     }
 
-    fn visit_module(&mut self, netlist: &NetList, mod_id: ModuleId) {
-        let module = netlist.module(mod_id);
+    pub fn run(mut self) {
+        if let Some(top) = self.netlist.top {
+            self.visit_module(top);
+        }
+    }
+
+    fn visit_module(&mut self, mod_id: ModuleId) {
+        let module = self.netlist.module(mod_id);
         let mut module = module.borrow_mut();
 
         let mut nodes = module.nodes();
@@ -39,14 +50,13 @@ impl Transform {
                 let mod_id = mod_inst.mod_id;
 
                 // transform nodes of module before inlining module
-                self.visit_module(netlist, mod_id);
+                self.visit_module(mod_id);
             }
 
-            let should_be_inlined =
-                self.transform(netlist, module.as_deref_mut(), node_id);
+            let should_be_inlined = self.transform(module.as_deref_mut(), node_id);
 
             if should_be_inlined {
-                let node_id = netlist.inline_mod(module.as_deref_mut(), node_id);
+                let node_id = self.netlist.inline_mod(module.as_deref_mut(), node_id);
 
                 if let Some(node_id) = node_id {
                     nodes.set_next(node_id);
@@ -57,7 +67,6 @@ impl Transform {
 
     fn transform(
         &mut self,
-        netlist: &NetList,
         mut module: WithId<ModuleId, &mut Module>,
         node_id: NodeId,
     ) -> bool {
@@ -91,8 +100,14 @@ impl Transform {
                     }
                 }
             }
+            NodeKind::Const(cons) => {
+                self.eliminate_const(cons.value(), Port::new(node_id, 0), module);
+            }
+            NodeKind::MultiConst(_) => {
+                self.eliminate_multi_const(node_id, module);
+            }
             NodeKind::ModInst(mod_inst) => {
-                let orig_module = netlist[mod_inst.mod_id].borrow();
+                let orig_module = self.netlist[mod_inst.mod_id].borrow();
 
                 if orig_module.has_const_outputs() {
                     let const_args = orig_module.mod_outputs().iter().map(|port| {
@@ -106,9 +121,9 @@ impl Transform {
                         }
                     });
 
-                    module.replace::<_, MultiConst>(node_id, const_args);
+                    self.replace_with_multi_const(node_id, module, const_args);
                 } else {
-                    match netlist.cfg().inline_mod {
+                    match self.netlist.cfg().inline_mod {
                         InlineMod::All => {
                             inline = true;
                         }
@@ -131,7 +146,7 @@ impl Transform {
                 {
                     let const_val = !const_val;
                     let output = bit_not.output[0];
-                    module.replace::<_, Const>(node_id, ConstArgs {
+                    self.replace_with_const(node_id, module, ConstArgs {
                         ty: output.ty,
                         value: const_val.val(),
                         sym: output.sym,
@@ -169,7 +184,7 @@ impl Transform {
 
                     let output = bin_op.output[0];
 
-                    module.replace::<_, Const>(node_id, ConstArgs {
+                    self.replace_with_const(node_id, module, ConstArgs {
                         ty: output.ty,
                         value: const_val.val(),
                         sym: output.sym,
@@ -203,7 +218,7 @@ impl Transform {
                             .collect::<SmallVec<[ConstArgs; 1]>>()
                             .into_iter();
 
-                        module.replace::<_, MultiConst>(node_id, const_args);
+                        self.replace_with_multi_const(node_id, module, const_args);
                     } else {
                         drop(indices);
 
@@ -260,7 +275,7 @@ impl Transform {
 
                 if let Some(const_val) = val {
                     let output = merger.output[0];
-                    module.replace::<_, Const>(node_id, ConstArgs {
+                    self.replace_with_const(node_id, module, ConstArgs {
                         ty: output.ty,
                         value: const_val.val(),
                         sym: output.sym,
@@ -275,7 +290,7 @@ impl Transform {
 
                 match module.to_const(input) {
                     Some(const_val) => {
-                        module.replace::<_, Const>(node_id, ConstArgs {
+                        self.replace_with_const(node_id, module, ConstArgs {
                             ty: output.ty,
                             value: const_val.val(),
                             sym: output.sym,
@@ -289,12 +304,12 @@ impl Transform {
                 }
             }
 
-            NodeKind::Mux(mux) => {
+            NodeKind::Switch(mux) => {
                 let cases_len = mux.cases.len();
                 let mux = node.with(mux);
 
                 let chunk = {
-                    let MuxInputs { sel, cases } = mux.inputs(&module);
+                    let SwitchInputs { sel, cases, .. } = mux.inputs(&module);
 
                     let mut cases_ref = cases.into_iter();
                     let chunk = if cases_len == 1 {
@@ -302,15 +317,8 @@ impl Transform {
                     } else {
                         module.to_const(sel).and_then(|sel| {
                             for (case, chunk) in cases_ref {
-                                match case {
-                                    Case::Val(case) => {
-                                        if case == sel {
-                                            return Some(chunk);
-                                        }
-                                    }
-                                    Case::Default => {
-                                        return Some(chunk);
-                                    }
+                                if case.is_match(sel) {
+                                    return Some(chunk);
                                 }
                             }
 
@@ -382,6 +390,60 @@ impl Transform {
 
         inline
     }
+
+    fn replace_with_const(
+        &mut self,
+        node_id: NodeId,
+        mut module: WithId<ModuleId, &mut Module>,
+        args: ConstArgs,
+    ) {
+        let node_id = module.replace::<_, Const>(node_id, args);
+        self.transform(module, node_id);
+    }
+
+    fn replace_with_multi_const(
+        &mut self,
+        node_id: NodeId,
+        mut module: WithId<ModuleId, &mut Module>,
+        args: impl IntoIterator<Item = ConstArgs>,
+    ) {
+        let node_id = module.replace::<_, MultiConst>(node_id, args);
+        self.transform(module, node_id);
+    }
+
+    fn eliminate_const(
+        &mut self,
+        val: ConstVal,
+        cons: Port,
+        mut module: WithId<ModuleId, &mut Module>,
+    ) {
+        if self.netlist.cfg().no_eliminate_const || module.is_mod_output(cons) {
+            return;
+        }
+
+        if let Some(&new_cons) = self.cons.get(&(module.id, val)) {
+            module.reconnect_all_outgoing(cons.node, iter::once(new_cons));
+        } else {
+            self.cons.insert((module.id, val), cons);
+        }
+    }
+
+    fn eliminate_multi_const(
+        &mut self,
+        node_id: NodeId,
+        mut module: WithId<ModuleId, &mut Module>,
+    ) {
+        if self.netlist.cfg().no_eliminate_const {
+            return;
+        }
+
+        let out_count = module[node_id].multi_cons().unwrap().out_count();
+        for idx in 0 .. out_count {
+            let val = module[node_id].multi_cons().unwrap().value(idx);
+
+            self.eliminate_const(val, Port::new(node_id, idx as u32), module.reborrow());
+        }
+    }
 }
 
 #[cfg(test)]
@@ -390,17 +452,18 @@ mod tests {
 
     use super::*;
     use crate::{
-        netlist::{NodeWithInputs, Symbol},
+        netlist::NodeWithInputs,
         node::{Merger, MergerArgs, Splitter, SplitterArgs},
         node_ty::NodeTy,
+        symbol::Symbol,
         visitor::reachability::Reachability,
     };
 
     fn transform(netlist: &NetList, mod_id: ModuleId) {
-        Transform::new().visit_module(netlist, mod_id);
+        Transform::new(netlist).visit_module(mod_id);
 
         let mut module = netlist[mod_id].borrow_mut();
-        Reachability::new().visit_module(&mut module);
+        Reachability::new(netlist).visit_module(&mut module);
     }
 
     #[test]

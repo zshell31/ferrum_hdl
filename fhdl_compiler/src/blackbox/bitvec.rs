@@ -1,9 +1,10 @@
 use std::iter::{self};
 
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{Module, Port},
-    node::{Mux, MuxArgs, Splitter, SplitterArgs},
+    netlist::Module,
+    node::{Splitter, SplitterArgs, Switch, SwitchArgs},
     node_ty::NodeTy,
 };
 use rustc_span::Span;
@@ -122,7 +123,7 @@ where
         })
         .collect::<Vec<_>>();
 
-    let mux = module.add::<_, Mux>(MuxArgs::<_, _> {
+    let mux = module.add::<_, Switch>(SwitchArgs::<_, _> {
         outputs: output_ty.iter().map(|ty| (ty, None)),
         sel,
         variants,

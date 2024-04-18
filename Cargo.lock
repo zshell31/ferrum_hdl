@@ -78,6 +78,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "080e9890a082662b09c1ad45f567faeeb47f22b5fb23895fbe1e651e718e25ca"
 
 [[package]]
+name = "auto_enums"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1899bfcfd9340ceea3533ea157360ba8fa864354eccbceab58e1006ecab35393"
+dependencies = [
+ "derive_utils",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,9 +241,20 @@ dependencies = [
 
 [[package]]
 name = "derive-where"
-version = "1.2.5"
+version = "1.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "146398d62142a0f35248a608f17edf0dde57338354966d6e41d0eb2d16980ccb"
+checksum = "62d671cc41a825ebabc75757b62d3d168c577f9149b2d49ece1dad1f72119d25"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "derive_utils"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61bb5a1014ce6dfc2a378578509abe775a5aa06bff584a547555d9efdb81b926"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -306,11 +329,13 @@ dependencies = [
  "anstream",
  "anstyle",
  "anyhow",
+ "auto_enums",
  "bumpalo",
  "either",
  "ferrum_hdl",
  "fhdl_cli",
  "fhdl_common",
+ "fhdl_data_structures",
  "fhdl_netlist",
  "indexmap",
  "itertools",
@@ -327,6 +352,18 @@ dependencies = [
 [[package]]
 name = "fhdl_const_func"
 version = "0.2.0"
+
+[[package]]
+name = "fhdl_data_structures"
+version = "0.2.0"
+dependencies = [
+ "derive-where",
+ "either",
+ "indexmap",
+ "rustc-hash",
+ "smallvec",
+ "tracing",
+]
 
 [[package]]
 name = "fhdl_macros"
@@ -354,12 +391,12 @@ dependencies = [
  "either",
  "ferrum_hdl",
  "fhdl_const_func",
+ "fhdl_data_structures",
  "indexmap",
  "itertools",
  "lasso",
  "once_cell",
  "pretty_assertions",
- "rustc-hash",
  "serde",
  "smallvec",
  "tracing",

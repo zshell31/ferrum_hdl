@@ -1,27 +1,29 @@
-use rustc_hash::FxHashMap;
+use fhdl_data_structures::{cursor::Cursor, FxHashMap};
 
 use crate::{
-    cursor::Cursor,
-    netlist::{Module, ModuleId, NetList, WithId},
+    netlist::{Module, ModuleId, NetList},
     node::{IsNode, Node},
     symbol::Symbol,
+    with_id::WithId,
 };
 
-pub struct SetNames {
+pub struct SetNames<'n> {
+    netlist: &'n NetList,
     idents: FxHashMap<(ModuleId, Symbol), usize>,
     module_idents: FxHashMap<Symbol, usize>,
 }
 
-impl SetNames {
-    pub fn new() -> Self {
+impl<'n> SetNames<'n> {
+    pub fn new(netlist: &'n NetList) -> Self {
         Self {
+            netlist,
             idents: Default::default(),
             module_idents: Default::default(),
         }
     }
 
-    pub fn run(mut self, netlist: &NetList) {
-        for module in netlist.modules() {
+    pub fn run(mut self) {
+        for module in self.netlist.modules() {
             let mut module = module.borrow_mut();
             if module.skip {
                 continue;

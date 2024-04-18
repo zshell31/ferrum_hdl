@@ -5,9 +5,10 @@ use std::{
 };
 
 use either::Either;
+use fhdl_data_structures::graph::{NodeId, Port};
 use fhdl_netlist::{
     const_val::ConstVal,
-    netlist::{Module, NodeId, Port},
+    netlist::Module,
     node::{Merger, MergerArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
@@ -375,7 +376,7 @@ pub trait ModuleExt<'tcx> {
         variant_idx: VariantIdx,
     ) -> Item<'tcx>;
 
-    fn get_discr(&mut self, discr: &Item<'tcx>) -> Port;
+    fn get_discr(&mut self, discr: &Item<'tcx>) -> Item<'tcx>;
 
     fn mk_item_from_ty(
         &mut self,
@@ -463,13 +464,15 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                         .iter()
                         .map(|item| self.to_bitvec(item).port())
                         .collect::<SmallVec<[_; 1]>>();
-                    let merger = MergerArgs {
-                        inputs,
-                        rev: false,
-                        sym: None,
-                    };
 
-                    Item::new(item.ty, self.add_and_get_port::<_, Merger>(merger))
+                    Item::new(
+                        item.ty,
+                        self.add_and_get_port::<_, Merger>(MergerArgs {
+                            inputs,
+                            rev: false,
+                            sym: None,
+                        }),
+                    )
                 }
             }
         }
@@ -606,20 +609,45 @@ impl<'tcx> ModuleExt<'tcx> for Module {
         Item::new(enum_ty, self.add_and_get_port::<_, Merger>(merger))
     }
 
-    fn get_discr(&mut self, discr: &Item<'tcx>) -> Port {
-        match discr.ty.kind() {
-            ItemTyKind::Enum(enum_ty) => {
+    fn get_discr(&mut self, discr: &Item<'tcx>) -> Item<'tcx> {
+        match &discr.kind {
+            ItemKind::Port(_) if discr.ty.is_enum_ty() => {
+                let enum_ty = discr.ty.enum_ty();
                 let discr_ty = enum_ty.discr_ty();
                 let discr = self.to_bitvec(discr);
 
-                self.add_and_get_port::<_, Splitter>(SplitterArgs {
-                    input: discr.port(),
-                    outputs: iter::once((discr_ty.node_ty(), SymIdent::Discr.into())),
-                    start: None,
-                    rev: true,
-                })
+                Item::new(
+                    discr_ty,
+                    self.add_and_get_port::<_, Splitter>(SplitterArgs {
+                        input: discr.port(),
+                        outputs: iter::once((discr_ty.node_ty(), SymIdent::Discr.into())),
+                        start: None,
+                        rev: true,
+                    }),
+                )
             }
-            _ => self.to_bitvec(discr).port(),
+            ItemKind::Port(_) => discr.clone(),
+            ItemKind::Group(group) => {
+                if group.len() == 1 {
+                    let item = group.by_idx(0);
+                    self.get_discr(&item)
+                } else {
+                    let inputs = group
+                        .items()
+                        .iter()
+                        .map(|item| self.get_discr(item).port())
+                        .collect::<SmallVec<[_; 1]>>();
+
+                    Item::new(
+                        discr.ty,
+                        self.add_and_get_port::<_, Merger>(MergerArgs {
+                            inputs,
+                            rev: false,
+                            sym: None,
+                        }),
+                    )
+                }
+            }
         }
     }
 
@@ -678,7 +706,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
 
 #[cfg(test)]
 mod tests {
-    use fhdl_netlist::netlist::IndexType;
+    use fhdl_data_structures::index::IndexType;
 
     use super::*;
     use crate::compiler::item_ty::WithTypeInfo;

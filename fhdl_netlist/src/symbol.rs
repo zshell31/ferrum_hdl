@@ -5,12 +5,11 @@ use std::{
     str::pattern::{Pattern, Searcher},
 };
 
+use fhdl_data_structures::{idx_ty, index::IndexType, FxHashSet, FxHasher};
 use lasso::{Capacity, Key, ThreadedRodeo};
 use once_cell::sync::Lazy;
-use rustc_hash::{FxHashSet, FxHasher};
 
-use crate::netlist::IndexType;
-pub use crate::netlist::Symbol;
+idx_ty!(Symbol, true);
 
 static DEFAULT_SYMBOLS: Lazy<FxHashSet<&'static str>> = Lazy::new(|| {
     ["input", "output", "reg", "self", "module"]

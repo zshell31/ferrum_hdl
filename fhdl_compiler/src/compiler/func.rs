@@ -1,8 +1,9 @@
 use std::iter;
 
 use fhdl_common::BlackboxKind;
+use fhdl_data_structures::graph::NodeId;
 use fhdl_netlist::{
-    netlist::{Module, ModuleId, NodeId},
+    netlist::{Module, ModuleId},
     node::{Input, InputArgs, ModInst, ModInstArgs},
 };
 use once_cell::sync::Lazy;

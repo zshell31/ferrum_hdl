@@ -5,9 +5,12 @@ pub mod context;
 pub mod func;
 pub mod item;
 pub mod item_ty;
+mod locals;
 pub mod mir;
 mod pins;
+mod post_dominator;
 pub mod switch;
+mod switch_tuple;
 mod sym_ident;
 mod trie;
 mod utils;
@@ -25,8 +28,9 @@ use bumpalo::Bump;
 pub use context::Context;
 use fhdl_cli::CompilerArgs;
 use fhdl_common::{BlackboxKind, NonEmptyStr};
+use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
-    netlist::{Module, ModuleId, NetList, Port},
+    netlist::{Module, ModuleId, NetList},
     node::{Extend, ExtendArgs, Splitter, SplitterArgs},
     node_ty::NodeTy,
     symbol::Symbol,
@@ -40,6 +44,7 @@ use rustc_hir::{
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::{
     dep_graph::DepContext,
+    mir::BasicBlock,
     ty::{GenericArgs, GenericArgsRef, Ty, TyCtxt},
 };
 use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
@@ -49,7 +54,8 @@ use self::{
     item_ty::{ItemTy, ItemTyKind},
     mir::DefIdOrPromoted,
     pins::PinConstraints,
-    switch::SwitchBlocks,
+    post_dominator::PostDominator,
+    switch_tuple::SwitchTupleRef,
 };
 use crate::error::{Error, SpanError};
 
@@ -174,11 +180,12 @@ pub struct Compiler<'tcx> {
     crates: Crates,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
-    switch_meta: FxHashMap<DefId, SwitchBlocks<'tcx>>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     allocated_ty: FxHashMap<ItemTyKind<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
     pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
+    post_dominator: FxHashMap<DefId, PostDominator>,
+    switch_tuples: FxHashMap<(DefId, BasicBlock), Option<SwitchTupleRef<'tcx>>>,
 }
 
 impl<'tcx> Compiler<'tcx> {
@@ -196,11 +203,12 @@ impl<'tcx> Compiler<'tcx> {
             crates,
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
-            switch_meta: Default::default(),
             item_ty: Default::default(),
             allocated_ty: Default::default(),
             file_names: Default::default(),
             pin_constr: Default::default(),
+            post_dominator: Default::default(),
+            switch_tuples: Default::default(),
         }
     }
 

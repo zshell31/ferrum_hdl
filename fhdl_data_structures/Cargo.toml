@@ -1,0 +1,17 @@
+[package]
+name = "fhdl_data_structures"
+version.workspace = true
+description = "The Ferrum HDL data structures"
+repository.workspace = true
+keywords.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+derive-where = { workspace = true }
+either = { workspace = true }
+indexmap = { workspace = true }
+rustc-hash = { workspace = true }
+smallvec = { workspace = true }
+tracing = { workspace = true }

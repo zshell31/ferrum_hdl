@@ -1,6 +1,7 @@
 use std::{
     cmp,
     fmt::{self, Debug, Display},
+    hash::{Hash, Hasher},
     ops::{Add, BitAnd, BitOr, BitXor, Div, Mul, Not, Rem, Shl, Shr, Sub},
 };
 
@@ -20,6 +21,7 @@ impl Display for ConstVal {
 }
 
 impl Debug for ConstVal {
+    #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         Display::fmt(self, f)
     }
@@ -82,6 +84,20 @@ impl ConstVal {
             rhs,
         )
     }
+
+    pub fn slice(&self, start: u128, width: u128) -> ConstVal {
+        if start == 0 && width == self.width {
+            return *self;
+        }
+
+        let width = cmp::min(self.width - start, width);
+        if width == 0 {
+            ConstVal::zero(width)
+        } else {
+            let val = self.val();
+            ConstVal::new(val >> start, width)
+        }
+    }
 }
 
 fn bin_op(val: u128, lhs: ConstVal, rhs: ConstVal) -> ConstVal {
@@ -118,6 +134,13 @@ impl PartialEq for ConstVal {
 }
 
 impl Eq for ConstVal {}
+
+impl Hash for ConstVal {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.width().hash(state);
+        self.val().hash(state);
+    }
+}
 
 impl Ord for ConstVal {
     fn cmp(&self, other: &Self) -> cmp::Ordering {

@@ -1,17 +1,17 @@
 use std::io::{Result, Write};
 
 use ferrum_hdl::domain::{Polarity, SyncKind};
-use rustc_hash::FxHashSet;
+use fhdl_data_structures::{cursor::Cursor, graph::NodeId, FxHashSet};
 
 use crate::{
     buffer::Buffer,
-    cursor::Cursor,
-    netlist::{Module, NetList, NodeId, WithId},
+    netlist::{Module, NetList},
     node::{
-        BinOpInputs, Case, DFFInputs, MuxInputs, NetKind, Node, NodeKind, NodeOutput,
+        BinOpInputs, Case, DFFInputs, NetKind, Node, NodeKind, NodeOutput, SwitchInputs,
     },
     symbol::Symbol,
     visitor::ParamKind,
+    with_id::WithId,
 };
 
 fn write_param<W: Write>(
@@ -408,9 +408,13 @@ impl<'n, W: Write> Verilog<'n, W> {
                     ))?;
                 }
             }
-            NodeKind::Mux(mux) => {
+            NodeKind::Switch(mux) => {
                 let mux = node.with(mux);
-                let MuxInputs { sel, cases } = mux.inputs(module);
+                let SwitchInputs {
+                    sel,
+                    cases,
+                    is_single,
+                } = mux.inputs(module);
 
                 let outputs = &mux.outputs;
                 let single_assign =
@@ -423,18 +427,45 @@ impl<'n, W: Write> Verilog<'n, W> {
                 b.push_tab();
 
                 b.write_tab()?;
-                b.write_fmt(format_args!("case ({sel_sym})\n"))?;
+                if is_single {
+                    b.write_fmt(format_args!("case ({sel_sym})\n"))?;
+                } else {
+                    b.write_fmt(format_args!("casez ({sel_sym})\n"))?;
+                }
 
                 b.push_tab();
 
                 for (case, inputs) in cases.into_iter() {
+                    b.write_tab()?;
                     match case {
                         Case::Val(case) => {
-                            b.write_tab()?;
-                            b.write_fmt(format_args!("{case}: "))?;
+                            if case.0.len() == 1 {
+                                match case.0[0] {
+                                    Case::Val(case) => {
+                                        b.write_fmt(format_args!("{case}: "))?;
+                                    }
+                                    Case::Default(_) => {
+                                        b.write_str("default: ")?;
+                                    }
+                                }
+                            } else {
+                                b.write_str("{ ")?;
+                                b.intersperse(
+                                    ", ",
+                                    case.0.iter(),
+                                    |b, case| match case {
+                                        Case::Val(case) => {
+                                            b.write_fmt(format_args!("{case}"))
+                                        }
+                                        Case::Default(width) => {
+                                            b.write_fmt(format_args!("{width}'d?"))
+                                        }
+                                    },
+                                )?;
+                                b.write_str(" }: ")?;
+                            }
                         }
-                        Case::Default => {
-                            b.write_tab()?;
+                        Case::Default(_) => {
                             b.write_str("default: ")?;
                         }
                     }

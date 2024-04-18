@@ -11,9 +11,12 @@ use fhdl_common::BlackboxTy;
 use fhdl_netlist::{node_ty::NodeTy, symbol::Symbol};
 use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{
-    AdtDef, AliasKind, ClosureArgs, EarlyBinder, FieldDef, GenericArg, GenericArgsRef,
-    List, Mutability, ParamEnv, Ty, VariantDiscr,
+use rustc_middle::{
+    mir::{BasicBlockData, Rvalue},
+    ty::{
+        AdtDef, AliasKind, ClosureArgs, EarlyBinder, FieldDef, GenericArg,
+        GenericArgsRef, List, Mutability, ParamEnv, Ty, VariantDiscr,
+    },
 };
 use rustc_span::Span;
 use rustc_target::abi::VariantIdx;
@@ -25,7 +28,7 @@ use rustc_type_ir::{
 
 use super::{
     utils::{TreeIter, TreeNode},
-    Compiler,
+    Compiler, Context,
 };
 use crate::error::{Error, SpanError, SpanErrorKind};
 
@@ -363,6 +366,7 @@ impl<'tcx> ItemTyKind<'tcx> {
         }
     }
 
+    #[inline]
     pub fn is_closure_ty(&self) -> bool {
         matches!(self, Self::Closure(_))
     }
@@ -372,6 +376,11 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Enum(enum_ty) => *enum_ty,
             _ => panic!("expected enum ty"),
         }
+    }
+
+    #[inline]
+    pub fn is_enum_ty(&self) -> bool {
+        matches!(self, Self::Enum(_))
     }
 
     pub fn width(&self) -> u128 {
@@ -525,6 +534,11 @@ impl<'tcx> ItemTy<'tcx> {
     #[inline]
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
         self.0.enum_ty()
+    }
+
+    #[inline]
+    pub fn is_enum_ty(&self) -> bool {
+        self.0.is_enum_ty()
     }
 
     #[inline]
@@ -788,12 +802,26 @@ impl<'tcx> Compiler<'tcx> {
                 BlackboxTy::Signed => self
                     .generic_const(ty, 0, generics, span)?
                     .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)))),
+                BlackboxTy::UnsignedInner => None,
             };
 
             return Ok(item_ty);
         }
 
         Ok(None)
+    }
+
+    pub fn is_inner_ty(&self, ty: Ty<'tcx>) -> bool {
+        let def_id = match ty_def_id(ty) {
+            Some(def_id) => def_id,
+            None => return false,
+        };
+        let blackbox_ty = match self.find_blackbox_ty(def_id) {
+            Some(blackbox_ty) => blackbox_ty,
+            None => return false,
+        };
+
+        matches!(blackbox_ty, BlackboxTy::UnsignedInner)
     }
 
     pub fn generic_ty(
@@ -994,5 +1022,33 @@ impl<'tcx> Compiler<'tcx> {
                 .phantom_data()
                 .filter(|phantom_data| *phantom_data == def_id)
                 .is_some()
+    }
+
+    pub fn discr_has_inner_ty(
+        &self,
+        bbs: &BasicBlockData<'tcx>,
+        ctx: &Context<'tcx>,
+    ) -> bool {
+        use itertools::Itertools;
+
+        let discr = match bbs
+            .statements
+            .iter()
+            .filter_map(|stmt| {
+                stmt.kind.as_assign().and_then(|(_, rvalue)| match rvalue {
+                    Rvalue::Discriminant(discr) => Some(*discr),
+                    _ => None,
+                })
+            })
+            .exactly_one()
+        {
+            Ok(discr) => discr,
+            _ => {
+                return false;
+            }
+        };
+
+        let discr_ty = discr.ty(ctx.mir, self.tcx).ty;
+        self.is_inner_ty(discr_ty)
     }
 }

@@ -5,12 +5,19 @@ mod dff;
 mod input;
 mod merger;
 mod mod_inst;
-mod mux;
 mod pass;
 mod splitter;
+mod switch;
 mod zero_extend;
 
 use std::rc::Rc;
+
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{Edges, GraphNode, IncomingDir, NodeId, OutgoingDir, Port},
+    index::IndexType,
+    list::{List, ListItem},
+};
 
 pub(crate) use self::cons::MultiConst;
 pub use self::{
@@ -21,19 +28,16 @@ pub use self::{
     input::{Input, InputArgs},
     merger::{Merger, MergerArgs},
     mod_inst::{ModInst, ModInstArgs},
-    mux::{Case, Mux, MuxArgs, MuxInputs},
     pass::{Pass, PassArgs},
     splitter::{Indices, Splitter, SplitterArgs},
+    switch::{Case, Switch, SwitchArgs, SwitchInputs, TupleCase},
     zero_extend::{Extend, ExtendArgs},
 };
 use crate::{
-    cursor::Cursor,
-    netlist::{
-        Edges, IncomingDir, IndexType, List, ListItem, Module, NetList, NodeId,
-        OutgoingDir, Port, WithId,
-    },
+    netlist::{Module, NetList},
     node_ty::NodeTy,
     symbol::Symbol,
+    with_id::WithId,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -85,12 +89,34 @@ impl NodeOutput {
 #[derive(Debug)]
 pub struct Node {
     pub skip: bool,
-    pub(crate) incoming: List<Edges, IncomingDir>,
-    pub(crate) outgoing: List<Edges, OutgoingDir>,
+    incoming: List<Edges, IncomingDir>,
+    outgoing: List<Edges, OutgoingDir>,
     kind: Box<NodeKind>,
     next: NodeId,
     prev: NodeId,
     span: Option<Rc<String>>,
+}
+
+impl GraphNode for Node {
+    #[inline]
+    fn incoming(&self) -> &List<Edges, IncomingDir> {
+        &self.incoming
+    }
+
+    #[inline]
+    fn outgoing(&self) -> &List<Edges, OutgoingDir> {
+        &self.outgoing
+    }
+
+    #[inline]
+    fn incoming_mut(&mut self) -> &mut List<Edges, IncomingDir> {
+        &mut self.incoming
+    }
+
+    #[inline]
+    fn outgoing_mut(&mut self) -> &mut List<Edges, OutgoingDir> {
+        &mut self.outgoing
+    }
 }
 
 impl ListItem<NodeId> for Node {
@@ -191,7 +217,7 @@ impl Node {
     }
 
     pub fn is_mux(&self) -> bool {
-        matches!(&*self.kind, NodeKind::Mux(_))
+        matches!(&*self.kind, NodeKind::Switch(_))
     }
 
     pub fn is_mod_inst(&self) -> bool {
@@ -226,9 +252,23 @@ impl Node {
         }
     }
 
-    pub fn mux(&self) -> Option<&Mux> {
+    pub fn mux(&self) -> Option<&Switch> {
         match &*self.kind {
-            NodeKind::Mux(mux) => Some(mux),
+            NodeKind::Switch(mux) => Some(mux),
+            _ => None,
+        }
+    }
+
+    pub fn cons(&self) -> Option<&Const> {
+        match &*self.kind {
+            NodeKind::Const(cons) => Some(cons),
+            _ => None,
+        }
+    }
+
+    pub fn multi_cons(&self) -> Option<&MultiConst> {
+        match &*self.kind {
+            NodeKind::MultiConst(multi_const) => Some(multi_const),
             _ => None,
         }
     }
@@ -490,7 +530,7 @@ define_nodes!(
     Merger => Merger,
     ModInst => ModInst,
     MultiConst => MultiConst,
-    Mux => Mux,
+    Switch => Switch,
     Pass => Pass,
     Splitter => Splitter,
     Extend => Extend,

@@ -1,14 +1,13 @@
 use std::fmt::Debug;
 
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{NodeId, Port},
+};
 use smallvec::SmallVec;
 
 use super::{IsNode, MakeNode, NodeOutput};
-use crate::{
-    cursor::Cursor,
-    netlist::{Module, NodeId, Port, WithId},
-    node_ty::NodeTy,
-    symbol::Symbol,
-};
+use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Splitter {

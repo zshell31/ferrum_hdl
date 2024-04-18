@@ -195,6 +195,10 @@ impl<'tcx> Compiler<'tcx> {
                 }
             }
 
+            // let switch = self.try_make_switch_tuple(block, &ctx)
+            // let switches = self.collect_switch_tuples(&ctx);
+            // debug!("paths: {switches:#?}");
+
             let module_id = self.netlist.add_module(ctx.module);
 
             self.evaluated_modules.insert(mono_item, module_id);
@@ -530,7 +534,20 @@ impl<'tcx> Compiler<'tcx> {
             | TerminatorKind::Goto { target }
             | TerminatorKind::Assert { target, .. } => Some(*target),
             TerminatorKind::SwitchInt { discr, targets } => {
-                self.visit_switch(block, discr, targets, ctx, span)?
+                if self.discr_has_inner_ty(block_data, ctx) {
+                    return Ok(Some(targets.target_for_value(0)));
+                }
+
+                if let Some(switch_tuple) = self.is_switch_tuple(block, ctx, span)? {
+                    debug!("switch_tuple: {switch_tuple:#?}");
+                    let discr_tuple = switch_tuple.discr_tuple();
+                    let discr_tuple = self.visit_rhs_place(&discr_tuple, ctx, span)?;
+
+                    self.visit_switch(block, &discr_tuple, &*switch_tuple, ctx, span)?
+                } else {
+                    let discr = self.visit_operand(discr, ctx, span)?;
+                    self.visit_switch(block, &discr, targets, ctx, span)?
+                }
             }
             _ => {
                 error!(
@@ -552,53 +569,24 @@ impl<'tcx> Compiler<'tcx> {
     ) -> Result<(), Error> {
         let local = place.local;
         let span = ctx.mir.local_decls[local].source_info.span;
-        let lhs = ctx.locals.get_opt(local);
 
-        match ctx.last_switch() {
-            Some(switch) if switch.contains(local) => {
-                if place.projection.is_empty() {
-                    switch.add_branch_local(local, rhs.clone());
-                } else {
-                    // Write rhs into a nested part of lhs
-                    let mut lhs = match switch.branch_local(local) {
-                        Some(lhs) => lhs.clone(),
-                        None => lhs.expect("cannot find local").deep_clone(),
-                    };
+        if !ctx.locals.is_root() && !ctx.locals.has_local(local) {
+            let rhs = if place.projection.is_empty() {
+                rhs.clone()
+            } else {
+                ctx.locals.get(local).deep_clone()
+            };
 
-                    self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
-
-                    switch.add_branch_local(local, lhs);
-                }
-            }
-            _ => {
-                if place.projection.is_empty() {
-                    ctx.locals.place(local, rhs.clone());
-                } else {
-                    let mut lhs = lhs.expect("cannot find local");
-                    // Write rhs into a nested part of lhs
-                    self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
-
-                    ctx.locals.place(local, lhs);
-                }
-            }
+            ctx.locals.place(local, rhs);
         }
-        Ok(())
-    }
 
-    pub fn assign_local(
-        &mut self,
-        local: Local,
-        item: &Item<'tcx>,
-        ctx: &mut Context<'tcx>,
-    ) -> Result<(), Error> {
-        match ctx.last_switch() {
-            Some(switch) if switch.contains(local) => {
-                switch.add_branch_local(local, item.clone());
-            }
-            _ => {
-                ctx.locals.place(local, item.clone());
-            }
+        if place.projection.is_empty() {
+            ctx.locals.place(local, rhs.clone());
+        } else {
+            let mut lhs = ctx.locals.get(local);
+            self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
         }
+
         Ok(())
     }
 
@@ -762,17 +750,12 @@ impl<'tcx> Compiler<'tcx> {
     }
 
     pub fn visit_rhs_place(
-        &mut self,
+        &self,
         place: &Place<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
-        let mut item = match ctx.last_switch() {
-            Some(switch) if switch.has_branch_local(place.local) => {
-                switch.branch_local(place.local).unwrap().clone()
-            }
-            _ => ctx.locals.get(place.local).clone(),
-        };
+        let mut item = ctx.locals.get(place.local);
 
         for place_elem in place.projection {
             if item.is_unsigned() {

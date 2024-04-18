@@ -5,8 +5,7 @@ use std::{
 
 use indexmap::map::Iter;
 
-use super::{IndexType, WithId};
-use crate::FxIndexMap;
+use crate::{index::IndexType, FxIndexMap};
 
 #[derive(Debug, Clone)]
 pub struct IndexStorage<I: IndexType, T> {
@@ -20,6 +19,14 @@ impl<I: IndexType, T> IndexStorage<I, T> {
     pub fn new() -> Self {
         Self {
             raw: Default::default(),
+            last_idx: 0,
+            _idx: PhantomData,
+        }
+    }
+
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            raw: FxIndexMap::with_capacity_and_hasher(capacity, Default::default()),
             last_idx: 0,
             _idx: PhantomData,
         }
@@ -54,8 +61,8 @@ impl<I: IndexType, T> IndexStorage<I, T> {
         self.raw.insert(idx, value);
     }
 
-    pub fn iter_with_id(&self) -> impl DoubleEndedIterator<Item = WithId<I, &T>> + '_ {
-        self.raw.iter().map(|(id, inner)| WithId { id: *id, inner })
+    pub fn iter_with_id(&self) -> impl DoubleEndedIterator<Item = (I, &T)> + '_ {
+        self.raw.iter().map(|(id, inner)| (*id, inner))
     }
 }
 

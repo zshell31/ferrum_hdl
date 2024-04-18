@@ -1,28 +1,30 @@
 use std::{
-    iter,
     ops::{Index, IndexMut},
     rc::Rc,
 };
 
-use indexmap::set::Slice;
-use rustc_hash::FxHashMap;
-
-use super::{
-    graph::{IncomingEdges, OutgoingEdges},
-    list::{List, ListCursor, ListStorage},
-    EdgeId, Graph, IndexType, ListItem, ModuleId, NodeId, Port, PortPos, WithId,
+use fhdl_data_structures::{
+    cursor::Cursor,
+    graph::{EdgeId, Graph, IncomingEdges, NodeId, OutgoingEdges, Port},
+    idx_ty,
+    index::IndexType,
+    list::{List, ListCursor, ListItem},
+    FxHashMap, FxIndexSet,
 };
+use indexmap::set::Slice;
+
 use crate::{
     const_val::ConstVal,
-    cursor::Cursor,
     node::{
         Const, ConstArgs, Input, InputArgs, IsNode, MakeNode, ModInst, Node, NodeKind,
         NodeOutput, Pass, PassArgs,
     },
     node_ty::NodeTy,
     symbol::Symbol,
-    FxIndexSet,
+    with_id::{PortPos, WithId},
 };
+
+idx_ty!(ModuleId);
 
 #[derive(Debug)]
 pub struct Module {
@@ -31,15 +33,10 @@ pub struct Module {
     pub skip: bool,
     pub inline: bool,
     span: Option<Rc<String>>,
-    graph: Graph,
-    list: List<Graph>,
+    graph: Graph<Node>,
+    list: List<Graph<Node>>,
     inputs: FxIndexSet<Port>,
     outputs: FxIndexSet<Port>,
-}
-
-impl ListStorage for Graph {
-    type Idx = NodeId;
-    type Item = Node;
 }
 
 impl Index<NodeId> for Module {
@@ -78,9 +75,8 @@ impl IndexMut<Port> for Module {
 #[repr(transparent)]
 pub struct Incoming(IncomingEdges);
 
-impl Cursor for Incoming {
+impl Cursor<Module> for Incoming {
     type Item = Port;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {
@@ -93,9 +89,8 @@ impl Cursor for Incoming {
 #[repr(transparent)]
 pub struct Outgoing(OutgoingEdges);
 
-impl Cursor for Outgoing {
+impl Cursor<Module> for Outgoing {
     type Item = NodeId;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {
@@ -106,7 +101,7 @@ impl Cursor for Outgoing {
 
 #[derive(Clone, Copy)]
 #[repr(transparent)]
-pub struct NodeCursor(ListCursor<Graph>);
+pub struct NodeCursor(ListCursor<Graph<Node>>);
 
 impl NodeCursor {
     #[inline]
@@ -115,9 +110,8 @@ impl NodeCursor {
     }
 }
 
-impl Cursor for NodeCursor {
+impl Cursor<Module> for NodeCursor {
     type Item = NodeId;
-    type Storage = Module;
 
     #[inline]
     fn next_(&mut self, module: &Module) -> Option<Self::Item> {
@@ -150,12 +144,6 @@ impl NodeWithInputs {
 
         NodeWithInputs::new(kind, module.incoming(node_id).into_iter_(module))
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PortOrConst {
-    Port(Port),
-    Const(ConstVal),
 }
 
 impl Module {
@@ -493,34 +481,6 @@ impl Module {
         }
     }
 
-    pub fn to_port_or_const(&self, port: Port) -> PortOrConst {
-        match self.to_const(port) {
-            Some(val) => PortOrConst::Const(val),
-            None => PortOrConst::Port(port),
-        }
-    }
-
-    pub fn reconnect_or_replace(&mut self, node_id: NodeId, input: PortOrConst) {
-        let node = &self[node_id];
-        assert_eq!(node.out_count(), 1);
-        match input {
-            PortOrConst::Port(input) => {
-                self.reconnect_all_outgoing(node_id, iter::once(input));
-            }
-            PortOrConst::Const(value) => {
-                let out = &node.outputs()[0];
-                let ty = out.ty;
-                let sym = out.sym;
-
-                self.replace::<_, Const>(node_id, ConstArgs {
-                    ty,
-                    sym,
-                    value: value.val(),
-                });
-            }
-        }
-    }
-
     pub fn node_has_const_inputs(&self, node_id: NodeId) -> bool {
         self.incoming(node_id)
             .into_iter_(self)
@@ -538,8 +498,10 @@ impl Module {
         new_ports: impl IntoIterator<Item = Port>,
     ) {
         for (idx, new_port) in new_ports.into_iter().enumerate() {
-            let old_port = Port::new(node_id, idx as u32);
-            self.reconnect_all_outgoing_(old_port, new_port);
+            if node_id != new_port.node {
+                let old_port = Port::new(node_id, idx as u32);
+                self.reconnect_all_outgoing_(old_port, new_port);
+            }
         }
     }
 

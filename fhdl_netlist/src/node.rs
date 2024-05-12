@@ -3,6 +3,7 @@ mod bit_not;
 mod cons;
 mod dff;
 mod input;
+mod memory;
 mod merger;
 mod mod_inst;
 mod pass;
@@ -10,7 +11,10 @@ mod splitter;
 mod switch;
 mod zero_extend;
 
-use std::rc::Rc;
+use std::{
+    fmt::{self, Write},
+    rc::Rc,
+};
 
 use fhdl_data_structures::{
     cursor::Cursor,
@@ -25,7 +29,8 @@ pub use self::{
     bit_not::{BitNot, BitNotArgs},
     cons::{Const, ConstArgs},
     dff::{DFFArgs, DFFInputs, TyOrData, DFF},
-    input::{Input, InputArgs},
+    input::{GlSignalKind, Input, InputArgs},
+    memory::{Memory, MemoryArgs},
     merger::{Merger, MergerArgs},
     mod_inst::{ModInst, ModInstArgs},
     pass::{Pass, PassArgs},
@@ -154,13 +159,8 @@ impl Node {
         }
     }
 
-    pub(crate) fn new_from(
-        &self,
-        calc_node_id: impl Fn(NodeId) -> NodeId + Copy,
-    ) -> Self {
+    pub(crate) fn new_from(&self) -> Self {
         let mut node = Self::new(self.kind.as_ref().clone());
-        node.next = calc_node_id(self.next);
-        node.prev = calc_node_id(self.prev);
         node.span.clone_from(&self.span);
 
         node
@@ -238,6 +238,20 @@ impl Node {
         }
     }
 
+    pub fn input(&self) -> Option<&Input> {
+        match &*self.kind {
+            NodeKind::Input(input) => Some(input),
+            _ => None,
+        }
+    }
+
+    pub fn input_mut(&mut self) -> Option<&mut Input> {
+        match self.kind_mut() {
+            NodeKind::Input(input) => Some(input),
+            _ => None,
+        }
+    }
+
     pub fn dff(&self) -> Option<&DFF> {
         match &*self.kind {
             NodeKind::DFF(dff) => Some(dff),
@@ -269,6 +283,20 @@ impl Node {
     pub fn multi_cons(&self) -> Option<&MultiConst> {
         match &*self.kind {
             NodeKind::MultiConst(multi_const) => Some(multi_const),
+            _ => None,
+        }
+    }
+
+    pub fn memory(&self) -> Option<&Memory> {
+        match &*self.kind {
+            NodeKind::Memory(memory) => Some(memory),
+            _ => None,
+        }
+    }
+
+    pub fn memory_mut(&mut self) -> Option<&mut Memory> {
+        match &mut *self.kind {
+            NodeKind::Memory(memory) => Some(memory),
             _ => None,
         }
     }
@@ -340,11 +368,12 @@ impl<'m, N: IsNode> WithId<NodeId, &'m N> {
 impl WithId<NodeId, &'_ Node> {
     pub(crate) fn dump(
         &self,
+        buf: &mut impl Write,
         netlist: &NetList,
         module: &Module,
         prefix: &str,
         tab: &str,
-    ) {
+    ) -> fmt::Result {
         trait Dump {
             fn dump(&self) -> String;
         }
@@ -358,30 +387,35 @@ impl WithId<NodeId, &'_ Node> {
             }
         }
 
-        println!(
+        writeln!(
+            buf,
             "{}{} (skip: {}, prev: {}, next: {})",
             prefix,
             self.kind.dump(),
             self.skip,
             self.prev,
             self.next
-        );
+        )?;
 
         let mut show_inputs = true;
         match &*self.kind {
+            NodeKind::Input(input) => {
+                writeln!(buf, "{}global = {:#?}", tab, input.global)?;
+            }
             NodeKind::BinOp(bin_op) => {
-                println!("{}op = {:?}", tab, bin_op.bin_op);
+                writeln!(buf, "{}op = {:?}", tab, bin_op.bin_op)?;
             }
             NodeKind::ModInst(mod_inst) => {
-                println!(
+                writeln!(
+                    buf,
                     "{}mod_id = {} ({})",
                     tab,
                     mod_inst.mod_id,
                     netlist[mod_inst.mod_id].borrow().name
-                );
+                )?;
             }
             NodeKind::Splitter(splitter) => {
-                println!("{}start = {}", tab, splitter.start.dump());
+                writeln!(buf, "{}start = {}", tab, splitter.start.dump())?;
             }
             NodeKind::DFF(dff) => {
                 let DFFInputs {
@@ -393,7 +427,8 @@ impl WithId<NodeId, &'_ Node> {
                 } = self.with(dff).inputs(module);
 
                 show_inputs = false;
-                println!(
+                writeln!(
+                    buf,
                     "{}clk = {}, rst = {}, en = {}, init = {}, data = {}",
                     tab,
                     clk,
@@ -401,15 +436,16 @@ impl WithId<NodeId, &'_ Node> {
                     en.dump(),
                     init,
                     data
-                );
+                )?;
             }
             NodeKind::Const(cons) => {
                 show_inputs = false;
-                println!("{}value = {}", tab, cons.value());
+                writeln!(buf, "{}value = {}", tab, cons.value())?;
             }
             NodeKind::MultiConst(multi_cons) => {
                 show_inputs = false;
-                println!(
+                writeln!(
+                    buf,
                     "{}values = [{}]",
                     tab,
                     multi_cons
@@ -417,13 +453,14 @@ impl WithId<NodeId, &'_ Node> {
                         .map(|value| value.to_string())
                         .intersperse(", ".to_string())
                         .collect::<String>()
-                );
+                )?;
             }
             _ => {}
         }
 
         if show_inputs {
-            println!(
+            writeln!(
+                buf,
                 "{}inputs:\n{}",
                 tab,
                 module
@@ -432,10 +469,11 @@ impl WithId<NodeId, &'_ Node> {
                     .map(|input| format!("{}{}{}", tab, tab, input))
                     .intersperse("\n".to_string())
                     .collect::<String>()
-            );
+            )?;
         }
 
-        println!(
+        writeln!(
+            buf,
             "{}outputs:\n{}",
             tab,
             self.outputs()
@@ -454,7 +492,9 @@ impl WithId<NodeId, &'_ Node> {
                 ))
                 .intersperse("\n".to_string())
                 .collect::<String>()
-        );
+        )?;
+
+        Ok(())
     }
 }
 
@@ -534,4 +574,5 @@ define_nodes!(
     Pass => Pass,
     Splitter => Splitter,
     Extend => Extend,
+    Memory => Memory,
 );

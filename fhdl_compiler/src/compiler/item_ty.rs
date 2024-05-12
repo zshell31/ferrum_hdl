@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    fmt::{self, Display},
+    fmt::{self, Debug},
     iter,
     ops::{Deref, DerefMut},
 };
@@ -27,6 +27,7 @@ use rustc_type_ir::{
 };
 
 use super::{
+    domain::DomainId,
     utils::{TreeIter, TreeNode},
     Compiler, Context,
 };
@@ -40,15 +41,15 @@ pub fn ty_def_id(ty: Ty<'_>) -> Option<DefId> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Named<T> {
     pub inner: T,
     pub name: Symbol,
 }
 
-impl<T: Display> Display for Named<T> {
+impl<T: Debug> Debug for Named<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{} ({})", self.inner, self.name)
+        write!(f, "{}: {:?}", self.name, self.inner)
     }
 }
 
@@ -72,15 +73,17 @@ impl<T> DerefMut for Named<T> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArrayTy<'tcx> {
     ty: ItemTy<'tcx>,
     count: u128,
 }
 
-impl<'tcx> Display for ArrayTy<'tcx> {
+impl<'tcx> Debug for ArrayTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[ {}; {} ]", self.ty, self.count)
+        f.debug_list()
+            .entries(iter::once(format!("{:?}; {}", self.ty, self.count)))
+            .finish()
     }
 }
 
@@ -113,24 +116,24 @@ impl<'tcx> ArrayTy<'tcx> {
     fn nodes(&self) -> usize {
         self.ty.nodes() * (self.count as usize)
     }
+
+    fn is_state(&self) -> bool {
+        self.ty.is_state()
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StructTy<'tcx> {
     tys: &'tcx [Named<ItemTy<'tcx>>],
 }
 
-impl<'tcx> Display for StructTy<'tcx> {
+impl<'tcx> Debug for StructTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{{ {} }}",
-            self.tys
-                .iter()
-                .map(|ty| ty.to_string())
-                .intersperse(", ".to_string())
-                .collect::<String>()
-        )
+        let mut s = f.debug_struct("struct");
+        for ty in self.tys {
+            s.field(ty.name.as_str(), &ty.inner);
+        }
+        s.finish()
     }
 }
 
@@ -169,6 +172,10 @@ impl<'tcx> StructTy<'tcx> {
     pub fn nodes(&self) -> usize {
         self.tys.iter().map(|ty| ty.inner.nodes()).sum()
     }
+
+    pub fn is_state(&self) -> bool {
+        self.tys.iter().any(|ty| ty.is_state())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -177,7 +184,7 @@ pub struct Variant<'tcx> {
     pub ty: Named<ItemTy<'tcx>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct EnumTy<'tcx> {
     discr_ty: ItemTy<'tcx>,
     data_width: u128,
@@ -185,17 +192,10 @@ pub struct EnumTy<'tcx> {
     variants: &'tcx [Named<ItemTy<'tcx>>],
 }
 
-impl<'tcx> Display for EnumTy<'tcx> {
+impl<'tcx> Debug for EnumTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "enum {{ {} }}",
-            self.variants
-                .iter()
-                .map(|variant| variant.to_string())
-                .intersperse(", ".to_string())
-                .collect::<String>()
-        )
+        f.write_str("enum ")?;
+        f.debug_set().entries(self.variants.iter()).finish()
     }
 }
 
@@ -285,16 +285,20 @@ impl<'tcx> EnumTy<'tcx> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClosureTy<'tcx> {
     pub fn_did: DefId,
     pub fn_generics: GenericArgsRef<'tcx>,
     pub ty: StructTy<'tcx>,
 }
 
-impl<'tcx> Display for ClosureTy<'tcx> {
+impl<'tcx> Debug for ClosureTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "closure {}", self.ty)
+        let mut s = f.debug_struct("closure");
+        for ty in self.ty.tys {
+            s.field(ty.name.as_str(), &ty.inner);
+        }
+        s.finish()
     }
 }
 
@@ -314,25 +318,53 @@ impl<'tcx> ClosureTy<'tcx> {
     pub fn nodes(&self) -> usize {
         self.ty.nodes()
     }
+
+    pub fn is_state(&self) -> bool {
+        self.ty.is_state()
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RegTy<'tcx> {
+    pub dom_id: DomainId,
+    pub ty: ItemTy<'tcx>,
+}
+
+impl<'tcx> Debug for RegTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "reg {:?}", self.ty)
+    }
+}
+
+impl<'tcx> RegTy<'tcx> {
+    pub fn width(&self) -> u128 {
+        self.ty.width()
+    }
+
+    pub fn nodes(&self) -> usize {
+        1
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemTyKind<'tcx> {
     Node(NodeTy),
     Array(ArrayTy<'tcx>),
     Struct(StructTy<'tcx>),
     Closure(ClosureTy<'tcx>),
     Enum(EnumTy<'tcx>),
+    Reg(RegTy<'tcx>),
 }
 
-impl<'tcx> Display for ItemTyKind<'tcx> {
+impl<'tcx> Debug for ItemTyKind<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Node(ty) => Display::fmt(ty, f),
-            Self::Array(ty) => Display::fmt(ty, f),
-            Self::Struct(ty) => Display::fmt(ty, f),
-            Self::Closure(ty) => Display::fmt(ty, f),
-            Self::Enum(ty) => Display::fmt(ty, f),
+            Self::Node(ty) => Debug::fmt(ty, f),
+            Self::Array(ty) => Debug::fmt(ty, f),
+            Self::Struct(ty) => Debug::fmt(ty, f),
+            Self::Closure(ty) => Debug::fmt(ty, f),
+            Self::Enum(ty) => Debug::fmt(ty, f),
+            Self::Reg(ty) => Debug::fmt(ty, f),
         }
     }
 }
@@ -378,6 +410,13 @@ impl<'tcx> ItemTyKind<'tcx> {
         }
     }
 
+    pub fn reg_ty(&self) -> RegTy<'tcx> {
+        match self {
+            Self::Reg(reg_ty) => *reg_ty,
+            _ => panic!("expected reg ty"),
+        }
+    }
+
     #[inline]
     pub fn is_enum_ty(&self) -> bool {
         matches!(self, Self::Enum(_))
@@ -390,6 +429,7 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Struct(ty) => ty.width(),
             Self::Closure(ty) => ty.ty.width(),
             Self::Enum(ty) => ty.width(),
+            Self::Reg(ty) => ty.width(),
         }
     }
 
@@ -400,6 +440,18 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Struct(ty) => ty.nodes(),
             Self::Closure(ty) => ty.nodes(),
             Self::Enum(ty) => ty.nodes(),
+            Self::Reg(ty) => ty.nodes(),
+        }
+    }
+
+    pub fn is_state(&self) -> bool {
+        match self {
+            Self::Node(_) => false,
+            Self::Array(ty) => ty.is_state(),
+            Self::Struct(ty) => ty.is_state(),
+            Self::Closure(ty) => ty.is_state(),
+            Self::Enum(_) => false,
+            Self::Reg(_) => true,
         }
     }
 }
@@ -437,6 +489,7 @@ pub struct WithTypeInfo<T> {
     internee: T,
     width: u128,
     nodes: usize,
+    is_state: bool,
 }
 
 impl<T> Deref for WithTypeInfo<T> {
@@ -451,20 +504,22 @@ impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
     pub fn new(internee: ItemTyKind<'tcx>) -> Self {
         let width = internee.width();
         let nodes = internee.nodes();
+        let is_state = internee.is_state();
         Self {
             internee,
             width,
             nodes,
+            is_state,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ItemTy<'tcx>(Interned<'tcx, WithTypeInfo<ItemTyKind<'tcx>>>);
 
-impl<'tcx> Display for ItemTy<'tcx> {
+impl<'tcx> Debug for ItemTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        Display::fmt(self.kind(), f)
+        Debug::fmt(self.kind(), f)
     }
 }
 
@@ -498,6 +553,10 @@ impl<'tcx> ItemTy<'tcx> {
         }
     }
 
+    pub fn is_state(&self) -> bool {
+        self.0.is_state
+    }
+
     pub fn nodes(&self) -> usize {
         self.0.nodes
     }
@@ -506,55 +565,49 @@ impl<'tcx> ItemTy<'tcx> {
         TreeIter::new(*self, self.nodes())
     }
 
-    #[inline]
     pub fn node_ty(&self) -> NodeTy {
         self.0.node_ty()
     }
 
-    #[inline]
     pub fn array_ty(&self) -> ArrayTy<'tcx> {
         self.0.array_ty()
     }
 
-    #[inline]
     pub fn struct_ty(&self) -> StructTy<'tcx> {
         self.0.struct_ty()
     }
 
-    #[inline]
     pub fn closure_ty(&self) -> ClosureTy<'tcx> {
         self.0.closure_ty()
     }
 
-    #[inline]
     pub fn is_closure_ty(&self) -> bool {
         self.0.is_closure_ty()
     }
 
-    #[inline]
     pub fn enum_ty(&self) -> EnumTy<'tcx> {
         self.0.enum_ty()
     }
 
-    #[inline]
     pub fn is_enum_ty(&self) -> bool {
         self.0.is_enum_ty()
     }
 
-    #[inline]
     pub fn is_unsigned(&self) -> bool {
         match self.kind() {
             ItemTyKind::Node(node_ty) => node_ty.is_unsigned(),
             _ => false,
         }
     }
-
-    #[inline]
     pub fn is_signed(&self) -> bool {
         match self.kind() {
             ItemTyKind::Node(node_ty) => node_ty.is_signed(),
             _ => false,
         }
+    }
+
+    pub fn reg_ty(&self) -> RegTy<'tcx> {
+        self.0.reg_ty()
     }
 }
 
@@ -589,6 +642,7 @@ impl<'tcx> IntoIterator for ItemTy<'tcx> {
             ItemTyKind::Enum(enum_ty) => {
                 ItemTyIter::Node(Some(NodeTy::BitVec(enum_ty.width())))
             }
+            ItemTyKind::Reg(ty) => ty.ty.into_iter(),
         }
     }
 }
@@ -803,6 +857,16 @@ impl<'tcx> Compiler<'tcx> {
                     .generic_const(ty, 0, generics, span)?
                     .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)))),
                 BlackboxTy::UnsignedInner => None,
+                BlackboxTy::Reg => {
+                    let dom_ty = match ty.kind() {
+                        TyKind::Adt(_, generics) => generics[1].expect_ty(),
+                        _ => panic!("Reg is not ADT"),
+                    };
+                    let dom_id = self.find_domain_by_type(dom_ty, generics);
+
+                    self.generic_ty(ty, 2, generics, span)?
+                        .map(|ty| self.alloc_ty(ItemTyKind::Reg(RegTy { dom_id, ty })))
+                }
             };
 
             return Ok(item_ty);

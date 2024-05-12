@@ -5,6 +5,7 @@ use fhdl_data_structures::{cursor::Cursor, graph::NodeId, FxHashSet};
 
 use crate::{
     buffer::Buffer,
+    const_val::ConstVal,
     netlist::{Module, NetList},
     node::{
         BinOpInputs, Case, DFFInputs, NetKind, Node, NodeKind, NodeOutput, SwitchInputs,
@@ -72,7 +73,18 @@ impl<'n, W: Write> Verilog<'n, W> {
             let port = node_out.id;
             let is_input = module.is_mod_input(port);
             let is_output = module.is_mod_output(port);
-            self.write_local(*node_out, is_input, is_output, can_skip)?;
+            match node.kind() {
+                NodeKind::Memory(memory) => {
+                    self.write_local(
+                        *node_out,
+                        is_input,
+                        is_output,
+                        memory.dim.get() as usize,
+                        can_skip,
+                    )?;
+                }
+                _ => self.write_local(*node_out, is_input, is_output, 1, can_skip)?,
+            }
         }
 
         Ok(())
@@ -83,6 +95,7 @@ impl<'n, W: Write> Verilog<'n, W> {
         node_out: &NodeOutput,
         is_input: bool,
         is_output: bool,
+        count: usize,
         can_skip: bool,
     ) -> Result<()> {
         if can_skip && node_out.skip {
@@ -96,6 +109,9 @@ impl<'n, W: Write> Verilog<'n, W> {
                 b.write_tab()?;
                 write_out(b, node_out)?;
                 b.write_fmt(format_args!(" {}", sym))?;
+                if count > 1 {
+                    b.write_fmt(format_args!("[{}:0]", count - 1))?;
+                }
                 b.write_str(";\n")?;
             }
 
@@ -626,6 +642,30 @@ impl<'n, W: Write> Verilog<'n, W> {
 
                 b.write_tab()?;
                 b.write_str("end\n\n")?;
+            }
+            NodeKind::Memory(memory) => {
+                let memory = node.with(memory);
+                let dim = memory.dim;
+                let name = memory.name.unwrap();
+                let gen_i = memory.gen_i.unwrap();
+
+                b.write_tab()?;
+                b.write_fmt(format_args!("integer {gen_i};\n"))?;
+
+                b.write_str("initial begin\n")?;
+                b.push_tab();
+
+                b.write_tab()?;
+                let zero = ConstVal::zero(memory.output[0].width());
+                b.write_fmt(format_args!("for ({gen_i} = 0; {gen_i} < {dim}; {gen_i} = {gen_i} + 1) {name}[{gen_i}] = {zero};\n"))?;
+
+                for (idx, val) in memory.init.iter() {
+                    b.write_tab()?;
+                    b.write_fmt(format_args!("{name}[{idx}] = {val};\n"))?;
+                }
+
+                b.pop_tab();
+                b.write_str("end\n")?;
             }
         }
 

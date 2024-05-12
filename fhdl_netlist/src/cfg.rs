@@ -22,4 +22,7 @@ pub struct NetListCfg {
     /// Do not eliminate constants
     #[arg(long)]
     pub no_eliminate_const: bool,
+    /// Max inlines (for debugging purposes)
+    #[arg(long)]
+    pub max_inlines: Option<usize>,
 }

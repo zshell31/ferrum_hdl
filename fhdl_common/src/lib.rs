@@ -1,7 +1,7 @@
 mod blackbox;
-mod synth;
+mod lang_item;
 mod utils;
 
 pub use blackbox::{BlackboxKind, BlackboxTy};
-pub use synth::{Constraint, Pin, SynthAttrs, Vendor};
+pub use lang_item::LangItem;
 pub use utils::{NonEmptyAsciiStr, NonEmptyStr};

@@ -8,7 +8,6 @@ use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol, with_id::WithId};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BitNot {
-    pub input: Port,
     pub output: [NodeOutput; 1],
 }
 
@@ -34,7 +33,6 @@ impl MakeNode<BitNotArgs> for BitNot {
         let BitNotArgs { ty, input, sym } = args;
 
         let node_id = module.add_node(BitNot {
-            input,
             output: [NodeOutput::wire(ty, sym)],
         });
 

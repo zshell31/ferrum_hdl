@@ -7,14 +7,14 @@ use crate::utils::{self, Bounds, TEither};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(signal_value))]
-pub struct SignalValueDerive {
+pub struct SignalValue {
     ident: Ident,
     generics: Generics,
     #[darling(default, multiple)]
     bound: Bounds,
 }
 
-impl SignalValueDerive {
+impl SignalValue {
     pub fn into_tokens(self) -> TokenStream {
         let ident = &self.ident;
 

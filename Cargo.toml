@@ -47,9 +47,6 @@ name = "ferrum_hdl"
 version.workspace = true
 edition.workspace = true
 
-[package.metadata.ferrum_hdl]
-synth = true
-
 [[example]]
 name = "blinking"
 crate-type = ["staticlib"]

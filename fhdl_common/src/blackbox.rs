@@ -35,6 +35,9 @@ pub enum BlackboxKind {
     Index,
     Slice,
 
+    RegEn,
+    RegEnComb,
+
     SignalAndThen,
     SignalApply2,
     SignalDff,
@@ -55,4 +58,5 @@ pub enum BlackboxTy {
     Unsigned,
     UnsignedInner,
     Signed,
+    Reg,
 }

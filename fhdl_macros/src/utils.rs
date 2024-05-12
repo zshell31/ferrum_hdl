@@ -1,20 +1,17 @@
-use std::{
-    fmt::{self, Display},
-    iter,
-    ops::Deref,
-};
+use std::iter;
 
 use darling::{
-    ast::{Data, Fields, NestedMeta},
+    ast::{Data, Fields},
     FromField, FromMeta, FromVariant,
 };
 use either::Either;
 use proc_macro2::{Span, TokenStream};
+use proc_macro_crate::{crate_name, FoundCrate};
 use quote::{quote, ToTokens};
 use syn::{
-    parse::Parser, punctuated::Punctuated, spanned::Spanned, token::Comma, Expr, ExprLit,
-    ExprParen, ExprTuple, Generics, Ident, ImplGenerics, Lit, Meta, PredicateType, Type,
-    TypeArray, TypeGenerics, TypeParam, TypePath, TypeTuple, WherePredicate,
+    punctuated::Punctuated, token::Comma, Expr, ExprLit, Generics, Ident, ImplGenerics,
+    Lit, PredicateType, Type, TypeArray, TypeGenerics, TypeParam, TypePath, TypeTuple,
+    WherePredicate,
 };
 
 #[derive(Debug)]
@@ -188,80 +185,14 @@ impl Variant {
 
 pub type AdtData = Data<Variant, Field>;
 
-pub trait MetaExt: FromMeta + Sized {
-    fn from_tuple(tuple: &ExprTuple) -> darling::Result<Self> {
-        let parser = Punctuated::<NestedMeta, Comma>::parse_terminated;
-        let items = parser
-            .parse(tuple.elems.to_token_stream().into())?
-            .into_iter()
-            .collect::<Vec<_>>();
+pub fn ferrum_hdl_crate() -> TokenStream {
+    let ferrum_hdl = crate_name("ferrum_hdl").expect("ferrum_hdl is not found");
 
-        Self::from_list(&items).map_err(|e| e.with_span(&tuple.span()))
-    }
-
-    fn from_paren(paren: &ExprParen) -> darling::Result<Self> {
-        let parser = Punctuated::<NestedMeta, Comma>::parse_terminated;
-        let items = parser
-            .parse(paren.expr.to_token_stream().into())?
-            .into_iter()
-            .collect::<Vec<_>>();
-
-        Self::from_list(&items)
-    }
-}
-
-impl<T: FromMeta + Sized> MetaExt for T {}
-
-#[derive(Debug, Clone, Copy)]
-pub struct SpannedValue<T> {
-    value: T,
-    span: Span,
-}
-
-impl<T> SpannedValue<T> {
-    pub fn new(value: T, span: Span) -> Self {
-        Self { value, span }
-    }
-
-    pub fn span(&self) -> Span {
-        self.span
-    }
-
-    pub fn into_inner(self) -> T {
-        self.value
-    }
-}
-
-impl<T: Display> Display for SpannedValue<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.value.fmt(f)
-    }
-}
-
-impl<T: Default> Default for SpannedValue<T> {
-    fn default() -> Self {
-        Self::new(Default::default(), Span::call_site())
-    }
-}
-
-impl<T> Deref for SpannedValue<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.value
-    }
-}
-
-impl<T: FromMeta> FromMeta for SpannedValue<T> {
-    fn from_meta(item: &Meta) -> darling::Result<Self> {
-        let value = T::from_meta(item).map_err(|e| e.with_span(item))?;
-
-        let span = match item {
-            Meta::Path(path) => path.span(),
-            Meta::List(list) => list.tokens.span(),
-            Meta::NameValue(nv) => nv.value.span(),
-        };
-
-        Ok(Self::new(value, span))
+    match ferrum_hdl {
+        FoundCrate::Itself => quote! { crate },
+        FoundCrate::Name(name) => {
+            let ident = Ident::new(&name, Span::call_site());
+            quote! { #ident }
+        }
     }
 }

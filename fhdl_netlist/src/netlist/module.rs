@@ -1,4 +1,5 @@
 use std::{
+    fmt::{self, Write},
     ops::{Index, IndexMut},
     rc::Rc,
 };
@@ -16,8 +17,8 @@ use indexmap::set::Slice;
 use crate::{
     const_val::ConstVal,
     node::{
-        Const, ConstArgs, Input, InputArgs, IsNode, MakeNode, ModInst, Node, NodeKind,
-        NodeOutput, Pass, PassArgs,
+        Const, ConstArgs, GlSignalKind, Input, InputArgs, IsNode, MakeNode, ModInst,
+        Node, NodeKind, NodeOutput, Pass, PassArgs,
     },
     node_ty::NodeTy,
     symbol::Symbol,
@@ -26,12 +27,34 @@ use crate::{
 
 idx_ty!(ModuleId);
 
+macro_rules! gl_signals {
+    ($($signal:ident),+) => {
+        #[derive(Debug, Default)]
+        pub struct GlobalSignals {
+            $(
+                pub $signal: Option<Port>,
+            )+
+        }
+
+        impl GlobalSignals {
+            fn is_set(&self) -> bool {
+                $(
+                    self.$signal.is_some()
+                )||+
+            }
+        }
+    };
+}
+
+gl_signals!(clk, rst);
+
 #[derive(Debug)]
 pub struct Module {
     pub name: Symbol,
     pub is_top: bool,
     pub skip: bool,
     pub inline: bool,
+    gl_signals: GlobalSignals,
     span: Option<Rc<String>>,
     graph: Graph<Node>,
     list: List<Graph<Node>>,
@@ -153,6 +176,7 @@ impl Module {
             is_top,
             skip: true,
             inline: false,
+            gl_signals: Default::default(),
             span: None,
             graph: Default::default(),
             list: Default::default(),
@@ -207,6 +231,11 @@ impl Module {
         node_id
     }
 
+    fn insert_node(&mut self, node_id: NodeId, prev_node_id: NodeId, node: Node) {
+        self.graph.insert_node(node_id, node);
+        self.list.insert(&mut self.graph, prev_node_id, node_id);
+    }
+
     pub fn insert_and_get_port<Args, N: MakeNode<Args>>(
         &mut self,
         prev_node_id: NodeId,
@@ -227,6 +256,36 @@ impl Module {
             ty,
             sym: sym.map(Symbol::intern),
         })
+    }
+
+    pub fn clk(&mut self) -> Port {
+        if self.gl_signals.clk.is_none() {
+            let clk = self.add_input(NodeTy::ClockDomain, Some("clk"));
+            self[clk.node].input_mut().unwrap().global = GlSignalKind::Clk;
+
+            self.gl_signals.clk = Some(clk);
+        }
+
+        self.gl_signals.clk.unwrap()
+    }
+
+    pub fn rst(&mut self) -> Port {
+        if self.gl_signals.rst.is_none() {
+            let rst = self.add_input(NodeTy::Bit, Some("rst"));
+            self[rst.node].input_mut().unwrap().global = GlSignalKind::Rst;
+
+            self.gl_signals.rst = Some(rst);
+        }
+
+        self.gl_signals.rst.unwrap()
+    }
+
+    pub fn gl_signals(&self) -> &GlobalSignals {
+        &self.gl_signals
+    }
+
+    pub fn has_gl_signals(&self) -> bool {
+        self.gl_signals.is_set()
     }
 
     #[inline]
@@ -615,15 +674,18 @@ impl Module {
         self.graph.reserve_nodes(source_mod.graph.node_count());
         self.graph.reserve_edges(source_mod.graph.edge_count());
 
-        for (node_id, node) in source_mod.graph.raw_nodes() {
+        let mut prev_node_id = mod_inst_id;
+        for node_id in source_mod.nodes().into_iter_(&source_mod) {
+            let node = &source_mod[node_id];
             if node.is_input() {
                 continue;
             }
 
-            let node_id = calc_node_id(*node_id);
-            let node = node.new_from(calc_node_id);
+            let node_id = calc_node_id(node_id);
+            let node = node.new_from();
 
-            self.graph.insert_node(node_id, node);
+            self.insert_node(node_id, prev_node_id, node);
+            prev_node_id = node_id;
         }
 
         for (node_id, _) in source_mod.graph.raw_nodes() {
@@ -653,15 +715,7 @@ impl Module {
             }
         }
 
-        let mut start = source_mod.list.head;
-        while !start.is_empty() && source_mod.graph[start].is_input() {
-            start = source_mod.graph[start].next();
-        }
-        start = calc_node_id(start);
-        let end = calc_node_id(source_mod.list.tail);
-        self.list
-            .insert_list(&mut self.graph, mod_inst_id, start, end);
-
+        let start = self.graph[mod_inst_id].next();
         self.remove(mod_inst_id);
 
         start.into_opt()
@@ -669,26 +723,31 @@ impl Module {
 }
 
 impl WithId<ModuleId, &'_ Module> {
-    pub(crate) fn dump(self) {
-        println!(
+    pub(crate) fn dump(self, buf: &mut impl Write) -> fmt::Result {
+        writeln!(
+            buf,
             "{} {} (is_skip {}, head {}, tail {})",
             self.id, self.name, self.skip, self.list.head, self.list.tail,
-        );
-        println!(
+        )?;
+        writeln!(
+            buf,
             "inputs: {}",
             self.inputs
                 .iter()
                 .map(|input| input.node.as_u32().to_string())
                 .intersperse(", ".to_string())
                 .collect::<String>()
-        );
-        println!(
+        )?;
+        writeln!(
+            buf,
             "outputs: {}",
             self.outputs
                 .iter()
                 .map(|input| input.to_string())
                 .intersperse(", ".to_string())
                 .collect::<String>()
-        );
+        )?;
+
+        Ok(())
     }
 }

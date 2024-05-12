@@ -63,6 +63,15 @@ impl<'n> SetNames<'n> {
             mod_inst.name = Some(self.handle_sym(mod_id, sym));
         }
 
+        if let Some(memory) = node.memory_mut() {
+            let sym = memory.name.unwrap_or_else(|| Symbol::intern("__mem"));
+            let name = self.handle_sym(mod_id, sym);
+            memory.name = Some(name);
+
+            let gen_i = Symbol::intern_args(format_args!("{}_i", name));
+            memory.gen_i = Some(self.handle_sym(mod_id, gen_i));
+        }
+
         for out in node.outputs_mut() {
             let sym = out.sym.unwrap_or_default();
             out.sym = Some(self.handle_sym(mod_id, sym));

@@ -1,13 +1,14 @@
-pub mod arena;
-pub mod attr;
-pub mod cons_;
-pub mod context;
-pub mod func;
+mod arena;
+mod attr;
+mod cons_;
+mod context;
+mod domain;
+mod func;
 pub mod item;
 pub mod item_ty;
 mod locals;
-pub mod mir;
-mod pins;
+mod mir;
+// mod pins;
 mod post_dominator;
 pub mod switch;
 mod switch_tuple;
@@ -27,7 +28,7 @@ use std::{
 use bumpalo::Bump;
 pub use context::Context;
 use fhdl_cli::CompilerArgs;
-use fhdl_common::{BlackboxKind, NonEmptyStr};
+use fhdl_common::{BlackboxKind, LangItem};
 use fhdl_data_structures::graph::Port;
 use fhdl_netlist::{
     netlist::{Module, ModuleId, NetList},
@@ -39,7 +40,7 @@ use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{
     def_id::{DefId, LOCAL_CRATE},
-    AssocItemKind, ItemKind,
+    AssocItemKind, ItemKind, QPath, TyKind,
 };
 use rustc_interface::{interface::Compiler as RustCompiler, Queries};
 use rustc_middle::{
@@ -51,9 +52,10 @@ use rustc_span::{def_id::CrateNum, FileName, Span, StableSourceFileId};
 pub use sym_ident::SymIdent;
 
 use self::{
+    attr::find_lang_item,
+    domain::Domains,
     item_ty::{ItemTy, ItemTyKind},
     mir::DefIdOrPromoted,
-    pins::PinConstraints,
     post_dominator::PostDominator,
     switch_tuple::SwitchTupleRef,
 };
@@ -103,8 +105,9 @@ fn init_compiler<'tcx>(
     arena: &'tcx Bump,
 ) -> Result<Compiler<'tcx>, Error> {
     let crates = Crates::find_crates(tcx)?;
+    let lang_items = LangItems::collect(tcx, crates.ferrum_hdl);
 
-    Ok(Compiler::new(tcx, crates, args, arena))
+    Ok(Compiler::new(tcx, crates, lang_items, args, arena))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -172,26 +175,105 @@ impl Crates {
     }
 }
 
+struct LangItems {
+    module: DefId,
+    mod_logic: DefId,
+    domain: DefId,
+    freq: DefId,
+    rst_kind: DefId,
+    rst_pol: DefId,
+}
+
+impl LangItems {
+    fn is_module(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+        find_lang_item(tcx, def_id)
+            .map(|lang_item| matches!(lang_item, LangItem::Module))
+            .unwrap_or_default()
+    }
+
+    fn is_domain(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+        find_lang_item(tcx, def_id)
+            .map(|lang_item| matches!(lang_item, LangItem::Domain))
+            .unwrap_or_default()
+    }
+
+    fn collect(tcx: TyCtxt<'_>, ferrum_hdl: CrateNum) -> Self {
+        let traits = tcx.traits(ferrum_hdl);
+
+        let module = traits
+            .iter()
+            .find(|item| Self::is_module(tcx, **item))
+            .copied()
+            .expect("Module trait expected");
+
+        let mut mod_logic = None;
+        for item in tcx.associated_items(module).in_definition_order() {
+            if let Some(LangItem::ModLogic) = find_lang_item(tcx, item.def_id) {
+                mod_logic = Some(item.def_id);
+            }
+        }
+
+        let domain = traits
+            .iter()
+            .find(|item| Self::is_domain(tcx, **item))
+            .copied()
+            .expect("ClockDomain trait expected");
+
+        let mut freq = None;
+        let mut rst_kind = None;
+        let mut rst_pol = None;
+
+        for item in tcx.associated_items(domain).in_definition_order() {
+            if let Some(lang_item) = find_lang_item(tcx, item.def_id) {
+                match lang_item {
+                    LangItem::DomFreq => {
+                        freq = Some(item.def_id);
+                    }
+                    LangItem::DomRstKind => {
+                        rst_kind = Some(item.def_id);
+                    }
+                    LangItem::DomRstPol => {
+                        rst_pol = Some(item.def_id);
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        Self {
+            module,
+            mod_logic: mod_logic.expect("Module::logic expected"),
+            domain,
+            freq: freq.expect("ClockDomain::FREQ expected"),
+            rst_kind: rst_kind.expect("ClockDomain::RST_KIND expected"),
+            rst_pol: rst_pol.expect("ClockDomain::RST_POLARITY expected"),
+        }
+    }
+}
+
 pub struct Compiler<'tcx> {
     pub tcx: TyCtxt<'tcx>,
     pub netlist: NetList,
     pub args: &'tcx CompilerArgs,
     arena: &'tcx Bump,
     crates: Crates,
+    lang_items: LangItems,
     blackbox: FxHashMap<DefId, Option<BlackboxKind>>,
     evaluated_modules: FxHashMap<MonoItem<'tcx>, ModuleId>,
     item_ty: FxHashMap<Ty<'tcx>, ItemTy<'tcx>>,
     allocated_ty: FxHashMap<ItemTyKind<'tcx>, ItemTy<'tcx>>,
     file_names: FxHashMap<StableSourceFileId, Option<PathBuf>>,
-    pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
+    // pin_constr: FxHashMap<NonEmptyStr, PinConstraints>,
     post_dominator: FxHashMap<DefId, PostDominator>,
     switch_tuples: FxHashMap<(DefId, BasicBlock), Option<SwitchTupleRef<'tcx>>>,
+    domains: Domains<'tcx>,
 }
 
 impl<'tcx> Compiler<'tcx> {
     fn new(
         tcx: TyCtxt<'tcx>,
         crates: Crates,
+        lang_items: LangItems,
         args: &'tcx CompilerArgs,
         arena: &'tcx Bump,
     ) -> Self {
@@ -201,14 +283,16 @@ impl<'tcx> Compiler<'tcx> {
             args,
             arena,
             crates,
+            lang_items,
             blackbox: Default::default(),
             evaluated_modules: Default::default(),
             item_ty: Default::default(),
             allocated_ty: Default::default(),
             file_names: Default::default(),
-            pin_constr: Default::default(),
+            // pin_constr: Default::default(),
             post_dominator: Default::default(),
             switch_tuples: Default::default(),
+            domains: Default::default(),
         }
     }
 
@@ -225,16 +309,43 @@ impl<'tcx> Compiler<'tcx> {
             match item.kind {
                 ItemKind::Fn(_, _, _) => {
                     let def_id = item_id.owner_id.to_def_id();
-                    if item.ident.as_str() == "top" {
+                    if item.ident.as_str() == "top" || self.is_top(def_id) {
                         return Ok(def_id);
-                    }
-                    if let Some(synth) = self.find_synth(def_id) {
-                        if synth.top {
-                            return Ok(def_id);
-                        }
                     }
                 }
                 ItemKind::Impl(impl_) => {
+                    if let Some(trait_id) = impl_
+                        .of_trait
+                        .as_ref()
+                        .and_then(|of_trait| of_trait.trait_def_id())
+                    {
+                        if trait_id == self.lang_items.module {
+                            if let Some(def_id) = impl_
+                                .items
+                                .iter()
+                                .find(|impl_item| {
+                                    impl_item.trait_item_def_id
+                                        == Some(self.lang_items.mod_logic)
+                                })
+                                .map(|impl_item| impl_item.id.owner_id.to_def_id())
+                            {
+                                if let TyKind::Path(QPath::Resolved(_, path)) =
+                                    &impl_.self_ty.kind
+                                {
+                                    if let Some(seg) = path.segments.last() {
+                                        if seg.ident.as_str() == "TopMut" {
+                                            return Ok(def_id);
+                                        }
+                                    }
+                                }
+
+                                if self.is_top(item_id.owner_id.to_def_id()) {
+                                    return Ok(def_id);
+                                }
+                            }
+                        }
+                    }
+
                     for impl_item in impl_.items {
                         let def_id = impl_item.id.owner_id.to_def_id();
                         if let AssocItemKind::Fn { .. } = impl_item.kind {
@@ -281,12 +392,15 @@ impl<'tcx> Compiler<'tcx> {
         let elapsed = Instant::now();
 
         let top = self.find_top_module()?;
-        let top = self.visit_fn(top.into(), GenericArgs::empty(), true)?;
+        self.visit_fn(top.into(), GenericArgs::empty(), true)?;
 
         if self.args.dump_netlist {
             self.netlist.dump(false);
         }
         self.netlist.run_visitors();
+        if self.args.dump_tr_netlist {
+            self.netlist.dump(false);
+        }
 
         self.netlist.synth_verilog_into_file(path)?;
 
@@ -295,13 +409,13 @@ impl<'tcx> Compiler<'tcx> {
             Some(&format!("in {:.2}s", elapsed.elapsed().as_secs_f32())),
         )?;
 
-        if !self.pin_constr.is_empty() {
-            let constr_path = root_dir.join("constr");
-            fs::create_dir_all(&constr_path)?;
+        // if !self.pin_constr.is_empty() {
+        //     let constr_path = root_dir.join("constr");
+        //     fs::create_dir_all(&constr_path)?;
 
-            let top = self.netlist[top].borrow();
-            self.write_pin_constraints(&top, constr_path)?;
-        }
+        //     let top = self.netlist[top].borrow();
+        //     self.write_pin_constraints(&top, constr_path)?;
+        // }
 
         Ok(())
     }

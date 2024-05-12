@@ -7,6 +7,7 @@ use smallvec::SmallVec;
 use super::{IsNode, MakeNode, NodeKind, NodeOutput};
 use crate::{
     netlist::{Module, ModuleId},
+    node::GlSignalKind,
     symbol::Symbol,
     with_id::WithId,
 };
@@ -54,10 +55,41 @@ where
             inline: false,
         });
 
-        let mut inputs = 0;
-        for input in args.inputs {
+        let mut inputs: u32 = 0;
+        let mut arg_inputs = args.inputs.into_iter();
+        loop {
+            if (inputs as usize) >= mod_inputs.len() {
+                break;
+            }
+
+            let mod_in = args.module[mod_inputs[inputs as usize].node]
+                .input()
+                .unwrap();
+
+            match mod_in.global {
+                GlSignalKind::None => {}
+                GlSignalKind::Clk => {
+                    let clk = module.clk();
+                    module.add_edge(clk, Port::new(node_id, inputs));
+                    inputs += 1;
+                    continue;
+                }
+                GlSignalKind::Rst => {
+                    let rst = module.rst();
+                    module.add_edge(rst, Port::new(node_id, inputs));
+                    inputs += 1;
+                    continue;
+                }
+            }
+
+            let input = match arg_inputs.next() {
+                Some(input) => input,
+                None => break,
+            };
+
             let ty = module[input].ty;
             let mod_in = args.module[mod_inputs[inputs as usize]];
+
             // TODO: how to handle signed types
             assert_eq!(ty.width(), mod_in.ty.width());
 
@@ -94,7 +126,7 @@ impl IsNode for ModInst {
 impl ModInst {
     #[inline]
     pub fn has_ports(&self) -> bool {
-        self.has_inputs() && self.has_outputs()
+        self.has_inputs() || self.has_outputs()
     }
 
     #[inline]

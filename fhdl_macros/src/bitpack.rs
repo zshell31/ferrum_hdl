@@ -11,7 +11,7 @@ use crate::utils::{self, AdtData, Bounds, Field, TEither};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(bitpack))]
-pub struct BitPackDerive {
+pub struct BitPack {
     ident: Ident,
     generics: Generics,
     data: AdtData,
@@ -38,7 +38,7 @@ impl Field {
     }
 }
 
-impl BitPackDerive {
+impl BitPack {
     pub fn into_tokens(self) -> Result<TokenStream, darling::Error> {
         let discr_width = self.discr_width()?;
         let impl_bit_size = self.impl_bit_size(discr_width);

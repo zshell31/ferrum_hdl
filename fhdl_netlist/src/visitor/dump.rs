@@ -1,3 +1,8 @@
+use std::{
+    env,
+    fmt::{self, Write},
+};
+
 use fhdl_data_structures::{cursor::Cursor, index::IndexType};
 
 use crate::{
@@ -16,19 +21,39 @@ impl<'n> Dump<'n> {
     }
 
     pub fn run(&mut self) {
+        let mut buf = String::new();
+
         for module in self.netlist.modules().rev() {
             let module = module.borrow();
             if self.skip && module.skip {
                 continue;
             }
-            self.visit_module(module.as_deref());
+            self.visit_module_(&mut buf, module.as_deref()).unwrap();
         }
 
-        println!("\n");
+        self.flush_buf(buf);
     }
 
     pub(super) fn visit_module(&mut self, module: WithId<ModuleId, &Module>) {
-        module.dump();
+        let mut buf = String::new();
+        self.visit_module_(&mut buf, module).unwrap();
+        self.flush_buf(buf);
+    }
+
+    fn flush_buf(&self, buf: String) {
+        if env::var("FHDL_LOG").is_ok() {
+            tracing::info!("Netlist:\n{}", buf);
+        } else {
+            println!("Netlist:\n{}", buf);
+        }
+    }
+
+    fn visit_module_(
+        &mut self,
+        buf: &mut impl Write,
+        module: WithId<ModuleId, &Module>,
+    ) -> fmt::Result {
+        module.dump(buf)?;
 
         let tab: &'static str = "        ";
 
@@ -42,9 +67,9 @@ impl<'n> Dump<'n> {
 
             let prefix = format!("{:>4}    ", node_id.as_u32());
 
-            node.dump(self.netlist, *module, &prefix, tab);
+            node.dump(buf, self.netlist, *module, &prefix, tab)?;
 
-            println!("\n{}links:", tab);
+            writeln!(buf, "\n{}links:", tab)?;
             for port in node.out_ports() {
                 let links = module
                     .outgoing(port)
@@ -53,10 +78,12 @@ impl<'n> Dump<'n> {
                     .intersperse(", ".to_string())
                     .collect::<String>();
                 if !links.is_empty() {
-                    println!("{}{} -> {}", tab, port, links);
+                    writeln!(buf, "{}{} -> {}", tab, port, links)?;
                 }
             }
-            println!();
+            writeln!(buf)?;
         }
+
+        Ok(())
     }
 }

@@ -13,12 +13,13 @@ license.workspace = true
 proc-macro = true
 
 [dependencies]
-darling = "0.20.6"
+darling = "0.20.8"
 either = { workspace = true }
 fhdl_common = { path = "../fhdl_common/" }
 fhdl_const_func = { path = "../fhdl_const_func/" }
 indexmap = { workspace = true, features = ["serde"] }
-proc-macro2 = "1.0"
+proc-macro2 = { version = "1.0", features = ["span-locations"] }
+proc-macro-crate = "3.1.0"
 quote = "1.0"
 serde = { workspace = true }
 serde_json = { workspace = true }

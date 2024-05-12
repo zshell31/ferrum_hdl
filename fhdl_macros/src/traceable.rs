@@ -9,7 +9,7 @@ use crate::utils::{self, AdtData, Bounds, TEither};
 
 #[derive(Debug, FromDeriveInput)]
 #[darling(attributes(traceable))]
-pub struct TraceableDerive {
+pub struct Traceable {
     ident: Ident,
     generics: Generics,
     data: AdtData,
@@ -17,7 +17,7 @@ pub struct TraceableDerive {
     bound: Bounds,
 }
 
-impl TraceableDerive {
+impl Traceable {
     pub fn into_tokens(self) -> TokenStream {
         let ident = &self.ident;
         let (impl_generics, ty_generics, predicates) =

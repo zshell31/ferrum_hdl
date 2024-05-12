@@ -23,6 +23,29 @@ const NODES_LIMIT_TO_INLINE: usize = 10;
 pub struct Transform<'n> {
     netlist: &'n NetList,
     cons: FxHashMap<(ModuleId, ConstVal), Port>,
+    max_inlines: Option<MaxInlines>,
+}
+
+pub struct MaxInlines {
+    max: usize,
+    current: usize,
+}
+
+impl MaxInlines {
+    fn new(max_inlines: usize) -> Self {
+        Self {
+            max: max_inlines,
+            current: 0,
+        }
+    }
+
+    fn should_inline(&self) -> bool {
+        self.current < self.max
+    }
+
+    fn inc(&mut self) {
+        self.current += 1;
+    }
 }
 
 impl<'n> Transform<'n> {
@@ -30,12 +53,26 @@ impl<'n> Transform<'n> {
         Self {
             netlist,
             cons: Default::default(),
+            max_inlines: netlist.cfg().max_inlines.map(MaxInlines::new),
         }
     }
 
     pub fn run(mut self) {
         if let Some(top) = self.netlist.top {
             self.visit_module(top);
+        }
+    }
+
+    fn should_inline(&self) -> bool {
+        self.max_inlines
+            .as_ref()
+            .map(|max_inlines| max_inlines.should_inline())
+            .unwrap_or(true)
+    }
+
+    fn inc_inlines(&mut self) {
+        if let Some(max_inlines) = &mut self.max_inlines {
+            max_inlines.inc();
         }
     }
 
@@ -53,10 +90,12 @@ impl<'n> Transform<'n> {
                 self.visit_module(mod_id);
             }
 
-            let should_be_inlined = self.transform(module.as_deref_mut(), node_id);
+            let should_inline =
+                self.transform(module.as_deref_mut(), node_id) && self.should_inline();
 
-            if should_be_inlined {
+            if should_inline {
                 let node_id = self.netlist.inline_mod(module.as_deref_mut(), node_id);
+                self.inc_inlines();
 
                 if let Some(node_id) = node_id {
                     nodes.set_next(node_id);

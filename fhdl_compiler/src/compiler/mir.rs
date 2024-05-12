@@ -1,11 +1,15 @@
-use std::{convert::identity, fmt::Debug, iter, ops::Deref};
+use std::{convert::identity, fmt::Debug, iter, ops::Deref, vec::IntoIter};
 
 use fhdl_netlist::{
     netlist::{Module, ModuleId},
     node::{Pass, PassArgs},
     symbol::Symbol,
 };
-use rustc_hir::{def::DefKind, def_id::DefId, definitions::DefPathData};
+use rustc_hir::{
+    def::DefKind,
+    def_id::DefId,
+    definitions::{DefPath, DefPathData, DisambiguatedDefPathData},
+};
 use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
@@ -13,7 +17,11 @@ use rustc_middle::{
         LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue, StatementKind,
         TerminatorKind, UnOp, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
     },
-    ty::{GenericArgsRef, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd, TyKind},
+    query::Key,
+    ty::{
+        GenericArgsRef, ImplSubject, Instance, InstanceDef, List, ParamEnv, ParamEnvAnd,
+        TyCtxt, TyKind,
+    },
 };
 use rustc_span::{def_id::LOCAL_CRATE, Span};
 use rustc_target::abi::FieldIdx;
@@ -27,7 +35,7 @@ use super::{
 };
 use crate::{
     blackbox::{bin_op::BinOp, un_op::BitNot},
-    compiler::{cons_::scalar_to_u128, item::ModuleExt, pins::Idents},
+    compiler::{cons_::scalar_to_u128, item::ModuleExt},
     error::{Error, SpanError, SpanErrorKind},
 };
 
@@ -91,11 +99,10 @@ impl<'tcx> Compiler<'tcx> {
 
             let mut module_sym = self.module_name(fn_did);
 
-            let mut synth_attrs = None;
             let (mir, inline) = match def_id_or_promoted {
                 DefIdOrPromoted::DefId(fn_did, instance_def) => {
                     let mir = self.tcx.instance_mir(instance_def);
-                    synth_attrs = self.find_synth(fn_did);
+                    let synth_attrs = self.find_synth(fn_did);
                     let inline = synth_attrs
                         .as_ref()
                         .map(|synth_attrs| synth_attrs.inline)
@@ -136,6 +143,7 @@ impl<'tcx> Compiler<'tcx> {
                 .skip(1)
                 .take(mir.arg_count);
             let inputs = self.visit_fn_inputs(inputs, &mut ctx)?;
+
             for var_debug_info in &mir.var_debug_info {
                 if let Some(arg_idx) = var_debug_info.argument_index {
                     let input = &inputs[(arg_idx - 1) as usize];
@@ -175,30 +183,6 @@ impl<'tcx> Compiler<'tcx> {
 
             self.visit_fn_output(&mut ctx);
 
-            if top_module {
-                if let Some(synth_attrs) = &synth_attrs {
-                    let output = ctx.locals.get(RETURN_PLACE);
-
-                    if !synth_attrs.constr.is_empty() {
-                        let idents = Idents::from_debug_info(mir);
-                        let inputs_and_outputs =
-                            inputs.iter().map(|input| input.nodes()).sum::<usize>()
-                                + output.nodes();
-
-                        self.add_pin_constraints(
-                            &synth_attrs.constr,
-                            &idents,
-                            inputs_and_outputs,
-                            &ctx,
-                        )?;
-                    }
-                }
-            }
-
-            // let switch = self.try_make_switch_tuple(block, &ctx)
-            // let switches = self.collect_switch_tuples(&ctx);
-            // debug!("paths: {switches:#?}");
-
             let module_id = self.netlist.add_module(ctx.module);
 
             self.evaluated_modules.insert(mono_item, module_id);
@@ -219,14 +203,79 @@ impl<'tcx> Compiler<'tcx> {
             has_sep = true;
         };
 
-        for data_path in &def_path.data {
+        struct DefPathIter<'tcx> {
+            def_path: IntoIter<DisambiguatedDefPathData>,
+            def_path_impl: Option<IntoIter<DisambiguatedDefPathData>>,
+            def_id: DefId,
+            tcx: TyCtxt<'tcx>,
+        }
+
+        impl<'tcx> DefPathIter<'tcx> {
+            fn new(path: DefPath, def_id: DefId, tcx: TyCtxt<'tcx>) -> Self {
+                Self {
+                    def_path: path.data.into_iter(),
+                    def_path_impl: None,
+                    def_id,
+                    tcx,
+                }
+            }
+        }
+
+        impl<'tcx> Iterator for DefPathIter<'tcx> {
+            type Item = DisambiguatedDefPathData;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                loop {
+                    if let Some(def_path_impl) = self.def_path_impl.as_mut() {
+                        match def_path_impl.next() {
+                            Some(data) => {
+                                return Some(data);
+                            }
+                            None => {
+                                self.def_path_impl = None;
+                            }
+                        }
+                    }
+
+                    let data = self.def_path.next()?;
+                    if let DefPathData::Impl = &data.data {
+                        let subject =
+                            self.tcx.impl_of_method(self.def_id).and_then(|parent| {
+                                let subject = self.tcx.impl_subject(parent).skip_binder();
+                                match subject {
+                                    ImplSubject::Trait(trait_ref) => {
+                                        trait_ref.self_ty().ty_def_id()
+                                    }
+                                    ImplSubject::Inherent(ty) => ty.ty_def_id(),
+                                }
+                            });
+
+                        if let Some(subject) = subject {
+                            self.def_path_impl =
+                                Some(self.tcx.def_path(subject).data.into_iter());
+                            continue;
+                        }
+                    }
+
+                    return Some(data);
+                }
+            }
+        }
+
+        let def_path = DefPathIter::new(def_path, def_id, self.tcx);
+
+        for data_path in def_path {
             let s = match &data_path.data {
                 DefPathData::TypeNs(s) | DefPathData::ValueNs(s) => Some(s.as_str()),
+                DefPathData::Impl => Some("impl"),
                 DefPathData::Closure => Some("closure"),
                 _ => None,
             };
 
             if let Some(s) = s {
+                if name.contains(s) {
+                    continue;
+                }
                 if has_sep {
                     name.push('_');
                 } else {

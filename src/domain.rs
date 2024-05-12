@@ -47,7 +47,7 @@ impl SyncKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ConstParamTy)]
 pub enum Polarity {
     ActiveHigh = 1,
-    ActiveLow = 20,
+    ActiveLow = 2,
 }
 
 impl Display for Polarity {

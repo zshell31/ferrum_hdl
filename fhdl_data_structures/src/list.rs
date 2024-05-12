@@ -107,19 +107,8 @@ impl<S: ListStorage<D>, D> List<S, D> {
         }
     }
 
-    #[inline]
     pub fn insert(&mut self, storage: &mut S, prev_idx: S::Idx, idx: S::Idx) {
-        self.insert_list(storage, prev_idx, idx, idx)
-    }
-
-    pub fn insert_list(
-        &mut self,
-        storage: &mut S,
-        prev_idx: S::Idx,
-        start: S::Idx,
-        end: S::Idx,
-    ) {
-        if start.is_empty() || end.is_empty() {
+        if idx.is_empty() {
             return;
         }
 
@@ -129,25 +118,25 @@ impl<S: ListStorage<D>, D> List<S, D> {
 
                 match prev.next().into_opt() {
                     Some(next_idx) => {
-                        storage.link(prev_idx, start);
-                        storage.link(end, next_idx);
+                        storage.link(prev_idx, idx);
+                        storage.link(idx, next_idx);
                     }
                     None => {
-                        storage.link(prev_idx, start);
-                        self.tail = end;
+                        storage.link(prev_idx, idx);
+                        self.tail = idx;
                     }
                 }
             }
             None => {
                 match self.head.into_opt() {
                     Some(head) => {
-                        storage.link(end, head);
+                        storage.link(idx, head);
                     }
                     None => {
-                        self.tail = end;
+                        self.tail = idx;
                     }
                 };
-                self.head = start;
+                self.head = idx;
             }
         }
     }

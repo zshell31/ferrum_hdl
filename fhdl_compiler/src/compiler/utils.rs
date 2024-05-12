@@ -1,3 +1,6 @@
+use rustc_hir::def_id::DefId;
+use rustc_middle::ty::{AssocItem, AssocItems, AssocKind};
+
 pub enum TreeNode<L, N> {
     Leaf(L),
     Node(N),
@@ -55,3 +58,14 @@ where
 // https://stackoverflow.com/a/61452150
 pub trait Captures<'tcx> {}
 impl<'tcx, T: ?Sized> Captures<'tcx> for T {}
+
+pub trait AssocItemsExt {
+    fn find_by_lang_item(&self, lang_item: DefId, kind: AssocKind) -> Option<&AssocItem>;
+}
+
+impl AssocItemsExt for AssocItems {
+    fn find_by_lang_item(&self, lang_item: DefId, kind: AssocKind) -> Option<&AssocItem> {
+        self.in_definition_order()
+            .find(|item| item.trait_item_def_id == Some(lang_item) && item.kind == kind)
+    }
+}

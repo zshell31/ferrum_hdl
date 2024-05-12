@@ -1,5 +1,6 @@
 use std::{
     cell::{Ref, RefCell},
+    fmt::{self, Debug},
     iter::{self, Peekable},
     rc::Rc,
 };
@@ -23,8 +24,14 @@ use super::{
 };
 use crate::error::Error;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Group<'tcx>(Rc<RefCell<SmallVec<[Item<'tcx>; 1]>>>);
+
+impl<'tcx> Debug for Group<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list().entries(self.items().iter()).finish()
+    }
+}
 
 impl<'tcx> Group<'tcx> {
     pub fn new(items: impl IntoIterator<Item = Item<'tcx>>) -> Self {
@@ -114,15 +121,27 @@ impl<'tcx> Iterator for GroupIter<'tcx> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum ItemKind<'tcx> {
+    Phantom,
     Port(Port),
     Group(Group<'tcx>),
+}
+
+impl<'tcx> Debug for ItemKind<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Phantom => f.write_str("phantom"),
+            Self::Port(port) => write!(f, "port ({port})"),
+            Self::Group(group) => Debug::fmt(group, f),
+        }
+    }
 }
 
 impl<'tcx> ItemKind<'tcx> {
     fn deep_clone(&self) -> Self {
         match self {
+            Self::Phantom => Self::Phantom,
             Self::Port(node_out_id) => Self::Port(*node_out_id),
             Self::Group(group) => Self::Group(group.deep_clone()),
         }
@@ -130,6 +149,7 @@ impl<'tcx> ItemKind<'tcx> {
 
     fn nodes(&self) -> usize {
         match self {
+            Self::Phantom => 0,
             Self::Port(_) => 1,
             Self::Group(group) => group.nodes(),
         }
@@ -227,6 +247,7 @@ impl<'tcx> Item<'tcx> {
 }
 
 pub enum ItemIter<'tcx> {
+    Phantom,
     Port(Option<Port>),
     Group(GroupIter<'tcx>),
 }
@@ -236,6 +257,7 @@ impl<'tcx> Iterator for ItemIter<'tcx> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            Self::Phantom => None,
             Self::Port(port) => port.take().map(TreeNode::Leaf),
             Self::Group(group) => group.next().map(TreeNode::Node),
         }
@@ -248,6 +270,7 @@ impl<'tcx> IntoIterator for Item<'tcx> {
 
     fn into_iter(self) -> Self::IntoIter {
         match self.kind {
+            ItemKind::Phantom => ItemIter::Phantom,
             ItemKind::Port(port) => ItemIter::Port(Some(port)),
             ItemKind::Group(group) => ItemIter::Group(group.to_iter()),
         }
@@ -324,6 +347,7 @@ impl<'m, O: Iterator<Item = Port>> CombineOutputs<'m, O> {
             ItemTyKind::Enum(_) => {
                 Item::new(item_ty, ItemKind::Port(self.outputs.next().unwrap()))
             }
+            ItemTyKind::Reg(_) => panic!("Reg cannot be output"),
         }
     }
 
@@ -384,6 +408,13 @@ pub trait ModuleExt<'tcx> {
         mk_node: &impl Fn(NodeTy, &mut Module) -> Option<Port>,
     ) -> Option<Item<'tcx>>;
 
+    fn mk_item_from_ty_(
+        &mut self,
+        ty: ItemTy<'tcx>,
+        is_state: bool,
+        mk_node: &impl Fn(NodeTy, &mut Module) -> Option<Port>,
+    ) -> Option<Item<'tcx>>;
+
     fn mk_zero_sized_val(&mut self, ty: ItemTy<'tcx>) -> Option<Item<'tcx>>;
 
     fn to_const_val(&self, item: &Item<'tcx>) -> Option<u128>;
@@ -392,6 +423,7 @@ pub trait ModuleExt<'tcx> {
 impl<'tcx> ModuleExt<'tcx> for Module {
     fn assign_names_to_item(&mut self, ident: &str, item: &Item, force: bool) {
         match &item.kind {
+            ItemKind::Phantom => {}
             ItemKind::Port(port) => {
                 let port = *port;
                 let sym = Some(Symbol::intern(ident));
@@ -453,6 +485,9 @@ impl<'tcx> ModuleExt<'tcx> for Module {
     #[allow(clippy::wrong_self_convention)]
     fn to_bitvec(&mut self, item: &Item<'tcx>) -> Item<'tcx> {
         match &item.kind {
+            ItemKind::Phantom => {
+                panic!("ItemKind::Phantom cannot be transformed to bitvec")
+            }
             ItemKind::Port(_) => item.clone(),
             ItemKind::Group(group) => {
                 if group.len() == 1 {
@@ -550,6 +585,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                     )),
                 )
             }
+            ItemTyKind::Reg(_) => panic!("Reg cannot be transformed from bitvec"),
         }
     }
 
@@ -626,7 +662,7 @@ impl<'tcx> ModuleExt<'tcx> for Module {
                     }),
                 )
             }
-            ItemKind::Port(_) => discr.clone(),
+            ItemKind::Port(_) | ItemKind::Phantom => discr.clone(),
             ItemKind::Group(group) => {
                 if group.len() == 1 {
                     let item = group.by_idx(0);
@@ -653,31 +689,57 @@ impl<'tcx> ModuleExt<'tcx> for Module {
 
     fn mk_item_from_ty(
         &mut self,
-        ty: ItemTy<'tcx>,
+        item_ty: ItemTy<'tcx>,
         mk_node: &impl Fn(NodeTy, &mut Module) -> Option<Port>,
     ) -> Option<Item<'tcx>> {
-        Some(match &ty.kind() {
+        self.mk_item_from_ty_(item_ty, item_ty.is_state(), mk_node)
+    }
+
+    fn mk_item_from_ty_(
+        &mut self,
+        item_ty: ItemTy<'tcx>,
+        is_state: bool,
+        mk_node: &impl Fn(NodeTy, &mut Module) -> Option<Port>,
+    ) -> Option<Item<'tcx>> {
+        Some(match &item_ty.kind() {
             ItemTyKind::Node(node_ty) => {
-                let node_out_id = mk_node(*node_ty, self)?;
-                Item::new(ty, ItemKind::Port(node_out_id))
+                if is_state {
+                    Item::new(item_ty, ItemKind::Phantom)
+                } else {
+                    let node_out_id = mk_node(*node_ty, self)?;
+                    Item::new(item_ty, ItemKind::Port(node_out_id))
+                }
             }
             ItemTyKind::Array(array_ty) => Item::new(
-                ty,
+                item_ty,
                 ItemKind::Group(Group::new_opt(
-                    array_ty.tys().map(|ty| self.mk_item_from_ty(ty, mk_node)),
+                    array_ty
+                        .tys()
+                        .map(|ty| self.mk_item_from_ty_(ty, is_state, mk_node)),
                 )?),
             ),
             ItemTyKind::Struct(struct_ty)
             | ItemTyKind::Closure(ClosureTy { ty: struct_ty, .. }) => Item::new(
-                ty,
+                item_ty,
                 ItemKind::Group(Group::new_opt(
-                    struct_ty.tys().map(|ty| self.mk_item_from_ty(ty, mk_node)),
+                    struct_ty
+                        .tys()
+                        .map(|ty| self.mk_item_from_ty_(ty, is_state, mk_node)),
                 )?),
             ),
             ItemTyKind::Enum(_) => {
-                let node_ty = ty.to_bitvec();
-                let node_out_id = mk_node(node_ty, self)?;
-                Item::new(ty, ItemKind::Port(node_out_id))
+                if is_state {
+                    Item::new(item_ty, ItemKind::Phantom)
+                } else {
+                    let node_ty = item_ty.to_bitvec();
+                    let node_out_id = mk_node(node_ty, self)?;
+                    Item::new(item_ty, ItemKind::Port(node_out_id))
+                }
+            }
+            ItemTyKind::Reg(ty) => {
+                let mut item = self.mk_item_from_ty_(ty.ty, is_state, mk_node)?;
+                item.ty = item_ty;
+                item
             }
         })
     }
@@ -709,7 +771,10 @@ mod tests {
     use fhdl_data_structures::index::IndexType;
 
     use super::*;
-    use crate::compiler::item_ty::WithTypeInfo;
+    use crate::compiler::{
+        domain::DomainId,
+        item_ty::{RegTy, WithTypeInfo},
+    };
 
     #[test]
     fn item_node_iter() {
@@ -760,6 +825,23 @@ mod tests {
                 Port::new(node_id, 2),
                 Port::new(node_id, 0)
             ]
+        );
+    }
+
+    #[test]
+    fn item_phantom_iter() {
+        let node_ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)));
+        let node_ty = ItemTy::new(&node_ty);
+
+        let ty = WithTypeInfo::new(ItemTyKind::Reg(RegTy {
+            dom_id: DomainId::empty(),
+            ty: node_ty,
+        }));
+        let ty = ItemTy::new(&ty);
+
+        assert_eq!(
+            Item::new(ty, ItemKind::Phantom).iter().collect::<Vec<_>>(),
+            &[]
         );
     }
 

@@ -15,26 +15,6 @@ pub enum Error {
     Span(SpanError),
     #[error("{0}")]
     Io(#[from] io::Error),
-
-    #[error("duplicate constraint name '{0}'")]
-    DuplicateConstrName(String),
-    #[error("cannot find ident '{ident}' for constraint '{constr}'")]
-    MissingIdent { constr: String, ident: String },
-    #[error("ident '{ident}' for constraint '{constr}' is neither input or output")]
-    NotInputOutputIdent { constr: String, ident: String },
-    #[error("incorrect count of pins for identifier '{ident}' for constraint '{constr}': expected {expected}, got {actual}")]
-    IncorrectPinsCount {
-        constr: String,
-        ident: String,
-        expected: usize,
-        actual: usize,
-    },
-    #[error("incorrect total count of pins for constraint '{constr}': expected {expected}, got {actual}")]
-    IncorrectTotalPinsCount {
-        constr: String,
-        expected: usize,
-        actual: usize,
-    },
 }
 
 impl From<SpanError> for Error {

@@ -8,8 +8,16 @@ use crate::netlist::NodeWithInputs;
 use crate::{netlist::Module, node_ty::NodeTy, symbol::Symbol};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GlSignalKind {
+    None,
+    Clk,
+    Rst,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Input {
     pub output: [NodeOutput; 1],
+    pub global: GlSignalKind,
 }
 
 pub struct InputArgs {
@@ -22,6 +30,7 @@ impl MakeNode<InputArgs> for Input {
         let InputArgs { ty, sym } = args;
         module.add_node(Input {
             output: [NodeOutput::wire(ty, sym)],
+            global: GlSignalKind::None,
         })
     }
 }
@@ -34,6 +43,7 @@ impl NodeWithInputs {
         Self::new(
             Input {
                 output: [NodeOutput::wire(ty, sym.map(Symbol::intern)).set_skip(skip)],
+                global: GlSignalKind::None,
             },
             iter::empty(),
         )

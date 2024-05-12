@@ -5,6 +5,8 @@
 #![feature(generic_arg_infer)]
 #![feature(cell_update)]
 #![feature(structural_match)]
+#![feature(new_uninit)]
+#![feature(get_mut_unchecked)]
 #![feature(register_tool)]
 #![register_tool(fhdl_tool)]
 
@@ -18,6 +20,8 @@ pub mod const_helpers;
 pub mod domain;
 pub mod eval;
 pub mod index;
+pub mod memory;
+pub mod new_hdl;
 pub mod signal;
 pub mod signed;
 pub mod trace;

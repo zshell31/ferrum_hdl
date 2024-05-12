@@ -3,6 +3,7 @@ pub mod bin_op;
 pub mod bitpack;
 pub mod bitvec;
 pub mod cast;
+pub mod reg;
 pub mod signal;
 pub mod un_op;
 
@@ -57,7 +58,7 @@ macro_rules! eval_expr {
 }
 
 macro_rules! args {
-    ($args:ident as $( $arg:ident ),+) => {
+    ($args:ident as $( $arg:pat ),+) => {
         let [$($arg,)+ ..] = $args else { panic!("not enough arguments"); };
     };
 }
@@ -114,6 +115,9 @@ eval_expr!(
 
     Index => bitvec::Slice { only_one: true },
     Slice => bitvec::Slice { only_one: false },
+
+    RegEn => reg::RegEn { comb: false },
+    RegEnComb => reg::RegEn { comb: true },
 
     SignalAndThen => signal::AndThen,
     SignalApply2 => signal::Apply2,

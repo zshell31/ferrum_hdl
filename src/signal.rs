@@ -35,6 +35,8 @@ use crate::{
 
 pub trait SignalValue: Clone + 'static {}
 
+impl SignalValue for () {}
+
 impl<T: SignalValue> SignalValue for Option<T> {}
 
 impl<D: ClockDomain, T: SignalValue> Eval<D> for T {

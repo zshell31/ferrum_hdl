@@ -1,12 +1,12 @@
 use ferrum_hdl::domain::{Polarity, SyncKind};
 use fhdl_netlist::node::{DFFArgs, TyOrData, DFF};
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
 use crate::{
     compiler::{
         item::{Group, Item, ItemKind, ModuleExt},
-        item_ty::ItemTy,
         Compiler, Context, SymIdent,
     },
     error::{Error, SpanError, SpanErrorKind},
@@ -21,16 +21,18 @@ impl<'tcx> EvalExpr<'tcx> for SignalDff {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as clk, rst, en, init, comb, rst_kind, rst_pol);
 
+        let output_ty = compiler.resolve_fn_out_ty(output_ty, span)?;
+
         let clk = clk.port();
-        let rst = ctx.module.to_bitvec(rst).port();
-        let en = ctx.module.to_bitvec(en).port();
-        let init = ctx.module.to_bitvec(init).port();
+        let rst = ctx.module.to_bitvec(rst, span)?.port();
+        let en = ctx.module.to_bitvec(en, span)?.port();
+        let init = ctx.module.to_bitvec(init, span)?.port();
 
         let (dff_ty, comb_ty) = if self.comb {
             let struct_ty = output_ty.struct_ty();
@@ -61,13 +63,13 @@ impl<'tcx> EvalExpr<'tcx> for SignalDff {
             data: TyOrData::Ty(dff_ty.to_bitvec()),
             sym: SymIdent::Reg.into(),
         });
-        let dff_out = ctx.module.from_bitvec(dff, dff_ty);
+        let dff_out = ctx.module.from_bitvec(dff, dff_ty, span)?;
 
         let comb = compiler.instantiate_closure(comb, &[dff_out.clone()], ctx, span)?;
         assert_eq!(comb.ty, comb_ty);
         ctx.module.assign_names_to_item("comb", &comb, false);
 
-        let comb_out = ctx.module.to_bitvec(&comb).port();
+        let comb_out = ctx.module.to_bitvec(&comb, span)?.port();
         DFF::set_data(&mut ctx.module, dff.node, comb_out);
 
         Ok(if self.comb {
@@ -85,7 +87,7 @@ impl<'tcx> EvalExpr<'tcx> for Map {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
@@ -102,7 +104,7 @@ impl<'tcx> EvalExpr<'tcx> for AndThen {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
@@ -119,7 +121,7 @@ impl<'tcx> EvalExpr<'tcx> for Apply2 {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {

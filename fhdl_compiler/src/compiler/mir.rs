@@ -14,8 +14,9 @@ use rustc_index::IndexVec;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BorrowKind, Const, ConstOperand, ConstValue, Local,
-        LocalDecl, Operand, Place, PlaceElem, Promoted, Rvalue, StatementKind,
-        TerminatorKind, UnOp, VarDebugInfoContents, RETURN_PLACE, START_BLOCK,
+        LocalDecl, MutBorrowKind, Operand, Place, PlaceElem, Promoted, Rvalue,
+        StatementKind, TerminatorKind, UnOp, VarDebugInfoContents, RETURN_PLACE,
+        START_BLOCK,
     },
     query::Key,
     ty::{
@@ -119,10 +120,6 @@ impl<'tcx> Compiler<'tcx> {
                 }
             };
 
-            if mir.basic_blocks.is_cfg_cyclic() {
-                return Err(SpanError::new(SpanErrorKind::UnsupportedLoops, span).into());
-            }
-
             if self.args.dump_mir {
                 debug!("mir: {mir:#?}");
             }
@@ -165,6 +162,8 @@ impl<'tcx> Compiler<'tcx> {
 
             self.visit_blocks(None, None, &mut ctx)?;
 
+            self.visit_fn_output(&mut ctx);
+
             for var_debug_info in &mir.var_debug_info {
                 let name = var_debug_info.name.as_str();
                 let span = var_debug_info.source_info.span;
@@ -180,8 +179,6 @@ impl<'tcx> Compiler<'tcx> {
                     }
                 }
             }
-
-            self.visit_fn_output(&mut ctx);
 
             let module_id = self.netlist.add_module(ctx.module);
 
@@ -305,39 +302,34 @@ impl<'tcx> Compiler<'tcx> {
                     local_decl.source_info.span,
                 )?;
 
-                Ok(self.make_input(local, item_ty, ctx))
+                self.make_input(local, item_ty, ctx)
             })
             .collect()
     }
 
     pub fn visit_fn_output(&self, ctx: &mut Context<'tcx>) {
         let module = &mut ctx.module;
-        let output = ctx.locals.get(RETURN_PLACE);
 
-        // TODO: optimize
-        let outputs = output
-            .iter()
-            .map(|port| {
-                let node = module.node(port.node);
-                let port = if node.is_input() || module.is_mod_output(port) {
-                    let sym = module[port].sym;
-                    module.add_and_get_port::<_, Pass>(PassArgs {
-                        input: port,
+        let output = ctx.locals.get_mut(RETURN_PLACE);
+        unsafe {
+            for port in output.ports_mut() {
+                let node = &module[port.node];
+                if node.is_input() || module.is_mod_output(*port) {
+                    let sym = module[*port].sym;
+                    let new_port = module.add_and_get_port::<_, Pass>(PassArgs {
+                        input: *port,
                         sym,
                         ty: None,
-                    })
-                } else {
-                    port
-                };
-                module.add_mod_output(port);
+                    });
 
-                port
-            })
-            .collect::<SmallVec<[_; 1]>>();
+                    *port = new_port;
+                }
 
-        let output = module.combine(outputs.into_iter(), output.ty);
-        ctx.locals.place(RETURN_PLACE, output.clone());
+                module.add_mod_output(*port);
+            }
+        }
 
+        let output = ctx.locals.get(RETURN_PLACE);
         ctx.module.assign_names_to_item("out", &output, false);
     }
 
@@ -381,10 +373,24 @@ impl<'tcx> Compiler<'tcx> {
 
                     let item: Option<Item> = match rvalue {
                         Rvalue::Ref(_, BorrowKind::Shared, place)
-                        | Rvalue::Discriminant(place)
                         | Rvalue::CopyForDeref(place) => {
                             Some(self.visit_rhs_place(place, ctx, span)?)
                         }
+                        Rvalue::Discriminant(place) => {
+                            let item = ctx.locals.get(place.local);
+                            if item.is_option() {
+                                Some(item)
+                            } else {
+                                Some(self.visit_rhs_place(place, ctx, span)?)
+                            }
+                        }
+                        Rvalue::Ref(
+                            _,
+                            BorrowKind::Mut {
+                                kind: MutBorrowKind::Default,
+                            },
+                            place,
+                        ) => Some(self.visit_rhs_place(place, ctx, span)?),
                         Rvalue::Use(operand) => {
                             Some(self.visit_operand(operand, ctx, span)?)
                         }
@@ -479,7 +485,8 @@ impl<'tcx> Compiler<'tcx> {
                                             data_part,
                                             ty,
                                             variant_idx,
-                                        ))
+                                            span,
+                                        )?)
                                     }
 
                                     _ => None,
@@ -504,7 +511,7 @@ impl<'tcx> Compiler<'tcx> {
                         SpanError::new(SpanErrorKind::NotSynthExpr, span)
                     })?;
 
-                    self.assign(assign.0, item, ctx)?;
+                    self.assign(assign.0, item, ctx, span)?;
                 }
                 _ => {
                     error!("statement: {statement:#?}");
@@ -563,7 +570,7 @@ impl<'tcx> Compiler<'tcx> {
 
                 match item {
                     Some(item) => {
-                        self.assign(*destination, item, ctx)?;
+                        self.assign(*destination, item, ctx, span)?;
                     }
                     None => {
                         error!(
@@ -587,14 +594,23 @@ impl<'tcx> Compiler<'tcx> {
                     return Ok(Some(targets.target_for_value(0)));
                 }
 
-                if let Some(switch_tuple) = self.is_switch_tuple(block, ctx, span)? {
+                let discr = self.visit_operand(discr, ctx, span)?;
+                if let Some(cons) = discr.const_opt() {
+                    Some(targets.target_for_value(cons.val()))
+                } else if let Some(opt) = discr.opt_opt() {
+                    Some(match opt {
+                        Some(_) => targets.target_for_value(1),
+                        None => targets.target_for_value(0),
+                    })
+                } else if let Some(switch_tuple) =
+                    self.is_switch_tuple(block, ctx, span)?
+                {
                     debug!("switch_tuple: {switch_tuple:#?}");
                     let discr_tuple = switch_tuple.discr_tuple();
                     let discr_tuple = self.visit_rhs_place(&discr_tuple, ctx, span)?;
 
                     self.visit_switch(block, &discr_tuple, &*switch_tuple, ctx, span)?
                 } else {
-                    let discr = self.visit_operand(discr, ctx, span)?;
                     self.visit_switch(block, &discr, targets, ctx, span)?
                 }
             }
@@ -615,9 +631,9 @@ impl<'tcx> Compiler<'tcx> {
         place: Place<'tcx>,
         rhs: Item<'tcx>,
         ctx: &mut Context<'tcx>,
+        span: Span,
     ) -> Result<(), Error> {
         let local = place.local;
-        let span = ctx.mir.local_decls[local].source_info.span;
 
         if !ctx.locals.is_root() && !ctx.locals.has_local(local) {
             let rhs = if place.projection.is_empty() {
@@ -633,7 +649,7 @@ impl<'tcx> Compiler<'tcx> {
             ctx.locals.place(local, rhs.clone());
         } else {
             let mut lhs = ctx.locals.get(local);
-            self.visit_lhs_place(&place, &mut lhs, rhs, span)?;
+            self.visit_lhs_place(&place, &mut lhs, rhs, ctx, span)?;
         }
 
         Ok(())
@@ -731,7 +747,9 @@ impl<'tcx> Compiler<'tcx> {
                             }
 
                             if let Ok(ty) = self.resolve_ty(ty, ctx.generic_args, span) {
-                                if let Some(item) = ctx.module.mk_zero_sized_val(ty) {
+                                if let Some(item) =
+                                    ctx.module.mk_zero_sized_val(ty, span)?
+                                {
                                     return Ok(item);
                                 }
                             }
@@ -758,9 +776,11 @@ impl<'tcx> Compiler<'tcx> {
                                 iter::empty(),
                             );
 
-                            return Ok(ctx
-                                .module
-                                .combine_from_node(mod_inst_id, output_ty));
+                            return ctx.module.combine_from_node(
+                                mod_inst_id,
+                                output_ty,
+                                span,
+                            );
                         }
 
                         if let Some(item) =
@@ -782,15 +802,26 @@ impl<'tcx> Compiler<'tcx> {
         place: &Place<'tcx>,
         mut lhs: &mut Item<'tcx>,
         rhs: Item<'tcx>,
+        ctx: &Context<'tcx>,
         span: Span,
     ) -> Result<(), Error> {
         for place_elem in place.projection {
-            lhs = match place_elem {
-                PlaceElem::Field(idx, _) => lhs.by_field_mut(idx),
-                _ => {
-                    return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
+            lhs = (match place_elem {
+                PlaceElem::Field(idx, _) => Some(unsafe { lhs.by_field_mut(idx) }),
+                PlaceElem::Index(local) => {
+                    let idx = ctx.locals.get(local);
+
+                    idx.const_opt().map(|cons| {
+                        let idx = cons.val() as usize;
+                        unsafe { lhs.by_idx_mut(idx) }
+                    })
                 }
-            }
+                _ => None,
+            })
+            .ok_or_else(|| {
+                error!("lhs place: {place:?} ({place_elem:?})");
+                SpanError::new(SpanErrorKind::NotSynthExpr, span)
+            })?;
         }
 
         *lhs = rhs;
@@ -810,7 +841,26 @@ impl<'tcx> Compiler<'tcx> {
             if item.is_unsigned() {
                 return Ok(item);
             }
-            item = match place_elem {
+
+            item = (match place_elem {
+                PlaceElem::Deref => Some(item),
+                PlaceElem::Subtype(_) => Some(item),
+                PlaceElem::Field(idx, _) => {
+                    if let Some(opt) = item.opt_opt() {
+                        Some(opt.map(|item| item.deref().clone()).ok_or_else(|| {
+                            SpanError::new(SpanErrorKind::NotSynthExpr, span)
+                        })?)
+                    } else {
+                        Some(item.by_field(idx))
+                    }
+                }
+                PlaceElem::Index(local) => {
+                    let idx = ctx.locals.get(local);
+                    idx.const_opt().map(|cons| {
+                        let idx = cons.val() as usize;
+                        item.by_idx(idx)
+                    })
+                }
                 PlaceElem::ConstantIndex {
                     offset, from_end, ..
                 } => {
@@ -818,26 +868,28 @@ impl<'tcx> Compiler<'tcx> {
                     let count = array_ty.count() as u64;
                     let offset = if from_end { count - offset } else { offset };
 
-                    item.by_idx(offset as usize)
+                    Some(item.by_idx(offset as usize))
                 }
-                PlaceElem::Deref => item,
-                PlaceElem::Subtype(_) => item,
-                PlaceElem::Field(idx, _) => item.by_field(idx),
-                PlaceElem::Downcast(_, variant_idx) => {
-                    let enum_ty = item.ty.enum_ty();
-                    let variant = ctx.module.to_bitvec(&item);
+                PlaceElem::Downcast(_, variant_idx) => match item.ty.kind() {
+                    ItemTyKind::Enum(enum_ty) => {
+                        let variant = ctx.module.to_bitvec(&item, span)?;
 
-                    ctx.module.enum_variant_from_bitvec(
-                        variant.port(),
-                        enum_ty,
-                        variant_idx,
-                    )
-                }
-                _ => {
-                    error!("place elem: {place_elem:?} (local: {:?})", place.local);
-                    return Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into());
-                }
-            }
+                        Some(ctx.module.enum_variant_from_bitvec(
+                            variant.port(),
+                            *enum_ty,
+                            variant_idx,
+                            span,
+                        )?)
+                    }
+                    ItemTyKind::Option(_) => Some(item),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .ok_or_else(|| {
+                error!("rhs place: {place:?} ({place_elem:?})");
+                SpanError::new(SpanErrorKind::NotSynthExpr, span)
+            })?;
         }
 
         Ok(item)
@@ -878,10 +930,10 @@ impl<'tcx> Compiler<'tcx> {
             }
             let mod_inst_id =
                 self.instantiate_module(&mut ctx.module, module_id, inputs.iter());
-            let span = self.span_to_string(span, ctx.fn_did);
-            ctx.module.add_span(mod_inst_id, span);
+            let span_str = self.span_to_string(span, ctx.fn_did);
+            ctx.module.add_span(mod_inst_id, span_str);
 
-            Ok(ctx.module.combine_from_node(mod_inst_id, output_ty))
+            ctx.module.combine_from_node(mod_inst_id, output_ty, span)
         } else {
             let blackbox = self
                 .find_blackbox(instance_did, span)
@@ -897,7 +949,7 @@ impl<'tcx> Compiler<'tcx> {
             // But for resolving output ty instance_generics are used as output ty related to
             // callee function scope.
             let output_ty = self.fn_output(instance_did, instance.args);
-            let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
+            // let output_ty = self.resolve_ty(output_ty, List::empty(), span)?;
 
             ctx.fn_did = instance_did;
             ctx.generic_args = instance.args;
@@ -979,7 +1031,7 @@ impl<'tcx> Compiler<'tcx> {
 
         let mut outputs = CombineOutputs::from_node(&mut ctx.module, mod_inst_id);
 
-        Ok(outputs.next_output(output_ty))
+        outputs.next_output(output_ty, span)
     }
 }
 

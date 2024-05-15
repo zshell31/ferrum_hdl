@@ -17,7 +17,6 @@ use rustc_middle::{
     ty::{ClosureArgs, FnSig, GenericArgsRef, Ty},
 };
 use rustc_span::{Span, Symbol as RustSymbol};
-use tracing::debug;
 
 use super::{
     item::{Item, ModuleExt},
@@ -199,25 +198,30 @@ impl<'tcx> Compiler<'tcx> {
         local: Local,
         ty: ItemTy<'tcx>,
         ctx: &mut Context<'tcx>,
-    ) -> Item<'tcx> {
+    ) -> Result<Item<'tcx>, Error> {
+        let span = ctx.mir.local_decls[local].source_info.span;
         let item = ctx
             .module
-            .mk_item_from_ty(ty, &|node_ty, module| {
-                Some(module.add_and_get_port::<_, Input>(InputArgs {
-                    ty: node_ty,
-                    sym: None,
-                }))
-            })
+            .mk_item_from_ty(
+                ty,
+                &|node_ty, module| {
+                    Some(module.add_and_get_port::<_, Input>(InputArgs {
+                        ty: node_ty,
+                        sym: None,
+                    }))
+                },
+                span,
+            )?
             .unwrap();
 
         ctx.locals.place(local, item.clone());
 
-        item
+        Ok(item)
     }
 
     pub fn is_std_call(&self, fn_did: DefId) -> bool {
         if self.crates.is_std(fn_did) {
-            debug!("is_std_call: fn_did = {fn_did:?}");
+            tracing::debug!("is_std_call: fn_did = {fn_did:?}");
             let def_path = &self.tcx.def_path(fn_did);
 
             return STD_FUNCTIONS.find(
@@ -242,7 +246,7 @@ impl<'tcx> Compiler<'tcx> {
         I: IntoIterator<Item = &'a Item<'tcx>> + 'a,
         I::IntoIter: DoubleEndedIterator,
     {
-        let inputs = inputs.into_iter().flat_map(|input| input.iter());
+        let inputs = inputs.into_iter().flat_map(|input| input.ports());
 
         let instant_mod = self
             .netlist
@@ -288,6 +292,36 @@ impl<'tcx> Compiler<'tcx> {
 
             if def_path_eq(&def_path, &["clone", "Clone", "clone"]) {
                 return Some(BlackboxKind::StdClone);
+            }
+
+            if def_path_eq(&def_path, &[
+                "iter",
+                "traits",
+                "collect",
+                "IntoIterator",
+                "into_iter",
+            ]) {
+                return Some(BlackboxKind::StdIntoIter);
+            }
+
+            if def_path_eq(&def_path, &["array", "iter", "impl", "into_iter"]) {
+                return Some(BlackboxKind::StdIntoIter);
+            }
+
+            if def_path_eq(&def_path, &[
+                "iter",
+                "traits",
+                "iterator",
+                "Iterator",
+                "enumerate",
+            ]) {
+                return Some(BlackboxKind::StdIterEnum);
+            }
+
+            if def_path_eq(&def_path, &[
+                "iter", "traits", "iterator", "Iterator", "next",
+            ]) {
+                return Some(BlackboxKind::StdIterNext);
             }
         }
 

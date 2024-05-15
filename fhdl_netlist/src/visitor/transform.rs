@@ -12,8 +12,8 @@ use crate::{
     const_val::ConstVal,
     netlist::{Module, ModuleId, NetList},
     node::{
-        BinOp, BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, IsNode, MultiConst,
-        NodeKind, SwitchInputs, TyOrData, DFF,
+        BinOpInputs, Const, ConstArgs, DFFArgs, DFFInputs, IsNode, MultiConst, NodeKind,
+        SwitchInputs, TyOrData, DFF,
     },
     with_id::WithId,
 };
@@ -199,28 +199,7 @@ impl<'n> Transform<'n> {
                 if let (Some(left), Some(right)) =
                     (module.to_const(lhs), module.to_const(rhs))
                 {
-                    let const_val = match bin_op.bin_op {
-                        BinOp::Add => left + right,
-                        BinOp::Sub => left - right,
-                        BinOp::Mul => left * right,
-                        BinOp::Div => left / right,
-                        BinOp::BitAnd => left & right,
-                        BinOp::Rem => left % right,
-                        BinOp::BitOr => left | right,
-                        BinOp::BitXor => left ^ right,
-                        BinOp::And => left & right,
-                        BinOp::Or => left & right,
-                        BinOp::Sll => left << right,
-                        BinOp::Slr => left >> right,
-                        BinOp::Sra => left.sra(right),
-                        BinOp::Eq => (left == right).into(),
-                        BinOp::Ne => (left != right).into(),
-                        BinOp::Ge => (left >= right).into(),
-                        BinOp::Gt => (left > right).into(),
-                        BinOp::Le => (left <= right).into(),
-                        BinOp::Lt => (left < right).into(),
-                    };
-
+                    let const_val = left.eval_bin_op(right, bin_op.bin_op);
                     let output = bin_op.output[0];
 
                     self.replace_with_const(node_id, module, ConstArgs {

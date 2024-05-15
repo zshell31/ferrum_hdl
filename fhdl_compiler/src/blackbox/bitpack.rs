@@ -1,10 +1,10 @@
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
 use crate::{
     compiler::{
         item::{Item, ModuleExt},
-        item_ty::ItemTy,
         Compiler, Context,
     },
     error::Error,
@@ -17,13 +17,13 @@ impl<'tcx> EvalExpr<'tcx> for Pack {
         &self,
         _: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
-        _: Span,
+        span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as rec);
 
-        Ok(ctx.module.to_bitvec(rec))
+        ctx.module.to_bitvec(rec, span)
     }
 }
 
@@ -32,14 +32,15 @@ pub struct Unpack;
 impl<'tcx> EvalExpr<'tcx> for Unpack {
     fn eval(
         &self,
-        _: &mut Compiler<'tcx>,
+        compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
-        _: Span,
+        span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as rec);
 
-        Ok(ctx.module.from_bitvec(rec, output_ty))
+        let output_ty = compiler.resolve_fn_out_ty(output_ty, span)?;
+        ctx.module.from_bitvec(rec, output_ty, span)
     }
 }

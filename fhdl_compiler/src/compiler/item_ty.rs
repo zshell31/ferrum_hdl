@@ -82,7 +82,7 @@ pub struct ArrayTy<'tcx> {
 impl<'tcx> Debug for ArrayTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_list()
-            .entries(iter::once(format!("{:?}; {}", self.ty, self.count)))
+            .entries(iter::repeat(self.ty).take(self.count as usize))
             .finish()
     }
 }
@@ -117,8 +117,8 @@ impl<'tcx> ArrayTy<'tcx> {
         self.ty.nodes() * (self.count as usize)
     }
 
-    fn is_state(&self) -> bool {
-        self.ty.is_state()
+    fn is_synth(&self) -> bool {
+        self.ty.is_synth()
     }
 }
 
@@ -140,7 +140,7 @@ impl<'tcx> Debug for StructTy<'tcx> {
 pub type StructTyIter<'tcx> = impl Iterator<Item = ItemTy<'tcx>>;
 
 impl<'tcx> StructTy<'tcx> {
-    fn new(tys: &'tcx [Named<ItemTy<'tcx>>]) -> Self {
+    pub fn new(tys: &'tcx [Named<ItemTy<'tcx>>]) -> Self {
         Self { tys }
     }
 
@@ -173,8 +173,8 @@ impl<'tcx> StructTy<'tcx> {
         self.tys.iter().map(|ty| ty.inner.nodes()).sum()
     }
 
-    pub fn is_state(&self) -> bool {
-        self.tys.iter().any(|ty| ty.is_state())
+    pub fn is_synth(&self) -> bool {
+        self.tys.iter().all(|ty| ty.is_synth())
     }
 }
 
@@ -319,8 +319,8 @@ impl<'tcx> ClosureTy<'tcx> {
         self.ty.nodes()
     }
 
-    pub fn is_state(&self) -> bool {
-        self.ty.is_state()
+    pub fn is_synth(&self) -> bool {
+        self.ty.is_synth()
     }
 }
 
@@ -342,7 +342,28 @@ impl<'tcx> RegTy<'tcx> {
     }
 
     pub fn nodes(&self) -> usize {
-        1
+        self.ty.nodes()
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OptionTy<'tcx> {
+    pub ty: ItemTy<'tcx>,
+}
+
+impl<'tcx> Debug for OptionTy<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "option {:?}", self.ty)
+    }
+}
+
+impl<'tcx> OptionTy<'tcx> {
+    pub fn width(&self) -> u128 {
+        self.ty.width()
+    }
+
+    pub fn nodes(&self) -> usize {
+        self.ty.nodes()
     }
 }
 
@@ -354,6 +375,8 @@ pub enum ItemTyKind<'tcx> {
     Closure(ClosureTy<'tcx>),
     Enum(EnumTy<'tcx>),
     Reg(RegTy<'tcx>),
+    Option(OptionTy<'tcx>),
+    LoopGen,
 }
 
 impl<'tcx> Debug for ItemTyKind<'tcx> {
@@ -365,6 +388,8 @@ impl<'tcx> Debug for ItemTyKind<'tcx> {
             Self::Closure(ty) => Debug::fmt(ty, f),
             Self::Enum(ty) => Debug::fmt(ty, f),
             Self::Reg(ty) => Debug::fmt(ty, f),
+            Self::Option(ty) => Debug::fmt(ty, f),
+            Self::LoopGen => f.write_str("LoopGen"),
         }
     }
 }
@@ -374,6 +399,13 @@ impl<'tcx> ItemTyKind<'tcx> {
         match self {
             Self::Node(node_ty) => *node_ty,
             _ => panic!("expected node ty"),
+        }
+    }
+
+    pub fn node_ty_opt(&self) -> Option<NodeTy> {
+        match self {
+            Self::Node(node_ty) => Some(*node_ty),
+            _ => None,
         }
     }
 
@@ -430,6 +462,8 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Closure(ty) => ty.ty.width(),
             Self::Enum(ty) => ty.width(),
             Self::Reg(ty) => ty.width(),
+            Self::Option(ty) => ty.width(),
+            Self::LoopGen => 0,
         }
     }
 
@@ -441,17 +475,20 @@ impl<'tcx> ItemTyKind<'tcx> {
             Self::Closure(ty) => ty.nodes(),
             Self::Enum(ty) => ty.nodes(),
             Self::Reg(ty) => ty.nodes(),
+            Self::Option(ty) => ty.nodes(),
+            Self::LoopGen => 0,
         }
     }
 
-    pub fn is_state(&self) -> bool {
+    pub fn is_synth(&self) -> bool {
         match self {
             Self::Node(_) => false,
-            Self::Array(ty) => ty.is_state(),
-            Self::Struct(ty) => ty.is_state(),
-            Self::Closure(ty) => ty.is_state(),
+            Self::Array(ty) => ty.is_synth(),
+            Self::Struct(ty) => ty.is_synth(),
+            Self::Closure(ty) => ty.is_synth(),
             Self::Enum(_) => false,
             Self::Reg(_) => true,
+            _ => false,
         }
     }
 }
@@ -489,7 +526,7 @@ pub struct WithTypeInfo<T> {
     internee: T,
     width: u128,
     nodes: usize,
-    is_state: bool,
+    is_synth: bool,
 }
 
 impl<T> Deref for WithTypeInfo<T> {
@@ -504,12 +541,12 @@ impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
     pub fn new(internee: ItemTyKind<'tcx>) -> Self {
         let width = internee.width();
         let nodes = internee.nodes();
-        let is_state = internee.is_state();
+        let is_state = internee.is_synth();
         Self {
             internee,
             width,
             nodes,
-            is_state,
+            is_synth: is_state,
         }
     }
 }
@@ -553,8 +590,8 @@ impl<'tcx> ItemTy<'tcx> {
         }
     }
 
-    pub fn is_state(&self) -> bool {
-        self.0.is_state
+    pub fn is_synth(&self) -> bool {
+        self.0.is_synth
     }
 
     pub fn nodes(&self) -> usize {
@@ -567,6 +604,10 @@ impl<'tcx> ItemTy<'tcx> {
 
     pub fn node_ty(&self) -> NodeTy {
         self.0.node_ty()
+    }
+
+    pub fn node_ty_opt(&self) -> Option<NodeTy> {
+        self.0.node_ty_opt()
     }
 
     pub fn array_ty(&self) -> ArrayTy<'tcx> {
@@ -612,6 +653,7 @@ impl<'tcx> ItemTy<'tcx> {
 }
 
 pub enum ItemTyIter<'tcx> {
+    Empty,
     Node(Option<NodeTy>),
     Array(ArrayTyIter<'tcx>),
     Struct(StructTyIter<'tcx>),
@@ -622,6 +664,7 @@ impl<'tcx> Iterator for ItemTyIter<'tcx> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self {
+            Self::Empty => None,
             Self::Node(node_ty) => node_ty.take().map(TreeNode::Leaf),
             Self::Array(array_ty) => array_ty.next().map(TreeNode::Node),
             Self::Struct(struct_ty) => struct_ty.next().map(TreeNode::Node),
@@ -643,6 +686,8 @@ impl<'tcx> IntoIterator for ItemTy<'tcx> {
                 ItemTyIter::Node(Some(NodeTy::BitVec(enum_ty.width())))
             }
             ItemTyKind::Reg(ty) => ty.ty.into_iter(),
+            ItemTyKind::Option(ty) => ty.ty.into_iter(),
+            ItemTyKind::LoopGen => ItemTyIter::Empty,
         }
     }
 }
@@ -697,6 +742,30 @@ impl<'tcx> Compiler<'tcx> {
         }
 
         self.allocated_ty.get(&ty).copied().unwrap()
+    }
+
+    pub fn opt_ty(&mut self, item_ty: ItemTy<'tcx>) -> ItemTy<'tcx> {
+        self.alloc_ty(ItemTyKind::Option(OptionTy { ty: item_ty }))
+    }
+
+    pub fn loop_gen_ty(&mut self) -> ItemTy<'tcx> {
+        self.alloc_ty(ItemTyKind::LoopGen)
+    }
+
+    pub fn unsigned_ty(&mut self, width: u128) -> ItemTy<'tcx> {
+        self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(width)))
+    }
+
+    pub fn usize_ty(&mut self) -> ItemTy<'tcx> {
+        self.unsigned_ty(usize::BITS as u128)
+    }
+
+    pub fn resolve_fn_out_ty(
+        &mut self,
+        ty: Ty<'tcx>,
+        span: Span,
+    ) -> Result<ItemTy<'tcx>, Error> {
+        self.resolve_ty(ty, List::empty(), span)
     }
 
     pub fn resolve_ty(
@@ -986,6 +1055,18 @@ impl<'tcx> Compiler<'tcx> {
             })?;
 
         Ok(StructTy::new(tys))
+    }
+
+    pub fn alloc_tuple_ty(
+        &mut self,
+        tys: impl Iterator<Item = ItemTy<'tcx>>,
+    ) -> ItemTy<'tcx> {
+        let tys = self.alloc_from_iter(
+            tys.enumerate()
+                .map(|(ind, item_ty)| Named::new(item_ty, Symbol::new_from_ind(ind))),
+        );
+
+        self.alloc_ty(StructTy::new(tys))
     }
 
     fn resolve_struct_ty(

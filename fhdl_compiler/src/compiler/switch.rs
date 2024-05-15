@@ -84,7 +84,7 @@ impl<'tcx> Compiler<'tcx> {
             ctx.locals.collect_branch_locals()?;
 
             if !ctx.locals.branch_locals().is_empty() {
-                let discr = ctx.module.get_discr(discr);
+                let discr = ctx.module.get_discr(discr, span)?;
 
                 let output_ty = Ty::new_tup_from_iter(
                     self.tcx,
@@ -98,7 +98,7 @@ impl<'tcx> Compiler<'tcx> {
                 let default = ctx.locals.otherwise().map(|otherwise| {
                     let item = Item::new(output_ty, Group::new(otherwise));
                     assert_eq!(output_ty.nodes(), item.nodes());
-                    item.iter()
+                    item.ports()
                 });
 
                 let variants = ctx.locals.variants().map(|(target_idx, locals)| {
@@ -106,7 +106,7 @@ impl<'tcx> Compiler<'tcx> {
                     let item = Item::new(output_ty, Group::new(locals));
                     assert_eq!(output_ty.nodes(), item.nodes());
 
-                    (val, item.iter())
+                    (val, item.ports())
                 });
 
                 let mux = ctx.module.add::<_, Switch>(SwitchArgs {
@@ -120,7 +120,7 @@ impl<'tcx> Compiler<'tcx> {
                     .map(|span| format!("{span} ({switch_block:?})"));
                 ctx.module.add_span(mux, node_span);
 
-                let mux = ctx.module.combine_from_node(mux, output_ty);
+                let mux = ctx.module.combine_from_node(mux, output_ty, span)?;
 
                 ctx.module
                     .assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);

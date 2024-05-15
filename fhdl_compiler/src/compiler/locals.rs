@@ -1,8 +1,9 @@
+use std::mem;
+
 use either::Either;
 use fhdl_data_structures::{cursor::Cursor, idx_ty, tree::Tree};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
 use rustc_middle::mir::Local;
-use tracing::debug;
 
 use super::{item::Item, utils::Captures};
 use crate::error::Error;
@@ -34,6 +35,11 @@ impl<'tcx> LocalScope<'tcx> {
     #[inline]
     fn get_opt(&self, local: Local) -> Option<Item<'tcx>> {
         self.locals.get(&local).cloned()
+    }
+
+    #[inline]
+    fn get_opt_mut(&mut self, local: Local) -> Option<&mut Item<'tcx>> {
+        self.locals.get_mut(&local)
     }
 
     #[inline]
@@ -98,12 +104,10 @@ impl<'tcx> Locals<'tcx> {
         Self { tree, scope_id }
     }
 
-    #[inline]
     pub fn place(&mut self, local: Local, item: Item<'tcx>) -> Local {
         self.tree[self.scope_id].data.place(local, item)
     }
 
-    #[inline]
     pub fn get_opt(&self, local: Local) -> Option<Item<'tcx>> {
         self.get_opt_(self.scope_id, local)
     }
@@ -124,7 +128,6 @@ impl<'tcx> Locals<'tcx> {
         None
     }
 
-    #[inline]
     pub fn get(&self, local: Local) -> Item<'tcx> {
         match self.get_opt(local) {
             Some(item) => item,
@@ -132,17 +135,42 @@ impl<'tcx> Locals<'tcx> {
         }
     }
 
-    #[inline]
+    pub fn get_opt_mut<'a>(
+        &'a mut self,
+        scope_id: LocalScopeId,
+        local: Local,
+    ) -> Option<&'a mut Item<'tcx>>
+    where
+        'tcx: 'a,
+    {
+        let mut parent_id = Some(scope_id);
+        while let Some(scope_id) = parent_id {
+            if let Some(item) = self.tree[scope_id].data.get_opt_mut(local) {
+                let item = unsafe { mem::transmute::<_, &'a mut Item<'tcx>>(item) };
+                return Some(item);
+            }
+
+            parent_id = self.tree[scope_id].parent();
+        }
+
+        None
+    }
+
+    pub fn get_mut(&mut self, local: Local) -> &mut Item<'tcx> {
+        match self.get_opt_mut(self.scope_id, local) {
+            Some(item) => item,
+            None => panic!("cannot find item for local {local:?}"),
+        }
+    }
+
     pub fn has_local(&self, local: Local) -> bool {
         self.tree[self.scope_id].data.has_local(local)
     }
 
-    #[inline]
     pub fn has_branches(&self) -> bool {
         self.tree[self.scope_id].has_children()
     }
 
-    #[inline]
     pub fn is_root(&self) -> bool {
         self.scope_id == self.tree.root_id().unwrap()
     }
@@ -161,7 +189,6 @@ impl<'tcx> Locals<'tcx> {
         self.scope_id = self.tree[self.scope_id].parent().unwrap();
     }
 
-    #[inline]
     pub fn branch_locals(&self) -> &FxIndexSet<Local> {
         &self.tree[self.scope_id].data.branch_locals
     }
@@ -203,8 +230,8 @@ impl<'tcx> Locals<'tcx> {
             }
         }
 
-        debug!("inner: {inner:?}");
-        debug!("outer: {outer:?}");
+        tracing::debug!("inner: {inner:?}");
+        tracing::debug!("outer: {outer:?}");
 
         let mut locals: FxIndexSet<Local> = Default::default();
 

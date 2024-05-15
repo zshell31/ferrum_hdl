@@ -9,6 +9,7 @@ pub mod item_ty;
 mod locals;
 mod mir;
 // mod pins;
+mod loop_gen;
 mod post_dominator;
 pub mod switch;
 mod switch_tuple;
@@ -36,6 +37,7 @@ use fhdl_netlist::{
     node_ty::NodeTy,
     symbol::Symbol,
 };
+pub use loop_gen::LoopGen;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_hir::{

@@ -7,6 +7,8 @@ use std::{
 
 use fhdl_const_func::mask;
 
+use crate::node::BinOp;
+
 // TODO: use long arithmetic
 #[derive(Clone, Copy)]
 pub struct ConstVal {
@@ -49,6 +51,11 @@ impl ConstVal {
 
     pub fn zero(width: u128) -> Self {
         Self { val: 0, width }
+    }
+
+    pub fn convert(self, width: u128) -> Self {
+        let val = self.val();
+        Self::new(val, width)
     }
 
     #[inline]
@@ -96,6 +103,30 @@ impl ConstVal {
         } else {
             let val = self.val();
             ConstVal::new(val >> start, width)
+        }
+    }
+
+    pub fn eval_bin_op(self, other: Self, bin_op: BinOp) -> ConstVal {
+        match bin_op {
+            BinOp::Add => self + other,
+            BinOp::Sub => self - other,
+            BinOp::Mul => self * other,
+            BinOp::Div => self / other,
+            BinOp::BitAnd => self & other,
+            BinOp::Rem => self % other,
+            BinOp::BitOr => self | other,
+            BinOp::BitXor => self ^ other,
+            BinOp::And => self & other,
+            BinOp::Or => self & other,
+            BinOp::Sll => self << other,
+            BinOp::Slr => self >> other,
+            BinOp::Sra => self.sra(other),
+            BinOp::Eq => (self == other).into(),
+            BinOp::Ne => (self != other).into(),
+            BinOp::Ge => (self >= other).into(),
+            BinOp::Gt => (self > other).into(),
+            BinOp::Le => (self <= other).into(),
+            BinOp::Lt => (self < other).into(),
         }
     }
 }

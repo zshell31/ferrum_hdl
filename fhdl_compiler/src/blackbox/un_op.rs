@@ -1,9 +1,10 @@
 use fhdl_netlist::node::{BitNot as BitNotNode, BitNotArgs};
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
 use crate::{
-    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
+    compiler::{item::Item, Compiler, Context},
     error::Error,
 };
 
@@ -33,7 +34,7 @@ impl<'tcx> EvalExpr<'tcx> for BitNot {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {

@@ -32,7 +32,8 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.stack.last_mut() {
-            match node.next() {
+            let item = node.next();
+            match item {
                 Some(next) => match next {
                     TreeNode::Leaf(leaf) => {
                         return Some(leaf);

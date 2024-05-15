@@ -1,4 +1,4 @@
-use std::io;
+use std::{array, io};
 
 use fhdl_macros::{blackbox, synth};
 use smallvec::SmallVec;
@@ -13,6 +13,7 @@ use crate::{
     domain::ClockDomain,
     eval::{Eval, EvalCtx},
     index::{idx_constr, Idx},
+    new_hdl::{State, StateMut},
     signal::{Signal, SignalValue},
     trace::{TraceVars, Traceable, Tracer},
 };
@@ -83,32 +84,14 @@ pub trait ArrayExt<const N: usize, T>: Sized {
         ConstConstr<{ idx_constr(idx_range_len(N, M)) }>:,
         T: Clone;
 
-    #[synth(inline)]
-    fn reverse(self) -> [T; N]
-    where
-        T: Clone,
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        <[T; N]>::chain_idx((), |idx, _| ((), self.idx(idx.rev()))).1
-    }
-
-    #[synth(inline)]
-    fn map_<U>(self, f: impl Fn(T) -> U) -> [U; N]
-    where
-        T: Clone,
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        <[U; N]>::chain_idx((), |idx, _| ((), f(self.idx(idx)))).1
-    }
-
-    #[synth(inline)]
-    fn map_idx<U>(self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
-    where
-        T: Clone,
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        <[U; N]>::chain_idx((), |idx, _| ((), f(idx.clone(), self.idx(idx)))).1
-    }
+    // #[synth(inline)]
+    // fn reverse(self) -> [T; N]
+    // where
+    //     T: Clone,
+    //     ConstConstr<{ idx_constr(N) }>:,
+    // {
+    //     <[T; N]>::chain_idx((), |idx, _| ((), self.idx(idx.rev()))).1
+    // }
 
     #[synth(inline)]
     fn repeat(val: T) -> [T; N]
@@ -119,35 +102,20 @@ pub trait ArrayExt<const N: usize, T>: Sized {
         Self::make(move || val.clone())
     }
 
-    #[synth(inline)]
-    fn make(f: impl Fn() -> T) -> [T; N]
-    where
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        <[T; N]>::chain_idx((), |_, _| ((), f())).1
-    }
+    #[blackbox(ArrayMap)]
+    fn map_<U>(self, f: impl Fn(T) -> U) -> [U; N];
 
-    #[synth(inline)]
+    #[blackbox(ArrayMapIdx)]
+    fn map_idx<U>(self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:;
+
+    #[blackbox(ArrayMake)]
+    fn make(f: impl Fn() -> T) -> [T; N];
+
+    #[blackbox(ArrayMakeIdx)]
     fn make_idx(f: impl Fn(Idx<N>) -> T) -> [T; N]
     where
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        <[T; N]>::chain_idx((), |idx, _| ((), f(idx))).1
-    }
-
-    #[synth(inline)]
-    fn chain<U>(init: U, f: impl Fn(U) -> (U, T)) -> (U, [T; N])
-    where
-        U: Clone,
-        ConstConstr<{ idx_constr(N) }>:,
-    {
-        Self::chain_idx(init, |_, prev| f(prev))
-    }
-
-    #[blackbox(ArrayChain)]
-    fn chain_idx<U>(init: U, f: impl Fn(Idx<N>, U) -> (U, T)) -> (U, [T; N])
-    where
-        U: Clone,
         ConstConstr<{ idx_constr(N) }>:;
 }
 
@@ -171,19 +139,32 @@ impl<const N: usize, T> ArrayExt<N, T> for [T; N] {
         array_from_iter::<T, M>(self[idx .. (idx + M)].iter().cloned())
     }
 
-    fn chain_idx<U>(init: U, f: impl Fn(Idx<N>, U) -> (U, T)) -> (U, [T; N])
+    fn map_<U>(self, f: impl Fn(T) -> U) -> [U; N] {
+        array_from_iter(self.into_iter().map(f))
+    }
+
+    fn map_idx<U>(self, f: impl Fn(Idx<N>, T) -> U) -> [U; N]
     where
-        U: Clone,
         ConstConstr<{ idx_constr(N) }>:,
     {
-        let mut prev = init;
-        let a = array_from_iter((0 .. N).map(|idx| {
-            let (new_prev, item) = f(unsafe { Idx::from_usize(idx) }, prev.clone());
-            prev = new_prev;
-            item
-        }));
+        array_from_iter(self.into_iter().enumerate().map(|(idx, item)| {
+            let idx = unsafe { Idx::from_usize(idx) };
+            f(idx, item)
+        }))
+    }
 
-        (prev, a)
+    fn make(f: impl Fn() -> T) -> [T; N] {
+        array_from_iter((0 .. N).map(|_| f()))
+    }
+
+    fn make_idx(f: impl Fn(Idx<N>) -> T) -> [T; N]
+    where
+        ConstConstr<{ idx_constr(N) }>:,
+    {
+        array_from_iter((0 .. N).map(|idx| {
+            let idx = unsafe { Idx::from_usize(idx) };
+            f(idx)
+        }))
     }
 }
 
@@ -210,6 +191,22 @@ impl<const N: usize, D: ClockDomain, T: SignalValue> Eval<D> for [Signal<D, T>; 
 
     fn next(&mut self, ctx: &mut EvalCtx) -> Self::Value {
         array_from_iter((0 .. N).map(|ind| self[ind].next(ctx)))
+    }
+}
+
+impl<T: StateMut, const N: usize> StateMut for [T; N] {}
+
+impl<T: State, const N: usize> State for [T; N] {
+    type Mut<'a> = [<T as State>::Mut<'a>; N]
+    where
+        Self: 'a;
+
+    fn state() -> Self {
+        array::from_fn(|_| T::state())
+    }
+
+    fn as_mut(&mut self) -> Self::Mut<'_> {
+        array_from_iter(self.iter_mut().map(|item| item.as_mut()))
     }
 }
 

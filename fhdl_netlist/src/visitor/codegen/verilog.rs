@@ -599,12 +599,8 @@ impl<'n, W: Write> Verilog<'n, W> {
                         b.push_tab();
 
                         b.write_tab()?;
-                        if let Some(init_val) = init_val {
-                            b.write_fmt(format_args!("{output} <= {init_val};\n"))?;
-                        } else {
-                            let init = module[init].sym.unwrap();
-                            b.write_fmt(format_args!("{output} <= {init};\n"))?;
-                        }
+                        let init = module[init].sym.unwrap();
+                        b.write_fmt(format_args!("{output} <= {init};\n"))?;
 
                         b.pop_tab();
 

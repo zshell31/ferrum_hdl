@@ -1,10 +1,14 @@
 use fhdl_netlist::node::{BinOp as NodeBinOp, BinOpArgs, BinOpNode};
-use rustc_middle::mir::BinOp as MirBinOp;
+use rustc_middle::{mir::BinOp as MirBinOp, ty::Ty};
 use rustc_span::Span;
 
 use super::{args, cast::CastFrom, EvalExpr};
 use crate::{
-    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
+    compiler::{
+        item::{Item, ModuleExt},
+        item_ty::ItemTy,
+        Compiler, Context,
+    },
     error::{Error, SpanError, SpanErrorKind},
 };
 
@@ -57,39 +61,52 @@ impl BinOp {
         let mut subnode =
             |expr: &Item<'tcx>, expr_ty: ItemTy<'tcx>| -> Result<Item<'tcx>, Error> {
                 Ok(if should_convert_operands && expr_ty != output_ty {
-                    CastFrom::convert(expr, output_ty, ctx, span)?
+                    if let Some(&cons) = expr.const_opt() {
+                        Item::new(output_ty, cons.convert(output_ty.width()))
+                    } else {
+                        CastFrom::convert(expr, output_ty, ctx, span)?
+                    }
                 } else {
                     expr.clone()
                 })
             };
 
-        let lhs = subnode(lhs, lhs.ty)?.port();
-        let rhs = subnode(rhs, rhs.ty)?.port();
+        let lhs = subnode(lhs, lhs.ty)?;
+        let rhs = subnode(rhs, rhs.ty)?;
+        let bin_op = self.0;
 
-        Ok(Item::new(
-            output_ty,
-            ctx.module.add_and_get_port::<_, BinOpNode>(BinOpArgs {
-                ty: output_ty.node_ty(),
-                bin_op: self.0,
-                lhs,
-                rhs,
-                sym: None,
-            }),
-        ))
+        if let (Some(&lhs), Some(&rhs)) = (lhs.const_opt(), rhs.const_opt()) {
+            Ok(Item::new(output_ty, lhs.eval_bin_op(rhs, bin_op)))
+        } else {
+            let lhs = ctx.module.to_bitvec(&lhs, span)?.port();
+            let rhs = ctx.module.to_bitvec(&rhs, span)?.port();
+
+            Ok(Item::new(
+                output_ty,
+                ctx.module.add_and_get_port::<_, BinOpNode>(BinOpArgs {
+                    ty: output_ty.node_ty(),
+                    bin_op,
+                    lhs,
+                    rhs,
+                    sym: None,
+                }),
+            ))
+        }
     }
 }
 
 impl<'tcx> EvalExpr<'tcx> for BinOp {
     fn eval(
         &self,
-        _: &mut Compiler<'tcx>,
+        compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: rustc_span::Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as lhs, rhs);
 
+        let output_ty = compiler.resolve_fn_out_ty(output_ty, span)?;
         self.bin_op(lhs, rhs, output_ty, ctx, span)
     }
 }

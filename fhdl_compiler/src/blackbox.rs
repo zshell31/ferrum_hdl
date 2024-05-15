@@ -3,6 +3,7 @@ pub mod bin_op;
 pub mod bitpack;
 pub mod bitvec;
 pub mod cast;
+pub mod loop_gen;
 pub mod reg;
 pub mod signal;
 pub mod un_op;
@@ -10,10 +11,11 @@ pub mod un_op;
 use fhdl_common::BlackboxKind;
 use fhdl_netlist::node::BinOp;
 use rustc_hir::def_id::DefId;
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
 use crate::{
-    compiler::{item::Item, item_ty::ItemTy, Compiler, Context},
+    compiler::{item::Item, Compiler, Context},
     error::Error,
 };
 
@@ -22,7 +24,7 @@ pub trait EvalExpr<'tcx> {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error>;
@@ -43,7 +45,7 @@ macro_rules! eval_expr {
                 &self,
                 compiler: &mut Compiler<'tcx>,
                 args: &[Item<'tcx>],
-                output_ty: ItemTy<'tcx>,
+                output_ty: Ty<'tcx>,
                 ctx: &mut Context<'tcx>,
                 span: Span,
             ) -> Result<Item<'tcx>, Error> {
@@ -72,7 +74,7 @@ impl<'tcx> EvalExpr<'tcx> for PassReceiver {
         &self,
         _: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        _: ItemTy<'tcx>,
+        _: Ty<'tcx>,
         _: &mut Context<'tcx>,
         _: Span,
     ) -> Result<Item<'tcx>, Error> {
@@ -83,7 +85,10 @@ impl<'tcx> EvalExpr<'tcx> for PassReceiver {
 }
 
 eval_expr!(
-    ArrayChain => array::Chain,
+    ArrayMake => array::Make { with_idx: false },
+    ArrayMakeIdx => array::Make { with_idx: true },
+    ArrayMap => array::Map { with_idx: false },
+    ArrayMapIdx => array::Map { with_idx: true },
 
     BitPackPack => bitpack::Pack,
     BitPackUnpack => bitpack::Unpack,
@@ -128,4 +133,7 @@ eval_expr!(
     IntoSignal => PassReceiver,
 
     StdClone => PassReceiver,
+    StdIntoIter => loop_gen::IntoIter,
+    StdIterEnum => loop_gen::IterEnum,
+    StdIterNext => loop_gen::IterNext,
 );

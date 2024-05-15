@@ -7,6 +7,7 @@ use fhdl_netlist::{
     node::{Splitter, SplitterArgs, Switch, SwitchArgs},
     node_ty::NodeTy,
 };
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
 
 use super::{args, EvalExpr};
@@ -28,13 +29,14 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
         &self,
         compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as rec, idx);
 
-        let item = match rec.ty.kind() {
+        let output_ty = compiler.resolve_fn_out_ty(output_ty, span)?;
+        match rec.ty.kind() {
             ItemTyKind::Node(NodeTy::Unsigned(count)) if *count != 0 => {
                 let (node_ty, count) = if self.only_one {
                     (NodeTy::Bit, *count)
@@ -44,10 +46,15 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
                     (NodeTy::Unsigned(slice_len), count)
                 };
 
-                let rec = ctx.module.to_bitvec(rec).port();
-                make_mux(&mut ctx.module, idx, count, output_ty, |module, case| {
-                    iter::once(slice(module, rec, case, node_ty))
-                })
+                let rec = ctx.module.to_bitvec(rec, span)?.port();
+                make_mux(
+                    &mut ctx.module,
+                    idx,
+                    count,
+                    output_ty,
+                    |module, case| iter::once(slice(module, rec, case, node_ty)),
+                    span,
+                )
             }
             ItemTyKind::Array(array_ty) => {
                 let group = rec.group();
@@ -61,28 +68,31 @@ impl<'tcx> EvalExpr<'tcx> for Slice {
                     (array_ty.count() + 1 - slice_len, slice_len)
                 };
 
-                make_mux(&mut ctx.module, idx, count, output_ty, |_, case| {
-                    let item = if self.only_one {
-                        group.by_idx(case as usize)
-                    } else {
-                        Item::new(
-                            output_ty,
-                            group.slice(case as usize, slice_len as usize),
-                        )
-                    };
+                make_mux(
+                    &mut ctx.module,
+                    idx,
+                    count,
+                    output_ty,
+                    |_, case| {
+                        let item = if self.only_one {
+                            group.by_idx(case as usize)
+                        } else {
+                            Item::new(
+                                output_ty,
+                                group.slice(case as usize, slice_len as usize),
+                            )
+                        };
 
-                    item.iter()
-                })
-            }
-            _ => {
-                return Err(Error::from(SpanError::new(
-                    SpanErrorKind::NotSynthExpr,
+                        item.ports()
+                    },
                     span,
-                )));
+                )
             }
-        };
-
-        Ok(item)
+            _ => Err(Error::from(SpanError::new(
+                SpanErrorKind::NotSynthExpr,
+                span,
+            ))),
+        }
     }
 }
 
@@ -108,11 +118,12 @@ fn make_mux<'tcx, I>(
     count: u128,
     output_ty: ItemTy<'tcx>,
     mk_variant: impl Fn(&mut Module, u128) -> I,
-) -> Item<'tcx>
+    span: Span,
+) -> Result<Item<'tcx>, Error>
 where
     I: Iterator<Item = Port>,
 {
-    let sel = module.to_bitvec(idx).port();
+    let sel = module.to_bitvec(idx, span)?.port();
     let sel_width = idx.width();
 
     let variants = (0 .. count)
@@ -129,8 +140,8 @@ where
         variants,
         default: None,
     });
-    let mux = module.combine_from_node(mux, output_ty);
+    let mux = module.combine_from_node(mux, output_ty, span)?;
     module.assign_names_to_item(SymIdent::Mux.as_str(), &mux, false);
 
-    mux
+    Ok(mux)
 }

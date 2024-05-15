@@ -1,6 +1,6 @@
 use ferrum_hdl::{cast, signed::S, unsigned::U};
+use rustc_middle::ty::Ty;
 use rustc_span::Span;
-use tracing::error;
 
 use super::{args, EvalExpr};
 use crate::{
@@ -42,7 +42,7 @@ impl CastFrom {
                 Ok(Self::trunc_or_extend(from.clone(), to_ty, ctx, true))
             }
             _ => {
-                error!("from {:?} => to {:?}", from.ty, to_ty);
+                tracing::error!("from {:?} => to {:?}", from.ty, to_ty);
 
                 Err(SpanError::new(SpanErrorKind::UnsupportedConversion, span).into())
             }
@@ -74,14 +74,15 @@ fn assert_convert<F, T: cast::CastFrom<F>>() {}
 impl<'tcx> EvalExpr<'tcx> for CastFrom {
     fn eval(
         &self,
-        _: &mut Compiler<'tcx>,
+        compiler: &mut Compiler<'tcx>,
         args: &[Item<'tcx>],
-        output_ty: ItemTy<'tcx>,
+        output_ty: Ty<'tcx>,
         ctx: &mut Context<'tcx>,
         span: Span,
     ) -> Result<Item<'tcx>, Error> {
         args!(args as from);
 
+        let output_ty = compiler.resolve_fn_out_ty(output_ty, span)?;
         Self::convert(from, output_ty, ctx, span)
     }
 }

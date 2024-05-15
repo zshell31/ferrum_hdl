@@ -4,7 +4,7 @@ use std::{
     fmt::{self, Debug, Display},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeTy {
     Bit,
     Unsigned(u128),
@@ -24,6 +24,12 @@ impl Display for NodeTy {
         };
 
         f.write_str(s.as_ref())
+    }
+}
+
+impl Debug for NodeTy {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        Display::fmt(self, f)
     }
 }
 

@@ -45,8 +45,6 @@ impl SpanError {
 pub enum SpanErrorKind {
     #[error("unsupported conversion")]
     UnsupportedConversion,
-    #[error("loops are unsupported")]
-    UnsupportedLoops,
     #[error("invalid reset kind")]
     InvalidResetKind,
     #[error("invalid reset polarity")]

@@ -1,12 +1,8 @@
 use std::collections::VecDeque;
 
-use either::Either;
 use fhdl_data_structures::{cursor::Cursor, graph::Port, FxHashSet};
 
-use crate::{
-    netlist::{Module, ModuleId, NetList},
-    with_id::WithId,
-};
+use crate::netlist::{Module, ModuleId, NetList};
 
 pub struct Reachability<'n> {
     netlist: &'n NetList,
@@ -58,34 +54,11 @@ impl<'n> Reachability<'n> {
                 self.modules.push_back(mod_inst.mod_id);
             }
 
-            let mut exclude = None;
-            if let Some(dff) = module[port.node].dff() {
-                let dff = WithId::new(port.node, dff);
-                let inputs = dff.inputs(module);
-                let init = inputs.init;
-
-                if module.is_const(init)
-                    && module
-                        .outgoing(init)
-                        .into_iter_(module)
-                        .all(|node| node == port.node)
-                {
-                    module[init].skip = true;
-                    module[init.node].skip = true;
-                    exclude = Some(init);
-                }
-            }
-
             module[port].skip = false;
             module[port.node].skip = false;
             module.skip = false;
 
             let incoming = module.incoming(port.node).into_iter_(module);
-            let incoming = if let Some(exclude) = exclude {
-                Either::Left(incoming.filter(move |port| *port != exclude))
-            } else {
-                Either::Right(incoming)
-            };
             self.ports.extend(incoming);
         }
     }

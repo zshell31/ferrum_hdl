@@ -24,6 +24,7 @@ pub mod memory;
 pub mod new_hdl;
 pub mod signal;
 pub mod signed;
+pub mod toolbox;
 pub mod trace;
 mod tuples;
 pub mod unsigned;

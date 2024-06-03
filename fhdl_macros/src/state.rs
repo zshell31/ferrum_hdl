@@ -37,10 +37,12 @@ impl ToTokens for State {
 
         let mut_lf = Lifetime::new("'__state_mut", Span::call_site());
         let mut mut_generics = self.generics.clone();
-        mut_generics.params.insert(
-            0,
-            GenericParam::Lifetime(LifetimeParam::new(mut_lf.clone())),
-        );
+        if !fields.is_empty() {
+            mut_generics.params.insert(
+                0,
+                GenericParam::Lifetime(LifetimeParam::new(mut_lf.clone())),
+            );
+        }
         let (mut_impl_generics, mut_ty_generics, mut_where_bounds) =
             mut_generics.split_for_impl();
         let mut_lf = &mut_lf;

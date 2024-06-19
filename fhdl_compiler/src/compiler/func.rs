@@ -124,7 +124,7 @@ fn def_path_data(def_path_data: &DefPathData) -> Option<SymOrStr> {
     }
 }
 
-fn def_path_eq(def_path: &DefPath, items: &[&'static str]) -> bool {
+pub fn def_path_eq(def_path: &DefPath, items: &[&'static str]) -> bool {
     let mut def_path = def_path.data.iter();
     let mut items = items.iter();
 

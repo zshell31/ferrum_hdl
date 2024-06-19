@@ -13,6 +13,7 @@ use rustc_data_structures::intern::Interned;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlockData, Rvalue},
+    query::Key,
     ty::{
         AdtDef, AliasKind, ClosureArgs, EarlyBinder, FieldDef, GenericArg,
         GenericArgsRef, List, Mutability, ParamEnv, Ty, VariantDiscr,
@@ -28,6 +29,7 @@ use rustc_type_ir::{
 
 use super::{
     domain::DomainId,
+    func::def_path_eq,
     utils::{TreeIter, TreeNode},
     Compiler, Context,
 };
@@ -522,14 +524,15 @@ impl<'tcx> From<EnumTy<'tcx>> for ItemTyKind<'tcx> {
 }
 
 #[derive(Debug, Clone)]
-pub struct WithTypeInfo<T> {
+pub struct WithTypeInfo<'tcx, T> {
     internee: T,
+    ty: Option<Ty<'tcx>>,
     width: u128,
     nodes: usize,
     is_synth: bool,
 }
 
-impl<T> Deref for WithTypeInfo<T> {
+impl<'tcx, T> Deref for WithTypeInfo<'tcx, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -537,13 +540,14 @@ impl<T> Deref for WithTypeInfo<T> {
     }
 }
 
-impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
-    pub fn new(internee: ItemTyKind<'tcx>) -> Self {
+impl<'tcx> WithTypeInfo<'tcx, ItemTyKind<'tcx>> {
+    pub fn new(internee: ItemTyKind<'tcx>, ty: Option<Ty<'tcx>>) -> Self {
         let width = internee.width();
         let nodes = internee.nodes();
         let is_state = internee.is_synth();
         Self {
             internee,
+            ty,
             width,
             nodes,
             is_synth: is_state,
@@ -552,7 +556,7 @@ impl<'tcx> WithTypeInfo<ItemTyKind<'tcx>> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ItemTy<'tcx>(Interned<'tcx, WithTypeInfo<ItemTyKind<'tcx>>>);
+pub struct ItemTy<'tcx>(Interned<'tcx, WithTypeInfo<'tcx, ItemTyKind<'tcx>>>);
 
 impl<'tcx> Debug for ItemTy<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -561,7 +565,7 @@ impl<'tcx> Debug for ItemTy<'tcx> {
 }
 
 impl<'tcx> ItemTy<'tcx> {
-    pub fn new(kind: &'tcx WithTypeInfo<ItemTyKind<'tcx>>) -> Self {
+    pub fn new(kind: &'tcx WithTypeInfo<'tcx, ItemTyKind<'tcx>>) -> Self {
         Self(Interned::new_unchecked(kind))
     }
 
@@ -573,6 +577,10 @@ impl<'tcx> ItemTy<'tcx> {
     #[inline]
     pub fn width(&self) -> u128 {
         self.0.width
+    }
+
+    pub fn rust_ty(&self) -> Option<Ty<'tcx>> {
+        self.0.ty
     }
 
     #[allow(clippy::wrong_self_convention)]
@@ -730,7 +738,11 @@ impl<'tcx> From<u128> for Generic<'tcx> {
 
 impl<'tcx> Compiler<'tcx> {
     #[inline]
-    pub fn alloc_ty(&mut self, ty: impl Into<ItemTyKind<'tcx>>) -> ItemTy<'tcx> {
+    pub fn alloc_ty(
+        &mut self,
+        ty: impl Into<ItemTyKind<'tcx>>,
+        rust_ty: Option<Ty<'tcx>>,
+    ) -> ItemTy<'tcx> {
         let ty = ty.into();
 
         // for resolving types like "Unsigned<UnevaluatedConst .. >"
@@ -738,26 +750,37 @@ impl<'tcx> Compiler<'tcx> {
         #[allow(clippy::map_entry)]
         if !self.allocated_ty.contains_key(&ty) {
             self.allocated_ty
-                .insert(ty, ItemTy::new(self.alloc(WithTypeInfo::new(ty))));
+                .insert(ty, ItemTy::new(self.alloc(WithTypeInfo::new(ty, rust_ty))));
         }
 
         self.allocated_ty.get(&ty).copied().unwrap()
     }
 
     pub fn opt_ty(&mut self, item_ty: ItemTy<'tcx>) -> ItemTy<'tcx> {
-        self.alloc_ty(ItemTyKind::Option(OptionTy { ty: item_ty }))
+        self.alloc_ty(ItemTyKind::Option(OptionTy { ty: item_ty }), None)
     }
 
     pub fn loop_gen_ty(&mut self) -> ItemTy<'tcx> {
-        self.alloc_ty(ItemTyKind::LoopGen)
+        self.alloc_ty(ItemTyKind::LoopGen, None)
     }
 
     pub fn unsigned_ty(&mut self, width: u128) -> ItemTy<'tcx> {
-        self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(width)))
+        self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(width)), None)
     }
 
     pub fn usize_ty(&mut self) -> ItemTy<'tcx> {
         self.unsigned_ty(usize::BITS as u128)
+    }
+
+    pub fn is_std_def(&self, ty: Ty<'tcx>, def_path_str: &[&'static str]) -> bool {
+        match ty.ty_def_id() {
+            Some(did) if self.crates.is_std(did) => {
+                let def_path = self.tcx.def_path(did);
+
+                def_path_eq(&def_path, def_path_str)
+            }
+            _ => false,
+        }
     }
 
     pub fn resolve_fn_out_ty(
@@ -770,47 +793,67 @@ impl<'tcx> Compiler<'tcx> {
 
     pub fn resolve_ty(
         &mut self,
-        ty: Ty<'tcx>,
+        rust_ty: Ty<'tcx>,
         generics: GenericArgsRef<'tcx>,
         span: Span,
     ) -> Result<ItemTy<'tcx>, Error> {
-        let ty = EarlyBinder::bind(ty).instantiate(self.tcx, generics);
+        let rust_ty = EarlyBinder::bind(rust_ty).instantiate(self.tcx, generics);
 
         #[allow(clippy::map_entry)]
-        if !self.item_ty.contains_key(&ty) {
-            let item_ty: Option<ItemTy<'_>> = match ty.kind() {
-                TyKind::Bool => Some(self.alloc_ty(NodeTy::Bit)),
-                TyKind::Uint(UintTy::U8) => Some(self.alloc_ty(NodeTy::Unsigned(8))),
-                TyKind::Uint(UintTy::U16) => Some(self.alloc_ty(NodeTy::Unsigned(16))),
-                TyKind::Uint(UintTy::U32) => Some(self.alloc_ty(NodeTy::Unsigned(32))),
-                TyKind::Uint(UintTy::U64) => Some(self.alloc_ty(NodeTy::Unsigned(64))),
-                TyKind::Uint(UintTy::U128) => Some(self.alloc_ty(NodeTy::Unsigned(128))),
-                TyKind::Uint(UintTy::Usize) => {
-                    Some(self.alloc_ty(NodeTy::Unsigned(usize::BITS as u128)))
+        if !self.item_ty.contains_key(&rust_ty) {
+            let item_ty: Option<ItemTy<'_>> = match rust_ty.kind() {
+                TyKind::Bool => Some(self.alloc_ty(NodeTy::Bit, Some(rust_ty))),
+                TyKind::Uint(UintTy::U8) => {
+                    Some(self.alloc_ty(NodeTy::Unsigned(8), Some(rust_ty)))
                 }
-                TyKind::Int(IntTy::I8) => Some(self.alloc_ty(NodeTy::Signed(8))),
-                TyKind::Int(IntTy::I16) => Some(self.alloc_ty(NodeTy::Signed(16))),
-                TyKind::Int(IntTy::I32) => Some(self.alloc_ty(NodeTy::Signed(32))),
-                TyKind::Int(IntTy::I64) => Some(self.alloc_ty(NodeTy::Signed(64))),
-                TyKind::Int(IntTy::I128) => Some(self.alloc_ty(NodeTy::Signed(128))),
-                TyKind::Int(IntTy::Isize) => {
-                    Some(self.alloc_ty(NodeTy::Signed(isize::BITS as u128)))
+                TyKind::Uint(UintTy::U16) => {
+                    Some(self.alloc_ty(NodeTy::Unsigned(16), Some(rust_ty)))
                 }
+                TyKind::Uint(UintTy::U32) => {
+                    Some(self.alloc_ty(NodeTy::Unsigned(32), Some(rust_ty)))
+                }
+                TyKind::Uint(UintTy::U64) => {
+                    Some(self.alloc_ty(NodeTy::Unsigned(64), Some(rust_ty)))
+                }
+                TyKind::Uint(UintTy::U128) => {
+                    Some(self.alloc_ty(NodeTy::Unsigned(128), Some(rust_ty)))
+                }
+                TyKind::Uint(UintTy::Usize) => Some(
+                    self.alloc_ty(NodeTy::Unsigned(usize::BITS as u128), Some(rust_ty)),
+                ),
+                TyKind::Int(IntTy::I8) => {
+                    Some(self.alloc_ty(NodeTy::Signed(8), Some(rust_ty)))
+                }
+                TyKind::Int(IntTy::I16) => {
+                    Some(self.alloc_ty(NodeTy::Signed(16), Some(rust_ty)))
+                }
+                TyKind::Int(IntTy::I32) => {
+                    Some(self.alloc_ty(NodeTy::Signed(32), Some(rust_ty)))
+                }
+                TyKind::Int(IntTy::I64) => {
+                    Some(self.alloc_ty(NodeTy::Signed(64), Some(rust_ty)))
+                }
+                TyKind::Int(IntTy::I128) => {
+                    Some(self.alloc_ty(NodeTy::Signed(128), Some(rust_ty)))
+                }
+                TyKind::Int(IntTy::Isize) => Some(
+                    self.alloc_ty(NodeTy::Signed(isize::BITS as u128), Some(rust_ty)),
+                ),
                 TyKind::Tuple(ty) => {
                     let ty = self.resolve_tuple_ty(ty.iter(), generics, span)?;
-                    Some(self.alloc_ty(ty))
+                    Some(self.alloc_ty(ty, Some(rust_ty)))
                 }
                 TyKind::Adt(adt, adt_generics)
                     if !self.is_blackbox_ty(adt.did()) && adt.is_struct() =>
                 {
                     let ty = self.resolve_struct_ty(adt, adt_generics, generics, span)?;
-                    Some(self.alloc_ty(ty))
+                    Some(self.alloc_ty(ty, Some(rust_ty)))
                 }
                 TyKind::Adt(adt, adt_generics)
                     if !self.is_blackbox_ty(adt.did()) && adt.is_enum() =>
                 {
                     let ty = self.resolve_enum_ty(adt, adt_generics, generics, span)?;
-                    Some(self.alloc_ty(ty))
+                    Some(self.alloc_ty(ty, Some(rust_ty)))
                 }
                 TyKind::Alias(AliasKind::Projection, alias_ty) => {
                     let alias_ty = self
@@ -819,11 +862,11 @@ impl<'tcx> Compiler<'tcx> {
                             EarlyBinder::bind(alias_ty.args)
                                 .instantiate(self.tcx, generics),
                             ParamEnv::reveal_all(),
-                            EarlyBinder::bind(ty),
+                            EarlyBinder::bind(rust_ty),
                         )
                         .map_err(|_| {
                             SpanError::new(
-                                SpanErrorKind::NotSynthType(ty.to_string()),
+                                SpanErrorKind::NotSynthType(rust_ty.to_string()),
                                 span,
                             )
                         })?;
@@ -840,11 +883,14 @@ impl<'tcx> Compiler<'tcx> {
                     let struct_ty =
                         self.resolve_tuple_ty(iter::empty(), List::empty(), span)?;
 
-                    Some(self.alloc_ty(ItemTyKind::Closure(ClosureTy::new(
-                        instance_did,
-                        instance.args,
-                        struct_ty,
-                    ))))
+                    Some(self.alloc_ty(
+                        ItemTyKind::Closure(ClosureTy::new(
+                            instance_did,
+                            instance.args,
+                            struct_ty,
+                        )),
+                        Some(rust_ty),
+                    ))
                 }
                 TyKind::Closure(closure_did, closure_generics) => {
                     let closure_args = ClosureArgs {
@@ -856,37 +902,40 @@ impl<'tcx> Compiler<'tcx> {
                         span,
                     )?;
 
-                    Some(self.alloc_ty(ItemTyKind::Closure(ClosureTy::new(
-                        *closure_did,
-                        closure_generics,
-                        struct_ty,
-                    ))))
+                    Some(self.alloc_ty(
+                        ItemTyKind::Closure(ClosureTy::new(
+                            *closure_did,
+                            closure_generics,
+                            struct_ty,
+                        )),
+                        Some(rust_ty),
+                    ))
                 }
                 TyKind::Array(ty, const_) => {
                     let item_ty = self.resolve_ty(*ty, generics, span)?;
                     let const_ = self.eval_const(*const_, span)?;
 
                     let array_ty = ArrayTy::new(item_ty, const_);
-                    Some(self.alloc_ty(array_ty))
+                    Some(self.alloc_ty(array_ty, Some(rust_ty)))
                 }
                 _ => None,
             };
 
             let item_ty = match item_ty {
                 Some(item_ty) => item_ty,
-                None => self.find_item_ty(ty, generics, span)?.ok_or_else(|| {
-                    SpanError::new(SpanErrorKind::NotSynthType(ty.to_string()), span)
+                None => self.find_item_ty(rust_ty, generics, span)?.ok_or_else(|| {
+                    SpanError::new(SpanErrorKind::NotSynthType(rust_ty.to_string()), span)
                 })?,
             };
 
-            self.item_ty.insert(ty, item_ty);
+            self.item_ty.insert(rust_ty, item_ty);
         }
 
         self.item_ty
-            .get(&ty)
+            .get(&rust_ty)
             .copied()
             .ok_or_else(|| {
-                SpanError::new(SpanErrorKind::NotSynthType(ty.to_string()), span)
+                SpanError::new(SpanErrorKind::NotSynthType(rust_ty.to_string()), span)
             })
             .map_err(Into::into)
     }
@@ -915,16 +964,24 @@ impl<'tcx> Compiler<'tcx> {
             let item_ty = match blackbox_ty {
                 BlackboxTy::Signal => self.generic_ty(ty, 1, generics, span)?,
                 BlackboxTy::Wrapped => self.generic_ty(ty, 1, generics, span)?,
-                BlackboxTy::BitVec => self
-                    .generic_const(ty, 0, generics, span)?
-                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(val)))),
-                BlackboxTy::Clock => Some(self.alloc_ty(ItemTyKind::Node(NodeTy::Clock))),
-                BlackboxTy::Unsigned => self
-                    .generic_const(ty, 0, generics, span)?
-                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(val)))),
-                BlackboxTy::Signed => self
-                    .generic_const(ty, 0, generics, span)?
-                    .map(|val| self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)))),
+                BlackboxTy::BitVec => {
+                    self.generic_const(ty, 0, generics, span)?.map(|val| {
+                        self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(val)), None)
+                    })
+                }
+                BlackboxTy::Clock => {
+                    Some(self.alloc_ty(ItemTyKind::Node(NodeTy::Clock), None))
+                }
+                BlackboxTy::Unsigned => {
+                    self.generic_const(ty, 0, generics, span)?.map(|val| {
+                        self.alloc_ty(ItemTyKind::Node(NodeTy::Unsigned(val)), None)
+                    })
+                }
+                BlackboxTy::Signed => {
+                    self.generic_const(ty, 0, generics, span)?.map(|val| {
+                        self.alloc_ty(ItemTyKind::Node(NodeTy::Signed(val)), None)
+                    })
+                }
                 BlackboxTy::UnsignedInner => None,
                 BlackboxTy::Reg => {
                     let dom_ty = match ty.kind() {
@@ -933,8 +990,9 @@ impl<'tcx> Compiler<'tcx> {
                     };
                     let dom_id = self.find_domain_by_type(dom_ty, generics);
 
-                    self.generic_ty(ty, 2, generics, span)?
-                        .map(|ty| self.alloc_ty(ItemTyKind::Reg(RegTy { dom_id, ty })))
+                    self.generic_ty(ty, 2, generics, span)?.map(|ty| {
+                        self.alloc_ty(ItemTyKind::Reg(RegTy { dom_id, ty }), None)
+                    })
                 }
             };
 
@@ -1066,7 +1124,7 @@ impl<'tcx> Compiler<'tcx> {
                 .map(|(ind, item_ty)| Named::new(item_ty, Symbol::new_from_ind(ind))),
         );
 
-        self.alloc_ty(StructTy::new(tys))
+        self.alloc_ty(StructTy::new(tys), None)
     }
 
     fn resolve_struct_ty(
@@ -1133,7 +1191,7 @@ impl<'tcx> Compiler<'tcx> {
                     generics,
                     span,
                 )?;
-                let item_ty = compiler.alloc_ty(ItemTyKind::Struct(struct_ty));
+                let item_ty = compiler.alloc_ty(ItemTyKind::Struct(struct_ty), None);
 
                 Ok(Named::new(item_ty, Symbol::intern(variant.name.as_str())))
             })?;
@@ -1154,7 +1212,7 @@ impl<'tcx> Compiler<'tcx> {
             (clog2(max_discr as usize) as u128, Some(discr))
         };
 
-        let discr_ty = self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(discr_width)));
+        let discr_ty = self.alloc_ty(ItemTyKind::Node(NodeTy::BitVec(discr_width)), None);
 
         Ok(EnumTy::new(variants, discr, discr_ty))
     }

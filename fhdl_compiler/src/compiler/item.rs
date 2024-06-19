@@ -214,6 +214,20 @@ impl<'tcx> ItemKind<'tcx> {
         }
     }
 
+    fn group(&self) -> &Group<'tcx> {
+        match self {
+            ItemKind::Group(group) => group,
+            _ => panic!("expected group"),
+        }
+    }
+
+    fn group_mut(&mut self) -> &mut Group<'tcx> {
+        match self {
+            ItemKind::Group(group) => group,
+            _ => panic!("expected group"),
+        }
+    }
+
     fn loop_gen_opt(&self) -> Option<&LoopGen<'tcx>> {
         match self {
             Self::LoopGen(loop_gen) => Some(loop_gen),
@@ -299,17 +313,11 @@ impl<'tcx> Item<'tcx> {
     }
 
     pub fn group(&self) -> &Group<'tcx> {
-        match &self.kind {
-            ItemKind::Group(group) => group,
-            _ => panic!("expected group"),
-        }
+        self.kind.group()
     }
 
     pub fn group_mut(&mut self) -> &mut Group<'tcx> {
-        match &mut self.kind {
-            ItemKind::Group(group) => group,
-            _ => panic!("expected group"),
-        }
+        self.kind.group_mut()
     }
 
     pub fn by_idx(&self, idx: usize) -> Item<'tcx> {
@@ -965,7 +973,10 @@ mod tests {
 
         assert_eq!(
             Item::new(
-                ItemTy::new(&WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)))),
+                ItemTy::new(&WithTypeInfo::new(
+                    ItemTyKind::Node(NodeTy::Unsigned(8)),
+                    None
+                )),
                 ItemKind::Port(Port::new(node_id, 0))
             )
             .ports()
@@ -977,7 +988,7 @@ mod tests {
     #[test]
     fn item_group_iter() {
         let node_id = NodeId::new(0);
-        let ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)));
+        let ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)), None);
         let ty = ItemTy::new(&ty);
 
         assert_eq!(
@@ -1013,13 +1024,16 @@ mod tests {
 
     #[test]
     fn item_empty_iter() {
-        let node_ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)));
+        let node_ty = WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)), None);
         let node_ty = ItemTy::new(&node_ty);
 
-        let ty = WithTypeInfo::new(ItemTyKind::Reg(RegTy {
-            dom_id: DomainId::empty(),
-            ty: node_ty,
-        }));
+        let ty = WithTypeInfo::new(
+            ItemTyKind::Reg(RegTy {
+                dom_id: DomainId::empty(),
+                ty: node_ty,
+            }),
+            None,
+        );
         let ty = ItemTy::new(&ty);
 
         assert_eq!(Item::new(ty, ItemKind::Reg).ports().collect::<Vec<_>>(), &[
@@ -1030,7 +1044,10 @@ mod tests {
     fn item_empty_group_iter() {
         assert_eq!(
             Item::new(
-                ItemTy::new(&WithTypeInfo::new(ItemTyKind::Node(NodeTy::Unsigned(8)))),
+                ItemTy::new(&WithTypeInfo::new(
+                    ItemTyKind::Node(NodeTy::Unsigned(8)),
+                    None
+                )),
                 ItemKind::Group(Group::new([]))
             )
             .ports()

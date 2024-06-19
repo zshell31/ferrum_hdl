@@ -30,6 +30,26 @@ impl<'tcx> EvalExpr<'tcx> for IntoIter {
 
                 Ok(LoopGen::new(compiler, iter_item_ty, iter, len))
             }
+            // ItemTyKind::Struct(_) => {
+            //     if let Some(rust_ty) = rec.ty.rust_ty() {
+            //         if compiler.is_std_def(rust_ty, &["ops", "range", "Range"]) {
+            //             let group = rec.group();
+            //             let start = &ctx.module[group.by_idx(0).port().node].cons();
+            //             let end = &ctx.module[group.by_idx(1).port().node].cons();
+
+            //             if let (Some(start), Some(end)) = (start, end) {
+            //                 let start = start.value;
+            //                 let end = end.value;
+            //                 assert!(start <= end);
+            //                 tracing::debug!("{start:?} {end:?}");
+
+            //                 Ok(LoopGen::new(compiler, ))
+            //             }
+            //         }
+            //     }
+
+            //     Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into())
+            // }
             ItemTyKind::LoopGen => Ok(rec.clone()),
             _ => Err(SpanError::new(SpanErrorKind::NotSynthExpr, span).into()),
         }
